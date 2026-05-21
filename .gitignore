@@ -41,3 +41,9 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Expo QR / temporary QR images
+expo-qr.png
+assets/images/expo-go-qr.png
+assets/images/expo-qr-*.png
+assets/images/alignment-check-qr.png

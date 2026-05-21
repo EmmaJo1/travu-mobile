@@ -106,31 +106,37 @@ export const Colors = {
  */
 export const FontFamily = Platform.select({
   ios: {
-    pretendard:         'Pretendard',     // expo-font 로드 후 사용
+    pretendard:         'Pretendard-Regular',
     pretendardMedium:   'Pretendard-Medium',
     pretendardSemiBold: 'Pretendard-SemiBold',
     pretendardBold:     'Pretendard-Bold',
     notoSerifKR:        'NotoSerifKR-Regular',
     notoSerifKRBold:    'NotoSerifKR-Bold',
     notoSerifKRBlack:   'NotoSerifKR-Black',
+    prata:              'Prata-Regular',
+    pointEN:            'SansitaSwashed-Bold',
   },
   default: {
-    pretendard:         'Pretendard',
+    pretendard:         'Pretendard-Regular',
     pretendardMedium:   'Pretendard-Medium',
     pretendardSemiBold: 'Pretendard-SemiBold',
     pretendardBold:     'Pretendard-Bold',
     notoSerifKR:        'NotoSerifKR-Regular',
     notoSerifKRBold:    'NotoSerifKR-Bold',
     notoSerifKRBlack:   'NotoSerifKR-Black',
+    prata:              'Prata-Regular',
+    pointEN:            'SansitaSwashed-Bold',
   },
 }) ?? {
-  pretendard:         'Pretendard',
+  pretendard:         'Pretendard-Regular',
   pretendardMedium:   'Pretendard-Medium',
   pretendardSemiBold: 'Pretendard-SemiBold',
   pretendardBold:     'Pretendard-Bold',
   notoSerifKR:        'NotoSerifKR-Regular',
   notoSerifKRBold:    'NotoSerifKR-Bold',
   notoSerifKRBlack:   'NotoSerifKR-Black',
+  prata:              'Prata-Regular',
+  pointEN:            'SansitaSwashed-Bold',
 };
 
 /** Pretendard 타입 스케일 */
@@ -177,6 +183,12 @@ export const Typography = {
     lineHeight:  16,
     fontWeight:  '400' as const,
   },
+  captionEmphasized: {
+    fontFamily:  FontFamily.pretendardMedium,
+    fontSize:    12,
+    lineHeight:  16,
+    fontWeight:  '500' as const,
+  },
   captionSmall: {
     fontFamily:  FontFamily.pretendardMedium,
     fontSize:    10,
@@ -200,6 +212,13 @@ export const Typography = {
     fontFamily:  FontFamily.notoSerifKR,
     fontSize:    16,
     lineHeight:  24,
+    fontWeight:  '400' as const,
+  },
+  /** TripListCard / Mypage 제목 전용 — Prata 14/400/18 */
+  tripListTitle: {
+    fontFamily:  FontFamily.prata,
+    fontSize:    14,
+    lineHeight:  18,
     fontWeight:  '400' as const,
   },
 } as const;

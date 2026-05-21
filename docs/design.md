@@ -3,7 +3,7 @@
 > Figma 소스: [Travu](https://www.figma.com/design/EfragPmsgNBJnt5wFEOAkB/Travu)  
 > 페이지: `01_MVP Screens` · `02_System & Components`  
 > 목적: Expo React Native MVP 구현에 필요한 최소 디자인 기준  
-> 업데이트: 2026-05-15
+> 업데이트: 2026-05-19
 
 ---
 
@@ -70,6 +70,7 @@ Travu는 **따뜻하고 차분한 photo-first 모바일 여행 기록 앱**이�
 | ---------------- | --------------- | ----------------------------------------- |
 | UI · 본문        | **Pretendard**  | 한/영 혼합 최적화. MVP 주 폰트.           |
 | 대시보드 강조    | **Noto Serif KR** | 여행 기록 감성. 숫자·통계 영역에 한정.  |
+| TripListCard 제목 | **Prata**       | `PARIS`, `TOKYO` 등 여행 타이틀 전용. 폰트 패밀리는 고정, size/lineHeight는 콘텐츠에 맞춰 조정 가능 |
 
 > React Native에서 Pretendard는 `expo-font`로 로드해야 한다.  
 > Noto Serif KR은 대시보드 컴포넌트에서만 사용하므로 지연 로드 가능.
@@ -220,7 +221,9 @@ MVP Screens에서 추론한 스펙:
 ### TripListCard
 
 - 리스트형/소형 여행 카드
-- 상세 스펙: **TODO** — 02_System & Components에서 별도 확인 필요
+- 상단 헤더 박스: `rgba(255,255,255,0.6)` + shadow `0 0 4 rgba(0,0,0,0.25)`
+- 카드 내부 타이틀 폰트는 **항상 Prata** 사용
+- 타이틀의 `fontSize`, `lineHeight`는 콘텐츠 길이에 맞춰 컴포넌트에서 유동 조정 가능
 
 ### DayCard
 
