@@ -6,10 +6,6 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
-export const unstable_settings = {
-  anchor: '(tabs)',
-};
-
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const [fontsLoaded] = useFonts({
@@ -31,10 +27,12 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
+        <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
         <Stack.Screen name="button-test" options={{ title: 'Button 테스트', headerBackTitle: '뒤로' }} />
         <Stack.Screen name="components-showcase" options={{ headerShown: false }} />
+        <Stack.Screen name="auth-start" options={{ headerShown: false }} />
         <Stack.Screen name="day-record-1207-2245" options={{ headerShown: false }} />
         <Stack.Screen name="figma-node-1207-2245" options={{ headerShown: false }} />
       </Stack>
