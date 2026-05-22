@@ -17,6 +17,7 @@
  *   - Google 아이콘: 16×16 4색 G
  */
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -69,6 +70,7 @@ function SheetModal({
   onOpenTerms,
   onOpenPrivacy,
   onBackToConsent,
+  onAgree,
   agreedTerms,
   agreedPrivacy,
   onToggleTerms,
@@ -81,6 +83,7 @@ function SheetModal({
   onOpenTerms: () => void;
   onOpenPrivacy: () => void;
   onBackToConsent: () => void;
+  onAgree: () => void;
   agreedTerms: boolean;
   agreedPrivacy: boolean;
   onToggleTerms: () => void;
@@ -164,6 +167,7 @@ function SheetModal({
               onTogglePrivacy={onTogglePrivacy}
               canProceed={canProceed}
               onClose={onClose}
+              onAgree={onAgree}
               onOpenTerms={onOpenTerms}
               onOpenPrivacy={onOpenPrivacy}
             />
@@ -190,11 +194,11 @@ function SheetModal({
 
 function ConsentContent({
   agreedTerms, agreedPrivacy, onToggleTerms, onTogglePrivacy,
-  canProceed, onClose, onOpenTerms, onOpenPrivacy,
+  canProceed, onClose, onAgree, onOpenTerms, onOpenPrivacy,
 }: {
   agreedTerms: boolean; agreedPrivacy: boolean;
   onToggleTerms: () => void; onTogglePrivacy: () => void;
-  canProceed: boolean; onClose: () => void;
+  canProceed: boolean; onClose: () => void; onAgree: () => void;
   onOpenTerms: () => void; onOpenPrivacy: () => void;
 }) {
   return (
@@ -236,7 +240,7 @@ function ConsentContent({
       </View>
       <SheetActionButton
         label="동의하고 시작하기"
-        onPress={onClose}
+        onPress={onAgree}
         active={canProceed}
         style={styles.agreeBtn}
       />
@@ -266,6 +270,12 @@ export default function AuthStartScreen() {
   const [agreedPrivacy, setAgreedPrivacy] = useState(true);
 
   const canProceed = agreedTerms && agreedPrivacy;
+
+  const handleAgree = () => {
+    if (!canProceed) return;
+    setSheet('none');
+    router.replace('/(tabs)');
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -309,6 +319,7 @@ export default function AuthStartScreen() {
         onOpenTerms={() => setSheet('terms')}
         onOpenPrivacy={() => setSheet('privacy')}
         onBackToConsent={() => setSheet('consent')}
+        onAgree={handleAgree}
         agreedTerms={agreedTerms}
         agreedPrivacy={agreedPrivacy}
         onToggleTerms={() => setAgreedTerms(v => !v)}

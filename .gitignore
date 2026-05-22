@@ -47,3 +47,9 @@ expo-qr.png
 assets/images/expo-go-qr.png
 assets/images/expo-qr-*.png
 assets/images/alignment-check-qr.png
+
+# Expo temporary export files
+.expo-tmp-export/
+.expo-tmp-export2/
+.expo-tmp-export3/
+debug-*.log
