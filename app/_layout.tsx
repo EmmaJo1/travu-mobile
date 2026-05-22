@@ -25,6 +25,7 @@ export default function RootLayout() {
     'Noto Serif KR': require('../assets/fonts/NotoSerifKR-VF.ttf'),
     'Prata-Regular': require('../assets/fonts/Prata-Regular.ttf'),
     'SansitaSwashed-Bold': require('../assets/fonts/SansitaSwashed-wght.ttf'),
+    'Sansita Swashed': require('../assets/fonts/SansitaSwashed-wght.ttf'),
   });
 
   useEffect(() => {

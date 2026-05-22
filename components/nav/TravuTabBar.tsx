@@ -29,6 +29,10 @@ export default function TravuTabBar({ state, navigation }: BottomTabBarProps) {
         const icon = TAB_ICONS[route.name];
         const isRecord = route.name === 'record';
 
+        const iconColor = isFocused
+          ? Colors.foundation.black
+          : Colors.foundation.grey400;
+
         return (
           <TouchableOpacity
             key={route.key}
@@ -40,7 +44,7 @@ export default function TravuTabBar({ state, navigation }: BottomTabBarProps) {
           >
             <Image
               source={icon}
-              style={[styles.icon, isRecord && styles.recordIcon]}
+              style={[styles.icon, isRecord && styles.recordIcon, { tintColor: iconColor }]}
               resizeMode="contain"
             />
           </TouchableOpacity>

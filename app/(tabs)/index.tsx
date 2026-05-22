@@ -30,6 +30,9 @@ const DIM_HEIGHT = 126;
 const HEADER_HEIGHT = 52;
 const WARM_WHITE = '#F9F5F3';
 
+/** Sansita Swashed VF — weight는 fontWeight로 지정 (Figma Point Text EN 18/700) */
+const SANSITA_SWASHED = 'Sansita Swashed';
+
 const HERO_MASK_COLORS = [
   'rgba(0,0,0,0)',
   'rgba(0,0,0,0)',
@@ -118,11 +121,7 @@ export default function HomeScreen() {
         </SafeAreaView>
       </View>
 
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
+      <View style={styles.content}>
         <View style={styles.journeySection}>
           <Text style={styles.sectionLabel}>TODAY&apos;S JOURNEY</Text>
           <TodaySummary
@@ -140,7 +139,6 @@ export default function HomeScreen() {
 
         <ScrollView
           horizontal
-          nestedScrollEnabled
           showsHorizontalScrollIndicator={false}
           style={styles.photoScroll}
           contentContainerStyle={styles.photoRow}
@@ -165,7 +163,7 @@ export default function HomeScreen() {
             </View>
           </Pressable>
         </ScrollView>
-      </ScrollView>
+      </View>
     </View>
   );
 }
@@ -261,15 +259,14 @@ const styles = StyleSheet.create({
     width: 67,
   },
   locationLabel: {
-    fontFamily: FontFamily.pointEN,
+    fontFamily: SANSITA_SWASHED,
     fontSize: 18,
     lineHeight: 24,
+    fontWeight: '700',
     color: Colors.foundation.white,
   },
-  scroll: {
+  content: {
     flex: 1,
-  },
-  scrollContent: {
     paddingTop: HERO_HEIGHT,
     paddingBottom: 20,
     backgroundColor: WARM_WHITE,
