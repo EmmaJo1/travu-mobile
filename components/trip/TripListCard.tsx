@@ -17,14 +17,9 @@
 import { Colors, Typography } from '@/constants/theme';
 import React from 'react';
 import {
-  Image,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-  type StyleProp,
-  type ViewStyle,
-} from 'react-native';
+  Image, StyleSheet, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
 
 export interface TripListItem {
   id: string;
@@ -96,23 +91,17 @@ const styles = StyleSheet.create({
     boxShadow:       '0px 0px 4px rgba(0,0,0,0.25)',
   },
   country: {
-    fontFamily:  'Prata-Regular',
-    fontSize: 14,
-    lineHeight:  18,
-    fontWeight:  '400',
-    color:       Colors.foundation.black,
-    textAlign:   'center',
-    alignSelf:   'stretch',
+    ...Typography.captionEmphasized,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+    alignSelf: 'stretch',
   },
   date: {
-    fontFamily:  'Pretendard-Regular',
-    fontSize: 12,
-    lineHeight:  16,
-    fontWeight:  '400',
-    color:       Colors.foundation.grey600,
-    marginTop:   0,
-    textAlign:   'center',
-    alignSelf:   'stretch',
+    ...Typography.captionRegular,
+    color: Colors.foundation.grey600,
+    marginTop: 0,
+    textAlign: 'center',
+    alignSelf: 'stretch',
   },
   // ── 본체 ─────────────────────────────────────────────────
   body: {

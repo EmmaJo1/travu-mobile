@@ -1,6 +1,10 @@
 import { Colors } from '@/constants/theme';
 import React from 'react';
-import { Image, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Image, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
+/** Noto Serif KR VF — weight별 family 분리 대신 fontWeight로 굵기 지정 (원본 Figma 스펙) */
+const NOTO_SERIF_KR = 'Noto Serif KR';
 
 interface TodaySummaryProps {
   distanceKm: number;
@@ -58,11 +62,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   title: {
-    fontFamily: 'Noto Serif KR',
+    fontFamily: NOTO_SERIF_KR,
     fontSize: 16,
     lineHeight: 24,
     fontWeight: '700',
-    color: '#454545',
+    color: Colors.foundation.grey800,
   },
   lines: {
     gap: 6,
@@ -84,17 +88,17 @@ const styles = StyleSheet.create({
     gap: 1,
   },
   num: {
-    fontFamily: 'Noto Serif KR',
+    fontFamily: NOTO_SERIF_KR,
     fontSize: 20,
     lineHeight: 24,
     fontWeight: '900',
     color: Colors.foundation.black,
   },
   text: {
-    fontFamily: 'Noto Serif KR',
+    fontFamily: NOTO_SERIF_KR,
     fontSize: 16,
     lineHeight: 24,
     fontWeight: '400',
-    color: '#454545',
+    color: Colors.foundation.grey800,
   },
 });

@@ -5,7 +5,9 @@
  * 라우트: /button-test
  */
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import Text from '@/components/common/AppText';
+
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import AuthActionButton from '@/components/common/AuthActionButton';

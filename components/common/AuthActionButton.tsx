@@ -8,15 +8,9 @@
  * — state=off: 흰 배경, border 1px #E3DBD8, 텍스트 #A29C9A
  */
 import React from 'react';
-import {
-  ActivityIndicator,
-  Platform,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  type StyleProp,
-  type ViewStyle,
-} from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, TouchableOpacity, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
 import { Colors, Typography } from '@/constants/theme';
 
 interface AuthActionButtonProps {

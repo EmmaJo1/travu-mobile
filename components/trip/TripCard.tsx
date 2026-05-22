@@ -12,17 +12,10 @@
  *   3) DateBadge 가로 스크롤 행 (80×60 개별 뱃지)
  */
 import React from 'react';
-import {
-  Image,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-  type StyleProp,
-  type ViewStyle,
-} from 'react-native';
-import { Colors } from '@/constants/theme';
+import { Image, ScrollView, StyleSheet, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
+import { Colors, FontFamily, Typography } from '@/constants/theme';
 import DateBadge from '@/components/common/DateBadge';
 
 export interface DateBadgeData {
@@ -149,11 +142,8 @@ const styles = StyleSheet.create({
     height: 16,
   },
   saveText: {
-    fontFamily:  'Pretendard-Regular',
-    fontSize: 14,
-    lineHeight:  20,
-    fontWeight:  '400',
-    color:       Colors.foundation.grey500,
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey500,
   },
   // ── 메인 행 ─────────────────────────────────────────────
   mainRow: {
@@ -187,18 +177,13 @@ const styles = StyleSheet.create({
     gap: 0,
   },
   country: {
-    fontFamily:  'Pretendard-SemiBold',
-    fontSize: 18,
-    lineHeight:  24,
-    fontWeight:  '600',
-    color:       Colors.foundation.black,
+    ...Typography.title2,
+    color: Colors.foundation.black,
   },
   date: {
-    fontFamily:  'Pretendard-Medium',
-    fontSize: 14,
-    lineHeight:  20,
-    fontWeight:  '500',
-    color:       Colors.foundation.grey600,
+    ...Typography.body2Regular,
+    fontFamily: FontFamily.pretendardMedium,
+    color: Colors.foundation.grey600,
   },
   // ── 통계 행 ─────────────────────────────────────────────
   statsRow: {
@@ -216,26 +201,17 @@ const styles = StyleSheet.create({
     gap:        4,
   },
   statLabel: {
-    fontFamily:  'Pretendard-Regular',
-    fontSize: 12,
-    lineHeight:  16,
-    fontWeight:  '400',
-    color:       Colors.foundation.black,
+    ...Typography.captionRegular,
+    color: Colors.foundation.black,
   },
   statValue: {
-    fontFamily:  'Pretendard-SemiBold',
-    fontSize: 14,
-    lineHeight:  20,
-    fontWeight:  '600',
-    color:       Colors.foundation.black,
-    textAlign:   'center',
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.black,
+    textAlign: 'center',
   },
   statUnit: {
-    fontFamily:  'Pretendard-SemiBold',
-    fontSize: 14,
-    lineHeight:  20,
-    fontWeight:  '600',
-    color:       Colors.foundation.black,
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.black,
   },
   statDivider: {
     width:           2,

@@ -1,6 +1,8 @@
 import React from 'react';
-import { Image, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
-import { Colors } from '@/constants/theme';
+import { Image, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
+import { Colors, Typography } from '@/constants/theme';
 
 interface ProfileSummaryProps {
   userName: string;
@@ -83,10 +85,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   name: {
-    fontFamily: 'Pretendard-SemiBold',
-    fontSize: 18,
-    lineHeight: 24,
-    fontWeight: '600',
+    ...Typography.title2,
     color: Colors.foundation.black,
   },
   statsRow: {
@@ -102,17 +101,11 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   statLabel: {
-    fontFamily: 'Pretendard-Regular',
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '400',
+    ...Typography.captionRegular,
     color: Colors.foundation.black,
   },
   statValue: {
-    fontFamily: 'Pretendard-SemiBold',
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '600',
+    ...Typography.body2Emphasized,
     color: Colors.foundation.black,
   },
   divider: {

@@ -5,9 +5,11 @@
 import BottomTabBar from '@/components/nav/BottomTabBar';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import PlaceEntryCard, { type PlaceEntry } from '@/components/trip/PlaceEntryCard';
-import { Colors } from '@/constants/theme';
+import { Colors, Typography } from '@/constants/theme';
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import Text from '@/components/common/AppText';
+
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const ENTRIES: PlaceEntry[] = [
@@ -115,9 +117,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   mapText: {
-    fontFamily: 'Pretendard-Regular',
-    fontSize: 14,
-    lineHeight: 20,
+    ...Typography.body2Regular,
     color: Colors.foundation.grey500,
   },
   tabBar: {

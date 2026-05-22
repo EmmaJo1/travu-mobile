@@ -11,7 +11,7 @@
  * 업데이트: 2026-05-16
  */
 
-import { Platform } from 'react-native';
+import { Platform, type TextStyle } from 'react-native';
 
 // ---------------------------------------------------------------------------
 // Colors
@@ -111,6 +111,7 @@ export const FontFamily = Platform.select({
     pretendardSemiBold: 'Pretendard-SemiBold',
     pretendardBold:     'Pretendard-Bold',
     notoSerifKR:        'NotoSerifKR-Regular',
+    notoSerifKRMedium:  'NotoSerifKR-Medium',
     notoSerifKRBold:    'NotoSerifKR-Bold',
     notoSerifKRBlack:   'NotoSerifKR-Black',
     prata:              'Prata-Regular',
@@ -122,6 +123,7 @@ export const FontFamily = Platform.select({
     pretendardSemiBold: 'Pretendard-SemiBold',
     pretendardBold:     'Pretendard-Bold',
     notoSerifKR:        'NotoSerifKR-Regular',
+    notoSerifKRMedium:  'NotoSerifKR-Medium',
     notoSerifKRBold:    'NotoSerifKR-Bold',
     notoSerifKRBlack:   'NotoSerifKR-Black',
     prata:              'Prata-Regular',
@@ -133,95 +135,91 @@ export const FontFamily = Platform.select({
   pretendardSemiBold: 'Pretendard-SemiBold',
   pretendardBold:     'Pretendard-Bold',
   notoSerifKR:        'NotoSerifKR-Regular',
+  notoSerifKRMedium:  'NotoSerifKR-Medium',
   notoSerifKRBold:    'NotoSerifKR-Bold',
   notoSerifKRBlack:   'NotoSerifKR-Black',
   prata:              'Prata-Regular',
   pointEN:            'SansitaSwashed-Bold',
 };
 
-/** Pretendard 타입 스케일 */
+/** Pretendard 타입 스케일 — fontWeight는 weight별 fontFamily로만 표현 (Android fallback 방지) */
 export const Typography = {
   title1: {
-    fontFamily:  FontFamily.pretendardSemiBold,
-    fontSize:    28,
-    lineHeight:  40,
-    fontWeight:  '600' as const,
+    fontFamily: FontFamily.pretendardSemiBold,
+    fontSize:   28,
+    lineHeight: 40,
   },
   title2: {
-    fontFamily:  FontFamily.pretendardSemiBold,
-    fontSize:    18,
-    lineHeight:  24,
-    fontWeight:  '600' as const,
+    fontFamily: FontFamily.pretendardSemiBold,
+    fontSize:   18,
+    lineHeight: 24,
   },
   body1Emphasized: {
-    fontFamily:  FontFamily.pretendardMedium,
-    fontSize:    16,
-    lineHeight:  22,
-    fontWeight:  '500' as const,
+    fontFamily: FontFamily.pretendardMedium,
+    fontSize:   16,
+    lineHeight: 22,
   },
   body1Regular: {
-    fontFamily:  FontFamily.pretendard,
-    fontSize:    16,
-    lineHeight:  22,
-    fontWeight:  '400' as const,
+    fontFamily: FontFamily.pretendard,
+    fontSize:   16,
+    lineHeight: 22,
   },
   body2Emphasized: {
-    fontFamily:  FontFamily.pretendardSemiBold,
-    fontSize:    14,
-    lineHeight:  20,
-    fontWeight:  '600' as const,
+    fontFamily: FontFamily.pretendardSemiBold,
+    fontSize:   14,
+    lineHeight: 20,
   },
   body2Regular: {
-    fontFamily:  FontFamily.pretendard,
-    fontSize:    14,
-    lineHeight:  20,
-    fontWeight:  '400' as const,
+    fontFamily: FontFamily.pretendard,
+    fontSize:   14,
+    lineHeight: 20,
   },
   captionRegular: {
-    fontFamily:  FontFamily.pretendard,
-    fontSize:    12,
-    lineHeight:  16,
-    fontWeight:  '400' as const,
+    fontFamily: FontFamily.pretendard,
+    fontSize:   12,
+    lineHeight: 16,
   },
   captionEmphasized: {
-    fontFamily:  FontFamily.pretendardMedium,
-    fontSize:    12,
-    lineHeight:  16,
-    fontWeight:  '500' as const,
+    fontFamily: FontFamily.pretendardMedium,
+    fontSize:   12,
+    lineHeight: 16,
   },
   captionSmall: {
-    fontFamily:  FontFamily.pretendardMedium,
-    fontSize:    10,
-    lineHeight:  12,
-    fontWeight:  '500' as const,
+    fontFamily: FontFamily.pretendardMedium,
+    fontSize:   10,
+    lineHeight: 12,
   },
   /** Noto Serif KR — 대시보드 전용 */
   dashboardNum: {
-    fontFamily:  FontFamily.notoSerifKRBlack,
-    fontSize:    20,
-    lineHeight:  24,
-    fontWeight:  '900' as const,
+    fontFamily: FontFamily.notoSerifKRBlack,
+    fontSize:   20,
+    lineHeight: 24,
   },
   dashboardEmphasis: {
-    fontFamily:  FontFamily.notoSerifKRBold,
-    fontSize:    16,
-    lineHeight:  24,
-    fontWeight:  '700' as const,
+    fontFamily: FontFamily.notoSerifKRBold,
+    fontSize:   16,
+    lineHeight: 24,
   },
   dashboardText: {
-    fontFamily:  FontFamily.notoSerifKR,
-    fontSize:    16,
-    lineHeight:  24,
-    fontWeight:  '400' as const,
+    fontFamily: FontFamily.notoSerifKR,
+    fontSize:   16,
+    lineHeight: 24,
   },
   /** TripListCard / Mypage 제목 전용 — Prata 14/400/18 */
   tripListTitle: {
-    fontFamily:  FontFamily.prata,
-    fontSize:    14,
-    lineHeight:  18,
-    fontWeight:  '400' as const,
+    fontFamily: FontFamily.prata,
+    fontSize:   14,
+    lineHeight: 18,
   },
 } as const;
+
+/** Typography 토큰 + 선택적 override (항상 fontWeight 없이 적용) */
+export function typeStyle(
+  token: keyof typeof Typography,
+  override?: TextStyle,
+): TextStyle {
+  return { ...Typography[token], ...override };
+}
 
 // ---------------------------------------------------------------------------
 // Spacing

@@ -1,6 +1,8 @@
 import React from 'react';
-import { Image, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
-import { Colors } from '@/constants/theme';
+import { Image, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
+import { Colors, FontFamily } from '@/constants/theme';
 
 export interface DateBadgeProps {
   date: string;
@@ -50,24 +52,23 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: 'rgba(255, 255, 255, 0.6)',
   },
+  // Figma DateBadge 전용 — typography scale 밖 (13/18, 11/15)
   date: {
     position: 'absolute',
     left: 6,
     top: 6,
-    fontFamily: 'Pretendard-Medium',
+    fontFamily: FontFamily.pretendardMedium,
     fontSize: 13,
     lineHeight: 18,
-    fontWeight: '500',
     color: Colors.foundation.black,
   },
   day: {
     position: 'absolute',
     left: 10,
     top: 22,
-    fontFamily: 'Pretendard-Medium',
+    fontFamily: FontFamily.pretendardMedium,
     fontSize: 11,
     lineHeight: 15,
-    fontWeight: '500',
     color: Colors.foundation.black,
   },
 });

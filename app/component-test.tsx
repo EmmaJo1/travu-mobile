@@ -3,7 +3,9 @@
  * Figma 스펙 기반으로 재작성된 컴포넌트 렌더링 확인 화면.
  */
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import Text from '@/components/common/AppText';
+
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import PrimaryButton from '@/components/common/PrimaryButton';
@@ -94,14 +96,14 @@ function SectionTitle({ title }: { title: string }) {
 const sectionStyles = StyleSheet.create({
   row:  { flexDirection:'row', alignItems:'center', gap:Spacing.sm, marginTop:Spacing['3xl'], marginBottom:Spacing.lg },
   line: { flex:1, height:1, backgroundColor:Colors.light.borderStrong },
-  text: { ...Typography.captionRegular, color:Colors.light.textSecondary, flexShrink:0 },
+  text: { ...Typography.body2Emphasized, color:Colors.light.textSecondary, flexShrink:0 },
 });
 
 function Label({ text }: { text: string }) {
   return <Text style={labelStyle}>{text}</Text>;
 }
 const labelStyle: object = {
-  ...Typography.captionSmall,
+  ...Typography.captionRegular,
   color:         Colors.light.textSecondary,
   marginBottom:  Spacing.xs,
   textTransform: 'uppercase' as const,
@@ -119,9 +121,9 @@ function MissingComponent({ name, path }: { name: string; path: string }) {
 }
 const missingStyles = StyleSheet.create({
   box:   { borderWidth:1, borderColor:'#E3DBD8', borderStyle:'dashed', borderRadius:Radius.sm, padding:Spacing.lg, backgroundColor:'#FFF8F6', gap:Spacing.xs },
-  badge: { fontSize: 13, color:'#B05A3A', fontWeight:'600' },
-  name:  { fontSize: 15, fontWeight:'600', color:'#333' },
-  path:  { fontSize: 12, color:'#999' },
+  badge: { ...Typography.captionEmphasized, color:'#B05A3A' },
+  name:  { ...Typography.body2Emphasized, color:'#333' },
+  path:  { ...Typography.captionRegular, color:'#999' },
 });
 
 // ─── 메인 ────────────────────────────────────────────────────────────────────
@@ -312,8 +314,7 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   headerAction: {
-    fontSize: 18,
-    lineHeight: 18,
+    ...Typography.title2,
     color: Colors.light.textPrimary,
   },
   bottom: { height: Spacing['4xl'] },

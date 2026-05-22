@@ -1,6 +1,8 @@
 import React from 'react';
-import { Image, StyleSheet, Text, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
-import { Colors } from '@/constants/theme';
+import { Image, StyleSheet, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
+import { Colors, Typography } from '@/constants/theme';
 
 interface ScreenHeaderProps {
   title?: string;
@@ -50,10 +52,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   title: {
-    fontFamily: 'Pretendard-Medium',
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: '500',
+    ...Typography.body1Emphasized,
     color: Colors.foundation.black,
   },
   right: {

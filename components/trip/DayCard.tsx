@@ -8,16 +8,10 @@
  * — 하단: 날짜+요일 문자열 (Body 1 Regular 16/22) + 드롭다운 화살표
  */
 import React from 'react';
-import {
-  Image,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-  type StyleProp,
-  type ViewStyle,
-} from 'react-native';
-import { Colors } from '@/constants/theme';
+import { Image, StyleSheet, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
+import { Colors, FontFamily, Typography } from '@/constants/theme';
 
 export interface DayCardProps {
   /** Day 번호 (1, 2, 3 …) */
@@ -34,12 +28,10 @@ export default function DayCard({ dayNumber, date, onPress, style }: DayCardProp
 
   return (
     <Wrapper style={[styles.card, style]} {...wrapperProps}>
-      {/* 상단: Day 번호 */}
       <View style={styles.dayRow}>
         <Text style={styles.dayText}>Day {dayNumber}</Text>
       </View>
 
-      {/* 하단: 날짜 + 화살표 */}
       <View style={styles.dateRow}>
         <Text style={styles.dateText} numberOfLines={1}>
           {date}
@@ -67,11 +59,10 @@ const styles = StyleSheet.create({
     alignSelf:      'stretch',
   },
   dayText: {
-    fontFamily:  'Pretendard-SemiBold',
-    fontSize: 24,
-    lineHeight:  34,
-    fontWeight:  '600',
-    color:       Colors.foundation.black,
+    fontFamily: FontFamily.pretendardSemiBold,
+    fontSize:   24,
+    lineHeight: 36,
+    color:      Colors.foundation.black,
   },
   dateRow: {
     flexDirection:  'row',
@@ -81,16 +72,13 @@ const styles = StyleSheet.create({
     gap:            5,
   },
   dateText: {
-    fontFamily:  'Pretendard-Regular',
-    fontSize: 14,
-    lineHeight:  20,
-    fontWeight:  '400',
-    color:       Colors.foundation.black,
-    flexShrink:  1,
+    ...Typography.body1Regular,
+    color:      Colors.foundation.black,
+    flexShrink: 1,
   },
   arrow: {
-    width:       12,
-    height:      12,
-    flexShrink:  0,
+    width:      12,
+    height:     12,
+    flexShrink: 0,
   },
 });

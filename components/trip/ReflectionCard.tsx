@@ -1,6 +1,8 @@
 import React from 'react';
-import { Image, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
-import { Colors } from '@/constants/theme';
+import { Image, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
+import { Colors, Typography } from '@/constants/theme';
 
 export interface ReflectionCardData {
   country: string;
@@ -50,17 +52,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   country: {
-    fontFamily: 'Pretendard-Medium',
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: '500',
+    ...Typography.body1Emphasized,
     color: Colors.foundation.black,
   },
   date: {
-    fontFamily: 'Pretendard-Regular',
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '400',
+    ...Typography.captionRegular,
     color: Colors.foundation.grey600,
   },
   mark: {
@@ -77,10 +73,7 @@ const styles = StyleSheet.create({
     height: 12,
   },
   text: {
-    fontFamily: 'Pretendard-Regular',
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '400',
+    ...Typography.body2Regular,
     color: Colors.foundation.black,
   },
 });

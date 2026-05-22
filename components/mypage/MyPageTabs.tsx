@@ -1,6 +1,8 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
-import { Colors } from '@/constants/theme';
+import { StyleSheet, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
+import { Colors, FontFamily, Typography } from '@/constants/theme';
 
 export type MyPageTabMode = 'trip' | 'reflection';
 
@@ -52,17 +54,14 @@ const styles = StyleSheet.create({
     marginBottom: -2,
   },
   tabText: {
-    fontSize: 16,
-    lineHeight: 22,
+    ...Typography.body1Regular,
   },
   tabTextActive: {
-    fontFamily: 'Pretendard-Medium',
-    fontWeight: '500',
+    fontFamily: FontFamily.pretendardMedium,
     color: Colors.foundation.black,
   },
   tabTextInactive: {
-    fontFamily: 'Pretendard-Regular',
-    fontWeight: '400',
+    fontFamily: FontFamily.pretendard,
     color: Colors.foundation.grey400,
   },
 });

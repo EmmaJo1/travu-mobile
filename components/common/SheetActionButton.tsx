@@ -8,15 +8,9 @@
  * — active=false: 흰 배경, border 1px #848484, 텍스트 #848484
  */
 import React from 'react';
-import {
-  ActivityIndicator,
-  Platform,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  type StyleProp,
-  type ViewStyle,
-} from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, TouchableOpacity, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
 import { Colors, Typography } from '@/constants/theme';
 
 interface SheetActionButtonProps {

@@ -16,17 +16,10 @@
  *   · 메모 텍스트 (Body 2 Regular 14/400, black)
  */
 import React from 'react';
-import {
-  Image,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-  type StyleProp,
-  type ViewStyle,
-} from 'react-native';
-import { Colors } from '@/constants/theme';
+import { Image, ScrollView, StyleSheet, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
+import { Colors, Typography } from '@/constants/theme';
 
 export interface PlaceEntry {
   id: string;
@@ -138,12 +131,10 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   time: {
-    fontFamily:  'Pretendard-Medium',
-    fontSize: 12,
-    lineHeight:  16,
-    fontWeight:  '500',
-    color:       Colors.foundation.grey500,
-    textAlign:   'center',
+    ...Typography.captionEmphasized,
+    lineHeight: 14,
+    color: Colors.foundation.grey500,
+    textAlign: 'center',
   },
   timelineLine: {
     flex:            1,
@@ -176,11 +167,8 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   placeName: {
-    fontFamily:  'Pretendard-Medium',
-    fontSize: 16,
-    lineHeight:  22,
-    fontWeight:  '500',
-    color:       Colors.foundation.black,
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
   },
   tagRow: {
     flexDirection: 'row',
@@ -189,11 +177,8 @@ const styles = StyleSheet.create({
     marginTop:     2,
   },
   tag: {
-    fontFamily:  'Pretendard-Medium',
-    fontSize: 12,
-    lineHeight:  16,
-    fontWeight:  '500',
-    color:       Colors.foundation.grey500,
+    ...Typography.captionEmphasized,
+    color: Colors.foundation.grey500,
   },
   tagDot: {
     width:           2,
@@ -202,18 +187,13 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.foundation.grey500,
   },
   editText: {
-    fontFamily:  'Pretendard-Medium',
-    fontSize: 12,
-    lineHeight:  16,
-    fontWeight:  '500',
-    color:       Colors.foundation.grey400,
-    flexShrink:  0,
+    ...Typography.captionEmphasized,
+    color: Colors.foundation.grey400,
+    flexShrink: 0,
   },
   stars: {
-    fontFamily:   'Pretendard-Regular',
-    fontSize:     14,
-    lineHeight:   20,
-    color:        Colors.foundation.black,
+    ...Typography.body2Regular,
+    color: Colors.foundation.black,
     letterSpacing: 1,
   },
   // ── 사진 스트립 ──────────────────────────────────────────
@@ -233,10 +213,7 @@ const styles = StyleSheet.create({
   },
   // ── 메모 텍스트 ──────────────────────────────────────────
   noteText: {
-    fontFamily:  'Pretendard-Regular',
-    fontSize: 14,
-    lineHeight:  20,
-    fontWeight:  '400',
-    color:       Colors.foundation.black,
+    ...Typography.body2Regular,
+    color: Colors.foundation.black,
   },
 });

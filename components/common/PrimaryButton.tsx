@@ -10,14 +10,9 @@
  * 화면 전체 너비를 채우는 CTA 버튼은 AuthActionButton을 사용하세요.
  */
 import React from 'react';
-import {
-  ActivityIndicator,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  type StyleProp,
-  type ViewStyle,
-} from 'react-native';
+import { ActivityIndicator, StyleSheet, TouchableOpacity, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
 import { Colors, Typography } from '@/constants/theme';
 
 interface PrimaryButtonProps {
@@ -72,6 +67,7 @@ const styles = StyleSheet.create({
   },
   label: {
     ...Typography.captionEmphasized,
+    lineHeight: 22,
     color: '#FFFFFF',
   },
 });

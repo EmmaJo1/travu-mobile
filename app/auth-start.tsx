@@ -17,73 +17,247 @@
  *   - Google 아이콘: 16×16 4색 G
  */
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+  Animated, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import Text from '@/components/common/AppText';
+
+import { Path, Svg } from 'react-native-svg';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import SheetActionButton from '@/components/common/SheetActionButton';
 import { Colors, FontFamily, Typography } from '@/constants/theme';
 
 type SheetType = 'none' | 'terms' | 'privacy' | 'consent';
 
-/** Figma devicon:google 4색 G 로고 근사 구현 */
+/** 공식 Google G 로고 — 18×18 viewBox 기반 4색 SVG 경로 */
 function GoogleLogo() {
   return (
-    <View style={googleStyles.wrap}>
-      <View style={[googleStyles.arcOuter, googleStyles.arcRed]} />
-      <View style={[googleStyles.arcOuter, googleStyles.arcBlue]} />
-      <View style={googleStyles.inner} />
-      <View style={googleStyles.bar} />
-      <Text style={googleStyles.g}>G</Text>
-    </View>
+    <Svg width={16} height={16} viewBox="0 0 18 18">
+      {/* Blue */}
+      <Path
+        fill="#4285F4"
+        d="M17.64 9.2045c0-.5909-.0534-1.1592-.1489-1.7091H9v3.2318h4.8436c-.2083 1.1218-.8417 2.0718-1.7964 2.7127v2.2545h2.9083c1.7018-1.5682 2.6845-3.8773 2.6845-6.4899z"
+      />
+      {/* Green */}
+      <Path
+        fill="#34A853"
+        d="M9 18c2.43 0 4.4673-.8064 5.9564-2.1818l-2.9083-2.2545c-.8064.5418-1.8382.8618-3.048.8618-2.3455 0-4.3309-1.5845-5.0382-3.7127H.9574v2.3282C2.4382 15.9836 5.4818 18 9 18z"
+      />
+      {/* Yellow */}
+      <Path
+        fill="#FBBC05"
+        d="M3.9618 10.71C3.7836 10.1682 3.6818 9.5918 3.6818 9s.1018-1.1682.28-1.71V4.9618H.9574C.3473 6.1773 0 7.5482 0 9s.3473 2.8227.9574 4.0382L3.9618 10.71z"
+      />
+      {/* Red */}
+      <Path
+        fill="#EA4335"
+        d="M9 3.5782c1.3218 0 2.5073.4545 3.4409 1.3473l2.5818-2.5818C13.4636.8918 11.4327 0 9 0 5.4818 0 2.4382 2.0164.9574 4.9618L3.9618 7.29C4.6691 5.1618 6.6545 3.5782 9 3.5782z"
+      />
+    </Svg>
   );
 }
 
-const googleStyles = StyleSheet.create({
-  wrap: {
-    width: 16,
-    height: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  arcOuter: {
-    position: 'absolute',
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    borderWidth: 2.5,
-  },
-  arcRed:  { borderColor: '#E33629' },
-  arcBlue: { borderColor: '#4285F4', borderTopColor: 'transparent', borderLeftColor: 'transparent' },
-  inner: {
-    position: 'absolute',
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: Colors.foundation.white,
-  },
-  bar: {
-    position: 'absolute',
-    right: 0,
-    top: 5,
-    width: 7,
-    height: 3,
-    backgroundColor: '#4285F4',
-  },
-  g: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#4285F4',
-    lineHeight: 11,
-  },
-});
+/**
+ * 단일 Modal 안에서 consent → terms/privacy 전환을 처리합니다.
+ * - 딤: Modal 최초 열릴 때만 짧게 fadeIn (시트 전환 시 유지)
+ * - 시트: 열릴 때 slideUp, 닫힐 때 slideDown
+ * - sheet !== 'none' 이면 즉시 Modal 렌더 (mounted 지연 없음)
+ */
+function SheetModal({
+  sheet,
+  onClose,
+  onOpenTerms,
+  onOpenPrivacy,
+  onBackToConsent,
+  agreedTerms,
+  agreedPrivacy,
+  onToggleTerms,
+  onTogglePrivacy,
+  canProceed,
+  paddingBottom,
+}: {
+  sheet: SheetType;
+  onClose: () => void;
+  onOpenTerms: () => void;
+  onOpenPrivacy: () => void;
+  onBackToConsent: () => void;
+  agreedTerms: boolean;
+  agreedPrivacy: boolean;
+  onToggleTerms: () => void;
+  onTogglePrivacy: () => void;
+  canProceed: boolean;
+  paddingBottom: number;
+}) {
+  const isOpen = sheet !== 'none';
+  const [presented, setPresented] = useState(false);
+  const wasOpenRef = useRef(false);
+  const animRef = useRef<Animated.CompositeAnimation | null>(null);
+
+  const dimOpacity  = useRef(new Animated.Value(0)).current;
+  const sheetTransY = useRef(new Animated.Value(600)).current;
+
+  useEffect(() => {
+    animRef.current?.stop();
+
+    if (isOpen) {
+      setPresented(true);
+      const isFirstOpen = !wasOpenRef.current;
+      wasOpenRef.current = true;
+
+      if (isFirstOpen) {
+        dimOpacity.setValue(0);
+        sheetTransY.setValue(600);
+        animRef.current = Animated.parallel([
+          Animated.timing(dimOpacity,  { toValue: 1, duration: 150, useNativeDriver: true }),
+          Animated.timing(sheetTransY, { toValue: 0, duration: 300, useNativeDriver: true }),
+        ]);
+        animRef.current.start();
+      } else {
+        // consent ↔ terms/privacy 전환: 딤·시트 위치 유지
+        dimOpacity.setValue(1);
+        sheetTransY.setValue(0);
+      }
+      return;
+    }
+
+    // 닫힘 — 이전에 열린 적이 있을 때만 닫힘 애니메이션 실행
+    if (!wasOpenRef.current) return;
+
+    wasOpenRef.current = false;
+    animRef.current = Animated.parallel([
+      Animated.timing(dimOpacity,  { toValue: 0, duration: 200, useNativeDriver: true }),
+      Animated.timing(sheetTransY, { toValue: 600, duration: 250, useNativeDriver: true }),
+    ]);
+    animRef.current.start(({ finished }) => {
+      if (finished) setPresented(false);
+    });
+
+    return () => {
+      animRef.current?.stop();
+    };
+  }, [isOpen, sheet, dimOpacity, sheetTransY]);
+
+  // isOpen이면 즉시 표시, 닫히는 중이면 presented 유지
+  if (!isOpen && !presented) return null;
+
+  const isTall = sheet === 'terms' || sheet === 'privacy';
+
+  return (
+    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+      <View style={styles.modalWrapper}>
+        <Animated.View style={[styles.dimmedBase, { opacity: dimOpacity }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        </Animated.View>
+
+        <Animated.View
+          style={[
+            styles.bottomSheet,
+            isTall && styles.bottomSheetTall,
+            { paddingBottom, transform: [{ translateY: sheetTransY }] },
+          ]}
+        >
+          {sheet === 'consent' && (
+            <ConsentContent
+              agreedTerms={agreedTerms}
+              agreedPrivacy={agreedPrivacy}
+              onToggleTerms={onToggleTerms}
+              onTogglePrivacy={onTogglePrivacy}
+              canProceed={canProceed}
+              onClose={onClose}
+              onOpenTerms={onOpenTerms}
+              onOpenPrivacy={onOpenPrivacy}
+            />
+          )}
+          {sheet === 'terms' && (
+            <DetailContent
+              title="이용약관"
+              body={TERMS_TEXT}
+              onClose={onBackToConsent}
+            />
+          )}
+          {sheet === 'privacy' && (
+            <DetailContent
+              title="개인정보 처리방침"
+              body={PRIVACY_TEXT}
+              onClose={onBackToConsent}
+            />
+          )}
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+function ConsentContent({
+  agreedTerms, agreedPrivacy, onToggleTerms, onTogglePrivacy,
+  canProceed, onClose, onOpenTerms, onOpenPrivacy,
+}: {
+  agreedTerms: boolean; agreedPrivacy: boolean;
+  onToggleTerms: () => void; onTogglePrivacy: () => void;
+  canProceed: boolean; onClose: () => void;
+  onOpenTerms: () => void; onOpenPrivacy: () => void;
+}) {
+  return (
+    <>
+      <TouchableOpacity style={styles.closeBtn} onPress={onClose} hitSlop={12}>
+        <Ionicons name="close" size={20} color={Colors.foundation.black} />
+      </TouchableOpacity>
+      <Text style={styles.sheetTitle}>이용약관 및 개인정보 처리방침</Text>
+      <Text style={styles.sheetDesc}>
+        Travu는 회원님의 개인정보를 소중히 보호하며,{'\n'}
+        안전한 서비스 제공을 위해 최선을 다합니다.
+      </Text>
+      <View style={styles.checkList}>
+        <TouchableOpacity style={styles.checkRow} activeOpacity={0.7} onPress={onToggleTerms}>
+          <View style={[styles.checkbox, agreedTerms && styles.checkboxChecked]}>
+            {agreedTerms && <Ionicons name="checkmark" size={12} color="#FFFFFF" />}
+          </View>
+          <View style={styles.checkContent}>
+            <Text style={styles.checkTitle}>이용약관</Text>
+            <Text style={styles.checkDesc}>Travu 서비스 이용에 관한 약관입니다</Text>
+          </View>
+          <TouchableOpacity onPress={onOpenTerms} hitSlop={12}>
+            <Ionicons name="chevron-forward" size={16} color={Colors.foundation.grey400} />
+          </TouchableOpacity>
+        </TouchableOpacity>
+        <View style={styles.divider} />
+        <TouchableOpacity style={styles.checkRow} activeOpacity={0.7} onPress={onTogglePrivacy}>
+          <View style={[styles.checkbox, agreedPrivacy && styles.checkboxChecked]}>
+            {agreedPrivacy && <Ionicons name="checkmark" size={12} color="#FFFFFF" />}
+          </View>
+          <View style={styles.checkContent}>
+            <Text style={styles.checkTitle}>개인정보 처리방침</Text>
+            <Text style={styles.checkDesc}>회원님의 개인정보 처리에 관한 안내입니다.</Text>
+          </View>
+          <TouchableOpacity onPress={onOpenPrivacy} hitSlop={12}>
+            <Ionicons name="chevron-forward" size={16} color={Colors.foundation.grey400} />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </View>
+      <SheetActionButton
+        label="동의하고 시작하기"
+        onPress={onClose}
+        active={canProceed}
+        style={styles.agreeBtn}
+      />
+    </>
+  );
+}
+
+function DetailContent({ title, body, onClose }: { title: string; body: string; onClose: () => void }) {
+  return (
+    <>
+      <TouchableOpacity style={styles.closeBtn} onPress={onClose} hitSlop={12}>
+        <Ionicons name="close" size={20} color={Colors.foundation.black} />
+      </TouchableOpacity>
+      <Text style={styles.sheetTitle}>{title}</Text>
+      <ScrollView style={styles.docScroll} showsVerticalScrollIndicator={false}>
+        <Text style={styles.docText}>{body}</Text>
+      </ScrollView>
+      <SheetActionButton label="확인" onPress={onClose} style={styles.agreeBtn} />
+    </>
+  );
+}
 
 export default function AuthStartScreen() {
   const insets = useSafeAreaInsets();
@@ -94,18 +268,18 @@ export default function AuthStartScreen() {
   const canProceed = agreedTerms && agreedPrivacy;
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={['top']}>
       {/* ── 메인 랜딩 ──────────────────────────────── */}
       <View style={styles.container}>
-        {/* 중앙 로고 영역 */}
+        {/* 로고 영역 — Figma: 상태바 하단 기준 218px */}
         <View style={styles.logoArea}>
           <Text style={styles.appLabel}>TRAVEL JOURNAL APP</Text>
           <Text style={styles.appTitle}>Travu</Text>
           <Text style={styles.appSubtitle}>여행의 순간을 기록하고 꺼내보세요</Text>
         </View>
 
-        {/* 하단 버튼 영역 */}
-        <View style={[styles.buttonArea, { paddingBottom: insets.bottom + 32 }]}>
+        {/* 하단 버튼 영역 — Google 버튼 하단 64px */}
+        <View style={styles.buttonArea}>
           <TouchableOpacity
             style={[styles.socialBtn, styles.appleBtn]}
             activeOpacity={0.85}
@@ -128,125 +302,20 @@ export default function AuthStartScreen() {
         </View>
       </View>
 
-      {/* ── 약관 동의 바텀시트 (821:966) ──────────── */}
-      <Modal
-        visible={sheet === 'consent'}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSheet('none')}
-      >
-        <View style={styles.modalWrapper}>
-          <Pressable style={styles.dimmed} onPress={() => setSheet('none')} />
-          <View style={[styles.bottomSheet, { paddingBottom: insets.bottom + 16 }]}>
-            <TouchableOpacity style={styles.closeBtn} onPress={() => setSheet('none')} hitSlop={12}>
-              <Ionicons name="close" size={20} color={Colors.foundation.black} />
-            </TouchableOpacity>
-
-            <Text style={styles.sheetTitle}>이용약관 및 개인정보 처리방침</Text>
-            <Text style={styles.sheetDesc}>
-              Travu는 회원님의 개인정보를 소중히 보호하며,{'\n'}
-              안전한 서비스 제공을 위해 최선을 다합니다.
-            </Text>
-
-            <View style={styles.checkList}>
-              <TouchableOpacity
-                style={styles.checkRow}
-                activeOpacity={0.7}
-                onPress={() => setAgreedTerms(v => !v)}
-              >
-                <View style={[styles.checkbox, agreedTerms && styles.checkboxChecked]}>
-                  {agreedTerms && <Ionicons name="checkmark" size={12} color="#FFFFFF" />}
-                </View>
-                <View style={styles.checkContent}>
-                  <Text style={styles.checkTitle}>이용약관</Text>
-                  <Text style={styles.checkDesc}>Travu 서비스 이용에 관한 약관입니다</Text>
-                </View>
-                <TouchableOpacity onPress={() => setSheet('terms')} hitSlop={12}>
-                  <Ionicons name="chevron-forward" size={16} color={Colors.foundation.grey400} />
-                </TouchableOpacity>
-              </TouchableOpacity>
-
-              <View style={styles.divider} />
-
-              <TouchableOpacity
-                style={styles.checkRow}
-                activeOpacity={0.7}
-                onPress={() => setAgreedPrivacy(v => !v)}
-              >
-                <View style={[styles.checkbox, agreedPrivacy && styles.checkboxChecked]}>
-                  {agreedPrivacy && <Ionicons name="checkmark" size={12} color="#FFFFFF" />}
-                </View>
-                <View style={styles.checkContent}>
-                  <Text style={styles.checkTitle}>개인정보 처리방침</Text>
-                  <Text style={styles.checkDesc}>회원님의 개인정보 처리에 관한 안내입니다.</Text>
-                </View>
-                <TouchableOpacity onPress={() => setSheet('privacy')} hitSlop={12}>
-                  <Ionicons name="chevron-forward" size={16} color={Colors.foundation.grey400} />
-                </TouchableOpacity>
-              </TouchableOpacity>
-            </View>
-
-            <SheetActionButton
-              label="동의하고 시작하기"
-              onPress={() => setSheet('none')}
-              active={canProceed}
-              style={styles.agreeBtn}
-            />
-          </View>
-        </View>
-      </Modal>
-
-      {/* ── 이용약관 상세 시트 (821:1033) ─────────── */}
-      <Modal
-        visible={sheet === 'terms'}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSheet('consent')}
-      >
-        <View style={styles.modalWrapper}>
-          <Pressable style={styles.dimmed} onPress={() => setSheet('consent')} />
-          <View style={[styles.bottomSheet, styles.bottomSheetTall, { paddingBottom: insets.bottom + 16 }]}>
-            <TouchableOpacity style={styles.closeBtn} onPress={() => setSheet('consent')} hitSlop={12}>
-              <Ionicons name="close" size={20} color={Colors.foundation.black} />
-            </TouchableOpacity>
-            <Text style={styles.sheetTitle}>이용약관</Text>
-            <ScrollView style={styles.docScroll} showsVerticalScrollIndicator={false}>
-              <Text style={styles.docText}>{TERMS_TEXT}</Text>
-            </ScrollView>
-            <SheetActionButton
-              label="확인"
-              onPress={() => setSheet('consent')}
-              style={styles.agreeBtn}
-            />
-          </View>
-        </View>
-      </Modal>
-
-      {/* ── 개인정보 처리방침 상세 시트 (821:1082) ── */}
-      <Modal
-        visible={sheet === 'privacy'}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSheet('consent')}
-      >
-        <View style={styles.modalWrapper}>
-          <Pressable style={styles.dimmed} onPress={() => setSheet('consent')} />
-          <View style={[styles.bottomSheet, styles.bottomSheetTall, { paddingBottom: insets.bottom + 16 }]}>
-            <TouchableOpacity style={styles.closeBtn} onPress={() => setSheet('consent')} hitSlop={12}>
-              <Ionicons name="close" size={20} color={Colors.foundation.black} />
-            </TouchableOpacity>
-            <Text style={styles.sheetTitle}>개인정보 처리방침</Text>
-            <ScrollView style={styles.docScroll} showsVerticalScrollIndicator={false}>
-              <Text style={styles.docText}>{PRIVACY_TEXT}</Text>
-            </ScrollView>
-            <SheetActionButton
-              label="확인"
-              onPress={() => setSheet('consent')}
-              style={styles.agreeBtn}
-            />
-          </View>
-        </View>
-      </Modal>
+      {/* ── 단일 Modal — 모든 시트를 하나의 Modal 안에서 처리 ── */}
+      <SheetModal
+        sheet={sheet}
+        onClose={() => setSheet('none')}
+        onOpenTerms={() => setSheet('terms')}
+        onOpenPrivacy={() => setSheet('privacy')}
+        onBackToConsent={() => setSheet('consent')}
+        agreedTerms={agreedTerms}
+        agreedPrivacy={agreedPrivacy}
+        onToggleTerms={() => setAgreedTerms(v => !v)}
+        onTogglePrivacy={() => setAgreedPrivacy(v => !v)}
+        canProceed={canProceed}
+        paddingBottom={insets.bottom + 16}
+      />
     </SafeAreaView>
   );
 }
@@ -255,9 +324,7 @@ export default function AuthStartScreen() {
 // ※ 참고용 초안입니다. 법률 자문이 아니며, 실서비스 배포 전 반드시 변호사 검토가 필요합니다.
 // ※ 개인정보보호법 §30 법정 필수 11개 항목 기준 작성 (2026.9.11 시행 개정법 반영 기준)
 
-const TERMS_TEXT = `이용약관
-
-시행일: 2026년 __월 __일
+const TERMS_TEXT = `시행일: 2026년 __월 __일
 
 제1조 (목적)
 이 약관은 Travu(이하 "서비스")를 이용함에 있어 운영자와 이용자 간의 권리, 의무 및 책임사항을 규정함을 목적으로 합니다.
@@ -310,9 +377,7 @@ const TERMS_TEXT = `이용약관
 부칙
 본 약관은 2026년 __월 __일부터 시행됩니다.`;
 
-const PRIVACY_TEXT = `개인정보처리방침
-
-시행일: 2026년 __월 __일
+const PRIVACY_TEXT = `시행일: 2026년 __월 __일
 
 Travu(이하 "서비스")는 개인정보보호법 제30조에 따라 정보주체의 개인정보를 보호하고 관련 고충을 신속히 처리할 수 있도록 다음과 같이 개인정보처리방침을 수립·공개합니다.
 
@@ -403,7 +468,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
 
-  // ── 로고 영역 ──
+  // ── 로고 영역 — 상단~버튼 사이 flex 영역에서 수직 중앙 정렬 (원본 레이아웃)
   logoArea: {
     flex: 1,
     alignItems: 'center',
@@ -412,38 +477,34 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   appLabel: {
-    fontFamily: FontFamily.pretendardMedium,
-    fontSize: 10,
+    ...Typography.captionSmall,
     lineHeight: 14,
-    fontWeight: '500',
     letterSpacing: 4,
-    color: '#857B70',                      // Figma: rgba(133,123,112)
+    color: '#857B70',
     textAlign: 'center',
   },
   appTitle: {
-    fontFamily: FontFamily.pretendardBold, // Pretendard 700 (NOT SansitaSwashed)
+    fontFamily: FontFamily.pretendardBold,
     fontSize: 56,
     lineHeight: 68,
-    fontWeight: '700',
     color: Colors.foundation.black,
     textAlign: 'center',
     marginTop: 4,
   },
   appSubtitle: {
-    fontFamily: FontFamily.notoSerifKR,    // Noto Serif CJK KR 14/500
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '500',
-    color: '#292B2C',                      // Figma: rgba(41,43,44) — 거의 검정
+    ...Typography.body2Regular,
+    fontFamily: FontFamily.notoSerifKRMedium,
+    color: '#292B2C',
     textAlign: 'center',
     marginTop: 4,
   },
 
-  // ── 버튼 영역 ── (Figma: w:320 h:48 r:8)
+  // ── 버튼 영역 ── (Figma: w:320 h:48 r:8, gap 8, Google 버튼 하단 64px)
   buttonArea: {
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
     paddingHorizontal: 20,
+    paddingBottom: 64,
   },
   socialBtn: {
     width: 320,
@@ -466,10 +527,8 @@ const styles = StyleSheet.create({
     borderColor: Colors.warm.beige,        // #E3DBD8
   },
   socialLabel: {
+    ...Typography.body2Regular,
     fontFamily: FontFamily.pretendardMedium,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '500',
     textAlign: 'center',
   },
   appleBtnLabel: {
@@ -484,16 +543,16 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
   },
-  dimmed: {
-    flex: 1,
+  dimmedBase: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: Colors.light.bgOverlay,
   },
 
-  // ── 바텀시트 공통 ──
+  // ── 바텀시트 공통 ── (Figma: borderRadius 24)
   bottomSheet: {
     backgroundColor: Colors.foundation.white,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     paddingHorizontal: 20,
     paddingTop: 24,
     gap: 16,
@@ -512,12 +571,13 @@ const styles = StyleSheet.create({
     ...Typography.title2,
     color: Colors.foundation.black,
     marginTop: -8,
+    textAlign: 'center',
   },
   sheetDesc: {
     ...Typography.captionRegular,
     color: Colors.foundation.grey500,
-    lineHeight: 18,
     marginTop: -4,
+    textAlign: 'center',
   },
   checkList: {
     gap: 0,
@@ -573,7 +633,6 @@ const styles = StyleSheet.create({
   docText: {
     ...Typography.body2Regular,
     color: Colors.foundation.black,
-    lineHeight: 22,
     paddingBottom: 8,
   },
 });

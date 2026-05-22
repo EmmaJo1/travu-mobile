@@ -7,9 +7,11 @@ import ReflectionCard from '@/components/trip/ReflectionCard';
 import TodaySummary from '@/components/trip/TodaySummary';
 import TravelStatsCard from '@/components/trip/TravelStatsCard';
 import TripCard, { type TripCardData } from '@/components/trip/TripCard';
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Typography } from '@/constants/theme';
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import Text from '@/components/common/AppText';
+
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const MOCK_TRIP: TripCardData = {
@@ -110,10 +112,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   note: {
+    ...Typography.captionRegular,
     color: Colors.foundation.grey500,
-    fontFamily: 'Pretendard-Regular',
-    fontSize: 12,
-    lineHeight: 16,
   },
   tabBar: {
     position: 'absolute',

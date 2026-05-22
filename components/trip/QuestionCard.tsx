@@ -1,6 +1,8 @@
 import React from 'react';
-import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
-import { Colors } from '@/constants/theme';
+import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
+import { Colors, Typography } from '@/constants/theme';
 
 export interface QuestionCardData {
   question: string;
@@ -48,26 +50,17 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   prefix: {
-    fontFamily: 'Pretendard-SemiBold',
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '600',
+    ...Typography.body2Emphasized,
     color: Colors.foundation.black,
   },
   emphasis: {
     flex: 1,
-    fontFamily: 'Pretendard-SemiBold',
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '600',
+    ...Typography.body2Emphasized,
     color: Colors.foundation.black,
   },
   answer: {
     flex: 1,
-    fontFamily: 'Pretendard-Regular',
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '400',
+    ...Typography.body2Regular,
     color: Colors.foundation.black,
   },
   metaRow: {
@@ -77,10 +70,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   meta: {
-    fontFamily: 'Pretendard-Medium',
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '500',
+    ...Typography.captionEmphasized,
     color: Colors.foundation.grey600,
   },
 });

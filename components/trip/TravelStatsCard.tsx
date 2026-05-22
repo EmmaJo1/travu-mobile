@@ -1,6 +1,8 @@
 import React from 'react';
-import { Image, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
-import { Colors } from '@/constants/theme';
+import { Image, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import Text from '@/components/common/AppText';
+
+import { Colors, Typography } from '@/constants/theme';
 
 interface TravelStatsCardProps {
   placeCount: number;
@@ -74,17 +76,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   value: {
-    fontFamily: 'Pretendard-SemiBold',
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '600',
+    ...Typography.body2Emphasized,
     color: Colors.foundation.black,
   },
   label: {
-    fontFamily: 'Pretendard-Regular',
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '400',
+    ...Typography.captionRegular,
     color: Colors.foundation.black,
   },
 });
