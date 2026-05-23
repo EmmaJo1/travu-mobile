@@ -16,7 +16,7 @@
  *   · 메모 텍스트 (Body 2 Regular 14/400, black)
  */
 import React from 'react';
-import { Image, ScrollView, StyleSheet, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Image, ScrollView, StyleSheet, TouchableOpacity, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from 'react-native';
 import Text from '@/components/common/AppText';
 
 import { Colors, Typography } from '@/constants/theme';
@@ -37,6 +37,8 @@ export interface PlaceEntry {
   text?: string;
   /** 사진 URI 배열 (최대 4장 표시) */
   photoUris?: string[];
+  /** 로컬 asset 사진 배열 */
+  photoSources?: ImageSourcePropType[];
   /** 수정 버튼 콜백 */
   onEdit?: () => void;
 }
@@ -44,9 +46,11 @@ export interface PlaceEntry {
 interface PlaceEntryCardProps {
   entry: PlaceEntry;
   style?: StyleProp<ViewStyle>;
+  /** MVP record-day-detail 등에서 별점 숨김 */
+  showRating?: boolean;
 }
 
-export default function PlaceEntryCard({ entry, style }: PlaceEntryCardProps) {
+export default function PlaceEntryCard({ entry, style, showRating = true }: PlaceEntryCardProps) {
   return (
     <View style={[styles.card, style]}>
       {/* ── 왼쪽 타임라인 컬럼 ── */}
@@ -89,24 +93,31 @@ export default function PlaceEntryCard({ entry, style }: PlaceEntryCardProps) {
         </View>
 
         {/* 별점 */}
-        {entry.rating != null && entry.rating > 0 && (
+        {showRating && entry.rating != null && entry.rating > 0 && (
           <Text style={styles.stars}>{'★'.repeat(Math.min(entry.rating, 5))}</Text>
         )}
 
         {/* 사진 스트립 */}
-        {entry.photoUris && entry.photoUris.length > 0 && (
+        {(entry.photoSources && entry.photoSources.length > 0) ||
+        (entry.photoUris && entry.photoUris.length > 0) ? (
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.photoStrip}
           >
-            {entry.photoUris.slice(0, 4).map((uri, i) => (
-              <View key={i} style={styles.photoItem}>
-                <Image source={{ uri }} style={styles.photo} resizeMode="cover" />
-              </View>
-            ))}
+            {entry.photoSources
+              ? entry.photoSources.slice(0, 4).map((source, i) => (
+                  <View key={i} style={styles.photoItem}>
+                    <Image source={source} style={styles.photo} resizeMode="cover" />
+                  </View>
+                ))
+              : entry.photoUris!.slice(0, 4).map((uri, i) => (
+                  <View key={i} style={styles.photoItem}>
+                    <Image source={{ uri }} style={styles.photo} resizeMode="cover" />
+                  </View>
+                ))}
           </ScrollView>
-        )}
+        ) : null}
 
         {/* 메모 텍스트 */}
         {entry.text ? (

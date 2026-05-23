@@ -1,21 +1,26 @@
 /**
  * TripCard
  *
- * Figma: 1017:1801 "TripCard"
- * — 전체 크기: 350×178
+ * Figma: 1017:1801 "TripCard" · Record flow 기준
  * — 구조:
  *   1) 메인 행: 썸네일(140×110, radius=4) + 정보 영역
- *      - 제목 (Title 2, 18/600 SemiBold)
- *      - 날짜 (Body 2 Regular, 14/400, grey-600)
- *      - 통계 행 (200×52, padding 6 12): 기간 | 사진 | 장소 (구분선 2px)
- *   2) 저장 버튼: 우상단 절대 위치 (북마크 아이콘 + "저장" grey-500)
- *   3) DateBadge 가로 스크롤 행 (80×60 개별 뱃지)
+ *   2) 우상단: 북마크 아이콘 + 저장(아이콘 + "저장")
+ *   3) DateBadge 가로 스크롤 행
  */
-import React from 'react';
-import { Image, ScrollView, StyleSheet, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
+import React, { useState } from 'react';
+import {
+  Image,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  View,
+  type ImageSourcePropType,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import Text from '@/components/common/AppText';
 
-import { Colors, FontFamily, Typography } from '@/constants/theme';
+import { Colors, ComponentTokens, Spacing, Typography } from '@/constants/theme';
 import DateBadge from '@/components/common/DateBadge';
 
 export interface DateBadgeData {
@@ -23,8 +28,19 @@ export interface DateBadgeData {
   date: string;
   /** 요일 문자열 (예: "수") */
   day: string;
-  /** 배경 이미지 URI */
+  /** 배경 이미지 URI (legacy) */
   imageUri?: string;
+  /** 배경 이미지 (local asset) */
+  image?: ImageSourcePropType;
+}
+
+export interface TripCardDay {
+  id: string;
+  dayNumber: number;
+  dateLabel: string;
+  weekdayLabel?: string;
+  photoCount: number;
+  thumbnailImage?: ImageSourcePropType;
 }
 
 export interface TripCardData {
@@ -39,73 +55,122 @@ export interface TripCardData {
   photoCount: string;
   /** 장소 수 문자열 (예: "12") */
   placeCount: string;
-  /** 대표 썸네일 URI */
+  /** 대표 썸네일 URI (legacy) */
   thumbnailUri?: string;
+  /** 대표 썸네일 (local asset) */
+  coverImage?: ImageSourcePropType;
+  destinationLabel?: string;
+  isSaved?: boolean;
   /** DateBadge 배열 */
   dateBadges?: DateBadgeData[];
+  days?: TripCardDay[];
 }
 
 interface TripCardProps {
   trip: TripCardData;
   onPress: () => void;
+  /** controlled 저장 상태 */
+  isSaved?: boolean;
   onSavePress?: () => void;
+  onSavedChange?: (saved: boolean) => void;
   style?: StyleProp<ViewStyle>;
 }
 
-export default function TripCard({ trip, onPress, onSavePress, style }: TripCardProps) {
+// Figma 02_System & Components — icon 섹션
+const BOOKMARK_OUTLINE = require('../../assets/images/bookmark.png');
+const BOOKMARK_FILLED = require('../../assets/images/bookmark-filled.png');
+
+export default function TripCard({
+  trip,
+  onPress,
+  isSaved: isSavedProp,
+  onSavePress,
+  onSavedChange,
+  style,
+}: TripCardProps) {
+  const [internalSaved, setInternalSaved] = useState(trip.isSaved ?? false);
+  const isControlled = isSavedProp !== undefined;
+  const isSaved = isControlled ? isSavedProp : internalSaved;
+
+  const thumbnailSource: ImageSourcePropType | undefined =
+    trip.coverImage ?? (trip.thumbnailUri ? { uri: trip.thumbnailUri } : undefined);
+
+  const handleSavePress = () => {
+    if (onSavePress) {
+      onSavePress();
+      return;
+    }
+
+    const next = !isSaved;
+    if (!isControlled) {
+      setInternalSaved(next);
+    }
+    onSavedChange?.(next);
+  };
+
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.9} style={[styles.card, style]}>
-      {/* 저장 버튼 — 절대 위치 우상단 */}
       <TouchableOpacity
         style={styles.saveButton}
-        onPress={onSavePress}
+        onPress={handleSavePress}
         activeOpacity={0.7}
         hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
       >
-        <Image source={require('../../assets/images/bookmark-full.png')} style={styles.saveIcon} />
-        <Text style={styles.saveText}>저장</Text>
+        <Image
+          source={isSaved ? BOOKMARK_FILLED : BOOKMARK_OUTLINE}
+          style={styles.saveIcon}
+          resizeMode="contain"
+        />
+        <Text style={[styles.saveText, isSaved && styles.saveTextActive]}>저장</Text>
       </TouchableOpacity>
 
-      {/* 메인 행: 썸네일 + 정보 */}
       <View style={styles.mainRow}>
-        {/* 썸네일 */}
         <View style={styles.thumbnail}>
-          {trip.thumbnailUri ? (
-            <Image source={{ uri: trip.thumbnailUri }} style={styles.thumbnailImage} resizeMode="cover" />
+          {thumbnailSource ? (
+            <Image source={thumbnailSource} style={styles.thumbnailImage} resizeMode="cover" />
           ) : (
             <View style={styles.thumbnailFallback} />
           )}
         </View>
 
-        {/* 정보 영역 */}
         <View style={styles.info}>
-          {/* 제목 + 날짜 */}
           <View style={styles.titleArea}>
-            <Text style={styles.country} numberOfLines={1}>{trip.country}</Text>
-            <Text style={styles.date} numberOfLines={1}>{trip.date}</Text>
+            <Text style={styles.country} numberOfLines={1}>
+              {trip.country}
+            </Text>
+            <Text style={styles.date} numberOfLines={1}>
+              {trip.date}
+            </Text>
           </View>
 
-          {/* 통계 행 */}
           <View style={styles.statsRow}>
             <View style={styles.statCell}>
               <Text style={styles.statLabel}>기간</Text>
-              <Text style={styles.statValue}>{trip.period}<Text style={styles.statUnit}>일</Text></Text>
+              <Text style={styles.statValue}>
+                {trip.period}
+                <Text style={styles.statUnit}>일</Text>
+              </Text>
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statCell}>
               <Text style={styles.statLabel}>사진</Text>
-              <Text style={styles.statValue}>{trip.photoCount}<Text style={styles.statUnit}>장</Text></Text>
+              <Text style={styles.statValue}>
+                {trip.photoCount}
+                <Text style={styles.statUnit}>장</Text>
+              </Text>
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statCell}>
               <Text style={styles.statLabel}>장소</Text>
-              <Text style={styles.statValue}>{trip.placeCount}<Text style={styles.statUnit}>곳</Text></Text>
+              <Text style={styles.statValue}>
+                {trip.placeCount}
+                <Text style={styles.statUnit}>곳</Text>
+              </Text>
             </View>
           </View>
         </View>
       </View>
 
-      {/* DateBadge 가로 스크롤 */}
       {trip.dateBadges && trip.dateBadges.length > 0 && (
         <ScrollView
           horizontal
@@ -113,7 +178,13 @@ export default function TripCard({ trip, onPress, onSavePress, style }: TripCard
           contentContainerStyle={styles.badgeRow}
         >
           {trip.dateBadges.map((badge, i) => (
-            <DateBadge key={i} date={badge.date} day={badge.day} imageUri={badge.imageUri} />
+            <DateBadge
+              key={`${badge.date}-${i}`}
+              date={badge.date}
+              day={badge.day}
+              imageUri={badge.imageUri}
+              image={badge.image}
+            />
           ))}
         </ScrollView>
       )}
@@ -121,21 +192,23 @@ export default function TripCard({ trip, onPress, onSavePress, style }: TripCard
   );
 }
 
+const tripTokens = ComponentTokens.TripCard;
+
 const styles = StyleSheet.create({
   card: {
-    width:    350,
+    width: '100%',
+    maxWidth: 350,
     position: 'relative',
-    gap:      12,
+    gap: tripTokens.infoGap,
   },
-  // ── 저장 버튼 ───────────────────────────────────────────
   saveButton: {
-    position:       'absolute',
-    top:            0,
-    right:          0,
-    flexDirection:  'row',
-    alignItems:     'center',
-    gap:            4,
-    zIndex:         1,
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    zIndex: 1,
   },
   saveIcon: {
     width: 16,
@@ -145,36 +218,36 @@ const styles = StyleSheet.create({
     ...Typography.body2Regular,
     color: Colors.foundation.grey500,
   },
-  // ── 메인 행 ─────────────────────────────────────────────
+  saveTextActive: {
+    color: Colors.foundation.black,
+  },
   mainRow: {
     flexDirection: 'row',
-    alignItems:    'flex-end',
-    gap:           8,
+    alignItems: 'flex-end',
+    gap: Spacing.sm,
   },
   thumbnail: {
-    width:        140,
-    height:       110,
-    borderRadius: 4,
-    overflow:     'hidden',
-    flexShrink:   0,
+    width: tripTokens.thumbnailWidth,
+    height: tripTokens.thumbnailHeight,
+    borderRadius: tripTokens.thumbnailRadius,
+    overflow: 'hidden',
+    flexShrink: 0,
   },
   thumbnailImage: {
-    width:  '100%',
+    width: '100%',
     height: '100%',
   },
   thumbnailFallback: {
-    width:           '100%',
-    height:          '100%',
-    backgroundColor: '#919191',
+    width: '100%',
+    height: '100%',
+    backgroundColor: Colors.foundation.grey400,
   },
   info: {
-    flex:       1,
-    flexWrap:   'wrap',
-    gap:        6,
+    flex: 1,
+    gap: 6,
   },
   titleArea: {
-    paddingHorizontal: 8,
-    gap: 0,
+    paddingHorizontal: Spacing.sm,
   },
   country: {
     ...Typography.title2,
@@ -182,23 +255,23 @@ const styles = StyleSheet.create({
   },
   date: {
     ...Typography.body2Regular,
-    fontFamily: FontFamily.pretendardMedium,
     color: Colors.foundation.grey600,
   },
-  // ── 통계 행 ─────────────────────────────────────────────
   statsRow: {
-    flexDirection:     'row',
-    justifyContent:    'space-between',
-    alignItems:        'center',
-    width:             200,
-    height:            52,
-    paddingHorizontal: 12,
-    paddingVertical:   6,
-    borderRadius:      8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    minWidth: 200,
+    height: tripTokens.badgeHeight,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 6,
+    borderRadius: tripTokens.badgeRadius,
+    backgroundColor: tripTokens.badgeBackground,
   },
   statCell: {
     alignItems: 'center',
-    gap:        4,
+    gap: 4,
   },
   statLabel: {
     ...Typography.captionRegular,
@@ -214,13 +287,12 @@ const styles = StyleSheet.create({
     color: Colors.foundation.black,
   },
   statDivider: {
-    width:           2,
-    height:          40,
+    width: 2,
+    height: 40,
     backgroundColor: Colors.foundation.grey100,
   },
-  // ── DateBadge 스크롤 ─────────────────────────────────────
   badgeRow: {
     flexDirection: 'row',
-    gap:           4,
+    gap: 4,
   },
 });

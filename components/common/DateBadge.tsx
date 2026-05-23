@@ -1,5 +1,12 @@
 import React from 'react';
-import { Image, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  Image,
+  StyleSheet,
+  View,
+  type ImageSourcePropType,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import Text from '@/components/common/AppText';
 
 import { Colors, FontFamily } from '@/constants/theme';
@@ -8,14 +15,17 @@ export interface DateBadgeProps {
   date: string;
   day: string;
   imageUri?: string;
+  image?: ImageSourcePropType;
   style?: StyleProp<ViewStyle>;
 }
 
-export default function DateBadge({ date, day, imageUri, style }: DateBadgeProps) {
+export default function DateBadge({ date, day, imageUri, image, style }: DateBadgeProps) {
+  const imageSource = image ?? (imageUri ? { uri: imageUri } : undefined);
+
   return (
     <View style={[styles.container, style]}>
-      {imageUri ? (
-        <Image source={{ uri: imageUri }} style={styles.image} resizeMode="cover" />
+      {imageSource ? (
+        <Image source={imageSource} style={styles.image} resizeMode="cover" />
       ) : (
         <View style={styles.fallback} />
       )}
