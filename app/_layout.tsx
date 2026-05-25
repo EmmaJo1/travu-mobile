@@ -1,18 +1,22 @@
+import 'react-native-gesture-handler';
+import 'react-native-reanimated';
+
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import 'react-native-gesture-handler';
-import 'react-native-reanimated';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
 export default function RootLayout() {
   const colorScheme = useColorScheme();
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     Pretendard: require('../assets/fonts/Pretendard-Regular.otf'),
     'Pretendard-Regular': require('../assets/fonts/Pretendard-Regular.otf'),
     'Pretendard-Medium': require('../assets/fonts/Pretendard-Medium.otf'),
@@ -29,26 +33,14 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    if (!fontsLoaded) return;
-    // #region agent log
-    fetch('http://127.0.0.1:7528/ingest/e40f0855-f0e7-4f47-b6c7-28e1e508553b', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '1cabea' },
-      body: JSON.stringify({
-        sessionId: '1cabea',
-        runId: 'post-fix',
-        hypothesisId: 'VERIFY',
-        location: 'app/_layout.tsx:fontsLoaded',
-        message: 'app_root_mounted',
-        data: { fontsLoaded: true },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    console.log('[DEBUG 1cabea] app_root_mounted');
-    // #endregion
-  }, [fontsLoaded]);
+    if (fontsLoaded || fontError) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [fontsLoaded, fontError]);
 
-  if (!fontsLoaded) return null;
+  if (!fontsLoaded && !fontError) {
+    return null;
+  }
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
