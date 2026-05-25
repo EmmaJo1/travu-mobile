@@ -26,7 +26,7 @@ export const MOCK_REFLECTION_CARDS: ReflectionCardItem[] = [
   {
     id: 'ref-3',
     country: 'Kyoto, Japan',
-    date: '2026.3.30-4.3',
+    date: '2025.3.30-4.3',
     reflection: '계획하지 않은 골목을 걷는 시간이 이번 여행의 가장 선명한 장면으로 남았다.',
   },
   {
@@ -62,7 +62,7 @@ export const MOCK_QUESTION_CARDS: ReflectionQuestionItem[] = [
     id: 'q-3',
     question: '다시 가고 싶은 장소는?',
     answer: '교토의 작은 골목 카페. 아침 햇살이 특히 좋았다.',
-    date: '2026.3.30-4.3',
+    date: '2025.3.30-4.3',
     city: 'Kyoto, Japan',
   },
 ];

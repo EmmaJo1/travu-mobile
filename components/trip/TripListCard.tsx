@@ -14,7 +14,7 @@
  *   │  │ TITLE             │    수직 구분선(x=5) + 제목(Prata 14/18) + 구분선(h=1) + 이미지
  *   └─────────────────────┘
  */
-import { Colors, Typography } from '@/constants/theme';
+import { Colors, Shadows, Typography } from '@/constants/theme';
 import React from 'react';
 import {
   Image,
@@ -98,8 +98,7 @@ const styles = StyleSheet.create({
     paddingTop:      6,
     justifyContent:  'flex-start',
     alignItems:      'center',
-    // shadow: 0px 0px 4px rgba(0,0,0,0.25)
-    boxShadow:       '0px 0px 4px rgba(0,0,0,0.25)',
+    ...Shadows.cardSmall,
   },
   country: {
     ...Typography.captionEmphasized,

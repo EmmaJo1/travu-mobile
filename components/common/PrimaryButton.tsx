@@ -20,6 +20,7 @@ interface PrimaryButtonProps {
   onPress: () => void;
   active?: boolean;
   loading?: boolean;
+  numberOfLines?: number;
   style?: StyleProp<ViewStyle>;
 }
 
@@ -28,6 +29,7 @@ export default function PrimaryButton({
   onPress,
   active = true,
   loading = false,
+  numberOfLines,
   style,
 }: PrimaryButtonProps) {
   return (
@@ -40,7 +42,9 @@ export default function PrimaryButton({
       {loading ? (
         <ActivityIndicator color="#FFFFFF" size="small" />
       ) : (
-        <Text style={styles.label}>{label}</Text>
+        <Text style={styles.label} numberOfLines={numberOfLines}>
+          {label}
+        </Text>
       )}
     </TouchableOpacity>
   );

@@ -56,7 +56,7 @@ export const MOCK_ARCHIVE_DETAIL: ArchiveDetailData = {
   photoFrameImage: IMG.photoFrame,
   selectedDay: {
     dayNumber: 2,
-    dateLabel: '2025.3.6 목',
+    dateLabel: '2025.8.26 화',
   },
   stats: {
     daysCount: 8,

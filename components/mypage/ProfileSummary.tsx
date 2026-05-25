@@ -15,6 +15,7 @@ interface ProfileSummaryProps {
   userName: string;
   profileUri?: string;
   profileImage?: ImageSourcePropType;
+  tagline?: string;
   recordCount: number;
   countryCount: number;
   tripCount: number;
@@ -37,6 +38,7 @@ export default function ProfileSummary({
   userName,
   profileUri,
   profileImage,
+  tagline,
   recordCount,
   countryCount,
   tripCount,
@@ -56,6 +58,7 @@ export default function ProfileSummary({
 
       <View style={styles.content}>
         <Text style={styles.name}>{userName}</Text>
+        {tagline ? <Text style={styles.tagline}>{tagline}</Text> : null}
         <View style={styles.statsRow}>
           <Stat label="기록" value={recordCount} unit="번" />
           <View style={styles.divider} />
@@ -99,6 +102,10 @@ const styles = StyleSheet.create({
   name: {
     ...Typography.title2,
     color: Colors.foundation.black,
+  },
+  tagline: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
   },
   statsRow: {
     flexDirection: 'row',

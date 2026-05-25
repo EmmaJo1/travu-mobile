@@ -49,7 +49,7 @@
 | **사용 화면** | Record (`직접 추가`), My Page (정렬 — semantics 개선 예정) |
 | **역할** | 소형 pill CTA (radius 16, padding 6×12) |
 | **새로 만들면 안 되는 UI** | 검정 pill 소형 버튼 |
-| **확장 방식** | `active`, `loading`, `style` prop |
+| **확장 방식** | `active`, `loading`, `numberOfLines`, `style` prop |
 
 #### AuthActionButton
 | 항목 | 내용 |
@@ -279,7 +279,7 @@
 | **사용 화면** | My Page |
 | **역할** | 아바타 + 이름 + 기록/국가/여행 통계 |
 | **새로 만들면 안 되는 UI** | 프로필 요약 row |
-| **확장 방식** | count props |
+| **확장 방식** | count props, optional `tagline` |
 
 #### MyPageTabs
 | 항목 | 내용 |

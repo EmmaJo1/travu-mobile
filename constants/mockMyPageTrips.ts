@@ -80,7 +80,7 @@ export const MOCK_MY_PAGE_TRIPS: MyPageTrip[] = [
     year: 2025,
     city: 'KYOTO',
     country: 'Japan',
-    dateRangeLabel: '2026.3.30-4.3',
+    dateRangeLabel: '2025.3.30-4.3',
     coverImage: IMG.kyotoDay1,
     daysCount: 5,
     photoCount: 211,

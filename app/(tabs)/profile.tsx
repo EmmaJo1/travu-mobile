@@ -28,7 +28,7 @@ import {
   MOCK_REFLECTION_CARDS,
   REFLECTION_FOOTER_TEXT,
 } from '@/constants/mockReflections';
-import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
+import { Colors, Spacing, Typography } from '@/constants/theme';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -55,6 +55,7 @@ export default function ProfileScreen() {
           <ProfileSummary
             userName={MOCK_MY_PAGE_PROFILE.userName}
             profileImage={MOCK_MY_PAGE_PROFILE.profileImage}
+            tagline={MOCK_MY_PAGE_PROFILE.tagline}
             recordCount={MOCK_MY_PAGE_PROFILE.recordCount}
             countryCount={MOCK_MY_PAGE_PROFILE.countryCount}
             tripCount={MOCK_MY_PAGE_PROFILE.tripCount}
@@ -86,6 +87,8 @@ export default function ProfileScreen() {
                       <PrimaryButton
                         label={TRAVEL_SORT_LABELS[sortOption]}
                         onPress={() => setSortSheetVisible(true)}
+                        numberOfLines={1}
+                        style={styles.sortButton}
                       />
                     ) : null}
                   </View>
@@ -110,6 +113,7 @@ export default function ProfileScreen() {
 
             <ScrollView
               horizontal
+              nestedScrollEnabled
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.cardRow}
             >
@@ -202,6 +206,12 @@ const styles = StyleSheet.create({
   yearLabel: {
     ...Typography.title2,
     color: Colors.foundation.black,
+    flexShrink: 1,
+  },
+  sortButton: {
+    maxWidth: 132,
+    flexShrink: 0,
+    marginLeft: Spacing.sm,
   },
   grid: {
     flexDirection: 'row',
