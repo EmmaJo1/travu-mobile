@@ -20,22 +20,34 @@ export interface DaySelectorItem {
   photoCount: number;
 }
 
+export interface SelectorOption {
+  id: string;
+  label: string;
+}
+
 interface DaySelectorSheetProps {
   visible: boolean;
-  days: DaySelectorItem[];
-  selectedDayId: string;
-  onSelect: (day: DaySelectorItem) => void;
   onClose: () => void;
+  title?: string;
+  selectedId: string;
+  days?: DaySelectorItem[];
+  options?: SelectorOption[];
+  onSelectDay?: (day: DaySelectorItem) => void;
+  onSelectOption?: (option: SelectorOption) => void;
 }
 
 export default function DaySelectorSheet({
   visible,
-  days,
-  selectedDayId,
-  onSelect,
   onClose,
+  title = '날짜 선택',
+  selectedId,
+  days,
+  options,
+  onSelectDay,
+  onSelectOption,
 }: DaySelectorSheetProps) {
   const insets = useSafeAreaInsets();
+  const isOptionMode = Boolean(options?.length);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -45,38 +57,61 @@ export default function DaySelectorSheet({
           onPress={(e) => e.stopPropagation()}
         >
           <View style={styles.header}>
-            <Text style={styles.title}>날짜 선택</Text>
+            <Text style={styles.title}>{title}</Text>
             <TouchableOpacity onPress={onClose} hitSlop={12}>
               <Text style={styles.closeText}>×</Text>
             </TouchableOpacity>
           </View>
 
-          <FlatList
-            data={days}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.list}
-            renderItem={({ item }) => {
-              const selected = item.id === selectedDayId;
-              return (
-                <TouchableOpacity
-                  style={[styles.row, selected && styles.rowSelected]}
-                  onPress={() => onSelect(item)}
-                  activeOpacity={0.75}
-                >
-                  <View style={styles.rowMain}>
-                    <Text style={styles.dayLabel}>Day {item.dayNumber}</Text>
-                    <Text style={styles.dateLabel}>
-                      {item.dateLabel} {item.weekdayLabel}
+          {isOptionMode ? (
+            <FlatList
+              data={options}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.list}
+              renderItem={({ item }) => {
+                const selected = item.id === selectedId;
+                return (
+                  <TouchableOpacity
+                    style={[styles.row, selected && styles.rowSelected]}
+                    onPress={() => onSelectOption?.(item)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[styles.optionLabel, selected && styles.optionLabelSelected]}>
+                      {item.label}
                     </Text>
-                  </View>
-                  <View style={styles.rowRight}>
-                    <Text style={styles.photoCount}>{item.photoCount} photos</Text>
                     {selected ? <Text style={styles.check}>✓</Text> : null}
-                  </View>
-                </TouchableOpacity>
-              );
-            }}
-          />
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          ) : (
+            <FlatList
+              data={days}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.list}
+              renderItem={({ item }) => {
+                const selected = item.id === selectedId;
+                return (
+                  <TouchableOpacity
+                    style={[styles.row, selected && styles.rowSelected]}
+                    onPress={() => onSelectDay?.(item)}
+                    activeOpacity={0.75}
+                  >
+                    <View style={styles.rowMain}>
+                      <Text style={styles.dayLabel}>Day {item.dayNumber}</Text>
+                      <Text style={styles.dateLabel}>
+                        {item.dateLabel} {item.weekdayLabel}
+                      </Text>
+                    </View>
+                    <View style={styles.rowRight}>
+                      <Text style={styles.photoCount}>{item.photoCount} photos</Text>
+                      {selected ? <Text style={styles.check}>✓</Text> : null}
+                    </View>
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          )}
         </Pressable>
       </Pressable>
     </Modal>
@@ -152,5 +187,13 @@ const styles = StyleSheet.create({
   check: {
     ...Typography.body2Emphasized,
     color: Colors.foundation.black,
+  },
+  optionLabel: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.black,
+    flex: 1,
+  },
+  optionLabelSelected: {
+    ...Typography.body2Emphasized,
   },
 });

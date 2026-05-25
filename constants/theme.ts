@@ -341,7 +341,7 @@ export const ComponentTokens = {
     infoGap:         Spacing.md,         // 12
     badgeHeight:     52,
     badgeRadius:     Radius.sm,          // 8
-    badgeBackground: Colors.foundation.white,
+    badgeBackground: 'transparent',
   },
 
   /** TripListCard: 리스트형/소형 여행 카드 */

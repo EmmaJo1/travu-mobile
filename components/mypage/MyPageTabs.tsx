@@ -31,7 +31,7 @@ export default function MyPageTabs({ mode, onChange, style }: MyPageTabsProps) {
 
 const styles = StyleSheet.create({
   wrap: {
-    width: 390,
+    width: '100%',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',

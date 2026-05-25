@@ -35,11 +35,15 @@ export default function DateBadgeList({
   return (
     <ScrollView
       horizontal
+      nestedScrollEnabled
+      directionalLockEnabled
       showsHorizontalScrollIndicator={false}
+      style={styles.scroll}
       contentContainerStyle={[styles.row, style]}
     >
       {items.map((item) => {
         const selected = item.id === selectedId;
+        const showSelectionState = selectedId !== undefined;
         return (
           <TouchableOpacity
             key={item.id}
@@ -47,7 +51,12 @@ export default function DateBadgeList({
             onPress={() => onSelect?.(item.id)}
             disabled={!onSelect}
           >
-            <View style={[styles.badgeWrap, !selected && styles.badgeDimmed]}>
+            <View
+              style={[
+                styles.badgeWrap,
+                showSelectionState && !selected && styles.badgeDimmed,
+              ]}
+            >
               <DateBadge date={item.date} day={item.day} image={item.image} />
             </View>
           </TouchableOpacity>
@@ -58,6 +67,9 @@ export default function DateBadgeList({
 }
 
 const styles = StyleSheet.create({
+  scroll: {
+    flexGrow: 0,
+  },
   row: {
     flexDirection: 'row',
     gap: Spacing.xs,

@@ -1,5 +1,12 @@
 import React from 'react';
-import { Image, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  Image,
+  StyleSheet,
+  View,
+  type ImageSourcePropType,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import Text from '@/components/common/AppText';
 
 import { Colors, Typography } from '@/constants/theme';
@@ -7,6 +14,7 @@ import { Colors, Typography } from '@/constants/theme';
 interface ProfileSummaryProps {
   userName: string;
   profileUri?: string;
+  profileImage?: ImageSourcePropType;
   recordCount: number;
   countryCount: number;
   tripCount: number;
@@ -28,16 +36,19 @@ function Stat({ label, value, unit }: { label: string; value: number; unit: stri
 export default function ProfileSummary({
   userName,
   profileUri,
+  profileImage,
   recordCount,
   countryCount,
   tripCount,
   style,
 }: ProfileSummaryProps) {
+  const avatarSource = profileImage ?? (profileUri ? { uri: profileUri } : undefined);
+
   return (
     <View style={[styles.container, style]}>
       <View style={styles.avatarWrap}>
-        {profileUri ? (
-          <Image source={{ uri: profileUri }} style={styles.avatar} resizeMode="cover" />
+        {avatarSource ? (
+          <Image source={avatarSource} style={styles.avatar} resizeMode="cover" />
         ) : (
           <View style={styles.avatarFallback} />
         )}
@@ -59,7 +70,8 @@ export default function ProfileSummary({
 
 const styles = StyleSheet.create({
   container: {
-    width: 390,
+    width: '100%',
+    minHeight: 152,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 24,

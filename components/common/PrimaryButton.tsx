@@ -67,7 +67,7 @@ const styles = StyleSheet.create({
   },
   label: {
     ...Typography.captionEmphasized,
-    lineHeight: 22,
+    lineHeight: 16,
     color: '#FFFFFF',
   },
 });

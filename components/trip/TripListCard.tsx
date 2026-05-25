@@ -17,7 +17,14 @@
 import { Colors, Typography } from '@/constants/theme';
 import React from 'react';
 import {
-  Image, StyleSheet, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
+  Image,
+  StyleSheet,
+  TouchableOpacity,
+  View,
+  type ImageSourcePropType,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import Text from '@/components/common/AppText';
 
 
@@ -29,8 +36,10 @@ export interface TripListItem {
   date: string;
   /** 여행 제목 대문자 (예: "PARIS") */
   title: string;
-  /** 배경 이미지 URI */
+  /** 배경 이미지 URI (legacy) */
   imageUri?: string;
+  /** 배경 이미지 (local asset) */
+  coverImage?: ImageSourcePropType;
 }
 
 interface TripListCardProps {
@@ -50,7 +59,9 @@ export default function TripListCard({ trip, onPress, style }: TripListCardProps
 
       {/* 본체: 이미지 + 컨텐츠 */}
       <View style={styles.body}>
-        {trip.imageUri ? (
+        {trip.coverImage ? (
+          <Image source={trip.coverImage} style={styles.bodyImage} resizeMode="cover" />
+        ) : trip.imageUri ? (
           <Image source={{ uri: trip.imageUri }} style={styles.bodyImage} resizeMode="cover" />
         ) : (
           <View style={styles.bodyFallback} />

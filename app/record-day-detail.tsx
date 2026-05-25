@@ -2,75 +2,74 @@
  * record-day-detail
  * Figma: day-recording-detail (1207:2245)
  */
-import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
-import {
-  Image,
-  ScrollView,
-  StyleSheet,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import Text from '@/components/common/AppText';
-import DateBadgeList from '@/components/record/DateBadgeList';
+import MapPlaceholderCard from '@/components/common/MapPlaceholderCard';
+import ScreenHeader from '@/components/nav/ScreenHeader';
 import DaySelectorSheet, { type DaySelectorItem } from '@/components/record/DaySelectorSheet';
+import RecordDateButton from '@/components/record/RecordDateButton';
 import PlaceEntryCard from '@/components/trip/PlaceEntryCard';
+import { getDaySelectorItemsForTrip } from '@/constants/mockDetectedTrips';
 import {
   DEFAULT_RECORD_DAY,
-  RECORD_DAY_BADGES,
   RECORD_DAY_ENTRIES,
   RECORD_DAY_OPTIONS,
 } from '@/constants/mockRecordDayDetail';
-import { Colors, Spacing, Typography } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 
 function formatHeaderDate(day: DaySelectorItem): string {
   return `${day.dateLabel} ${day.weekdayLabel}`;
 }
 
+function resolveInitialDay(
+  dayOptions: DaySelectorItem[],
+  dayId?: string,
+): DaySelectorItem {
+  if (dayId) {
+    const matched = dayOptions.find((day) => day.id === dayId);
+    if (matched) {
+      return matched;
+    }
+  }
+
+  return dayOptions[0] ?? DEFAULT_RECORD_DAY;
+}
+
 export default function RecordDayDetailScreen() {
   const router = useRouter();
-  const [selectedDay, setSelectedDay] = useState<DaySelectorItem>(DEFAULT_RECORD_DAY);
+  const { tripId, dayId } = useLocalSearchParams<{ tripId?: string; dayId?: string }>();
+
+  const dayOptions = useMemo(() => {
+    if (tripId) {
+      return getDaySelectorItemsForTrip(tripId) ?? RECORD_DAY_OPTIONS;
+    }
+    return RECORD_DAY_OPTIONS;
+  }, [tripId]);
+
+  const [selectedDay, setSelectedDay] = useState<DaySelectorItem>(() =>
+    resolveInitialDay(dayOptions, dayId),
+  );
   const [sheetVisible, setSheetVisible] = useState(false);
 
-  const handleDaySelect = (dayId: string) => {
-    const day = RECORD_DAY_OPTIONS.find((item) => item.id === dayId);
-    if (day) setSelectedDay(day);
-  };
+  useEffect(() => {
+    setSelectedDay(resolveInitialDay(dayOptions, dayId));
+  }, [dayOptions, dayId]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.75}>
-          <Image
-            source={require('../assets/images/screenheader-back.png')}
-            style={styles.backIcon}
-            resizeMode="contain"
+      <ScreenHeader
+        balancedSlots
+        onBackPress={() => router.back()}
+        centerSlot={
+          <RecordDateButton
+            dateLabel={formatHeaderDate(selectedDay)}
+            onPress={() => setSheetVisible(true)}
           />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.dateBtn}
-          onPress={() => setSheetVisible(true)}
-          activeOpacity={0.75}
-        >
-          <Text style={styles.dateText}>{formatHeaderDate(selectedDay)}</Text>
-          <Image
-            source={require('../assets/images/daycard-triangle.png')}
-            style={styles.triangle}
-            resizeMode="contain"
-          />
-        </TouchableOpacity>
-
-        <View style={styles.headerSide} />
-      </View>
-
-      <DateBadgeList
-        items={RECORD_DAY_BADGES}
-        selectedId={selectedDay.id}
-        onSelect={handleDaySelect}
-        style={styles.dateBadgeList}
+        }
+        style={styles.header}
       />
 
       <ScrollView
@@ -78,20 +77,20 @@ export default function RecordDayDetailScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.mapCard}>
-          <Text style={styles.mapText}>지도</Text>
-        </View>
+        <MapPlaceholderCard align="center" />
 
-        {RECORD_DAY_ENTRIES.map((entry) => (
-          <PlaceEntryCard key={entry.id} entry={entry} showRating={false} />
-        ))}
+        <View style={styles.entries}>
+          {RECORD_DAY_ENTRIES.map((entry) => (
+            <PlaceEntryCard key={entry.id} entry={entry} showRating={false} />
+          ))}
+        </View>
       </ScrollView>
 
       <DaySelectorSheet
         visible={sheetVisible}
-        days={RECORD_DAY_OPTIONS}
-        selectedDayId={selectedDay.id}
-        onSelect={(day) => {
+        days={dayOptions}
+        selectedId={selectedDay.id}
+        onSelectDay={(day) => {
           setSelectedDay(day);
           setSheetVisible(false);
         }}
@@ -107,63 +106,18 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.light.bgScreen,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingLeft: Spacing.md,
-    paddingRight: Spacing.xl,
-    minHeight: 40,
-  },
-  backBtn: {
-    width: 24,
-    height: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  backIcon: {
-    width: 24,
-    height: 24,
-  },
-  dateBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  dateText: {
-    ...Typography.body1Emphasized,
-    color: Colors.foundation.black,
-  },
-  triangle: {
-    width: 12,
-    height: 12,
-  },
-  headerSide: {
-    width: 24,
-  },
-  dateBadgeList: {
-    paddingVertical: Spacing.md,
+    width: '100%',
   },
   scroll: {
     flex: 1,
   },
   content: {
     paddingHorizontal: Spacing.xl,
-    paddingTop: Spacing.sm,
+    paddingTop: Spacing['2xl'],
     paddingBottom: Spacing['3xl'],
-    gap: Spacing['2xl'],
+    gap: 28,
   },
-  mapCard: {
-    width: '100%',
-    maxWidth: 350,
-    height: 240,
-    borderRadius: 8,
-    backgroundColor: Colors.foundation.white,
-    alignItems: 'center',
-    justifyContent: 'center',
-    alignSelf: 'center',
-  },
-  mapText: {
-    ...Typography.body2Regular,
-    color: Colors.foundation.grey500,
+  entries: {
+    gap: 40,
   },
 });
