@@ -53,7 +53,7 @@ export const MOCK_QUESTION_CARDS: ReflectionQuestionItem[] = [
   },
   {
     id: 'q-2',
-    question: '오늘 가장 설렸던 순간은?',
+    question: '오늘 가장 설렜던 순간은?',
     answer: '본다이 비치에서 파도를 맞으며 걸을 때 진짜 자유로움을 느꼈다.',
     date: '2025.3.6',
     city: 'Sydney, Australia',
@@ -66,5 +66,3 @@ export const MOCK_QUESTION_CARDS: ReflectionQuestionItem[] = [
     city: 'Kyoto, Japan',
   },
 ];
-
-export const REFLECTION_FOOTER_TEXT = '“지금까지 5번의 여행을 성찰로 남겼어요.”';

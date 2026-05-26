@@ -19,20 +19,29 @@ export interface DayCardProps {
   /** 표시할 날짜+요일 문자열 (예: "2025.8.26 화") */
   date: string;
   onPress?: () => void;
+  /** day-archive-detail 등 — 카드 내부 텍스트 왼쪽 정렬 */
+  align?: 'left' | 'center';
   style?: StyleProp<ViewStyle>;
 }
 
-export default function DayCard({ dayNumber, date, onPress, style }: DayCardProps) {
+export default function DayCard({
+  dayNumber,
+  date,
+  onPress,
+  align = 'center',
+  style,
+}: DayCardProps) {
+  const isLeft = align === 'left';
   const Wrapper = onPress ? TouchableOpacity : View;
   const wrapperProps = onPress ? { onPress, activeOpacity: 0.75 as number } : {};
 
   return (
-    <Wrapper style={[styles.card, style]} {...wrapperProps}>
-      <View style={styles.dayRow}>
+    <Wrapper style={[styles.card, isLeft && styles.cardLeft, style]} {...wrapperProps}>
+      <View style={[styles.dayRow, isLeft && styles.rowLeft]}>
         <Text style={styles.dayText}>Day {dayNumber}</Text>
       </View>
 
-      <View style={styles.dateRow}>
+      <View style={[styles.dateRow, isLeft && styles.rowLeft]}>
         <Text style={styles.dateText} numberOfLines={1}>
           {date}
         </Text>
@@ -50,6 +59,9 @@ const styles = StyleSheet.create({
   card: {
     width:          109,
     alignItems:     'center',
+  },
+  cardLeft: {
+    alignItems: 'flex-start',
   },
   dayRow: {
     flexDirection:  'row',
@@ -70,6 +82,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignSelf:      'stretch',
     gap:            5,
+  },
+  rowLeft: {
+    justifyContent: 'flex-start',
   },
   dateText: {
     ...Typography.body1Regular,

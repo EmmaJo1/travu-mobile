@@ -1,10 +1,10 @@
 import type { ImageSourcePropType } from 'react-native';
 
+import type { DaySelectorItem } from '@/components/record/DaySelectorSheet';
 import type { PlaceEntry } from '@/components/trip/PlaceEntryCard';
 
 const IMG = {
   hero: require('../assets/images/home-hero-paris.png'),
-  photoFrame: require('../assets/images/home-photo-candidate-1.png'),
   louvre1: require('../assets/images/home-photo-candidate-1.png'),
   louvre2: require('../assets/images/home-photo-candidate-2.png'),
   louvre3: require('../assets/images/home-photo-candidate-3.png'),
@@ -32,7 +32,6 @@ export interface ArchiveDetailData {
   country: string;
   dateRangeLabel: string;
   heroImage: ImageSourcePropType;
-  photoFrameImage: ImageSourcePropType;
   selectedDay: {
     dayNumber: number;
     dateLabel: string;
@@ -46,6 +45,22 @@ export interface ArchiveDetailData {
   places: ArchiveDetailPlace[];
 }
 
+/** Figma day-archive-detail — Day 선택 시트 mock (Paris 2025.8.25–9.1) */
+export const ARCHIVE_DAY_OPTIONS: DaySelectorItem[] = [
+  { id: 'archive-day-1', dayNumber: 1, dateLabel: '2025.8.25', weekdayLabel: '월', photoCount: 28 },
+  { id: 'archive-day-2', dayNumber: 2, dateLabel: '2025.8.26', weekdayLabel: '화', photoCount: 42 },
+  { id: 'archive-day-3', dayNumber: 3, dateLabel: '2025.8.27', weekdayLabel: '수', photoCount: 36 },
+  { id: 'archive-day-4', dayNumber: 4, dateLabel: '2025.8.28', weekdayLabel: '목', photoCount: 31 },
+  { id: 'archive-day-5', dayNumber: 5, dateLabel: '2025.8.29', weekdayLabel: '금', photoCount: 45 },
+  { id: 'archive-day-6', dayNumber: 6, dateLabel: '2025.8.30', weekdayLabel: '토', photoCount: 52 },
+  { id: 'archive-day-7', dayNumber: 7, dateLabel: '2025.8.31', weekdayLabel: '일', photoCount: 38 },
+  { id: 'archive-day-8', dayNumber: 8, dateLabel: '2025.9.1', weekdayLabel: '월', photoCount: 40 },
+];
+
+export function formatArchiveDayLabel(day: DaySelectorItem): string {
+  return `${day.dateLabel} ${day.weekdayLabel}`;
+}
+
 /** Figma day-archive-detail (506:704) mock */
 export const MOCK_ARCHIVE_DETAIL: ArchiveDetailData = {
   id: 'archive-paris',
@@ -53,7 +68,6 @@ export const MOCK_ARCHIVE_DETAIL: ArchiveDetailData = {
   country: 'France',
   dateRangeLabel: '2025.8.25-9.1',
   heroImage: IMG.hero,
-  photoFrameImage: IMG.photoFrame,
   selectedDay: {
     dayNumber: 2,
     dateLabel: '2025.8.26 화',

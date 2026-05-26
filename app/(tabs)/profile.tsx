@@ -25,7 +25,6 @@ import {
 import {
   MOCK_QUESTION_CARDS,
   MOCK_REFLECTION_CARDS,
-  REFLECTION_FOOTER_TEXT,
 } from '@/constants/mockReflections';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 
@@ -129,7 +128,7 @@ export default function ProfileScreen() {
             </View>
 
             <View style={styles.reflectionQuestionSection}>
-              <Text style={styles.sectionTitle}>질문이 남긴 생각</Text>
+              <Text style={styles.reflectionSectionTitle}>질문이 남긴 생각</Text>
 
               <View style={styles.questionList}>
                 {MOCK_QUESTION_CARDS.map((item) => (
@@ -137,8 +136,6 @@ export default function ProfileScreen() {
                 ))}
               </View>
             </View>
-
-            <Text style={styles.footer}>{REFLECTION_FOOTER_TEXT}</Text>
           </View>
         )}
       </ScrollView>
@@ -201,12 +198,20 @@ const styles = StyleSheet.create({
   },
   reflectionQuestionSection: {
     marginTop: Spacing['4xl'],
+    paddingHorizontal: Spacing.xl,
     gap: Spacing.lg,
+    alignSelf: 'stretch',
+    width: '100%',
   },
   sectionTitle: {
     ...Typography.title2,
     color: Colors.foundation.black,
     paddingHorizontal: Spacing.xl,
+  },
+  reflectionSectionTitle: {
+    ...Typography.title2,
+    color: Colors.foundation.black,
+    alignSelf: 'stretch',
   },
   /** Figma Frame 187 — 연도 그룹 간 gap 40, paddingHorizontal 20 */
   tripList: {
@@ -254,18 +259,11 @@ const styles = StyleSheet.create({
   },
   questionList: {
     gap: Spacing.md,
-    alignItems: 'center',
-    paddingHorizontal: Spacing.xl,
+    alignSelf: 'stretch',
+    width: '100%',
   },
   questionCard: {
     width: '100%',
-    maxWidth: 350,
-  },
-  footer: {
-    ...Typography.body2Regular,
-    color: Colors.foundation.grey600,
-    textAlign: 'center',
-    marginTop: Spacing['4xl'],
-    paddingHorizontal: Spacing.xl,
+    alignSelf: 'stretch',
   },
 });
