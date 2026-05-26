@@ -1,16 +1,20 @@
 import Text from '@/components/common/AppText';
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-    FlatList,
-    Modal,
-    Pressable,
-    StyleSheet,
-    TouchableOpacity,
-    View,
+  Animated,
+  FlatList,
+  Modal,
+  Pressable,
+  StyleSheet,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
+
+const SHEET_ANIM_DURATION = 200;
+const SHEET_OFFSCREEN_Y = 400;
 
 export interface DaySelectorItem {
   id: string;
@@ -48,13 +52,83 @@ export default function DaySelectorSheet({
 }: DaySelectorSheetProps) {
   const insets = useSafeAreaInsets();
   const isOptionMode = Boolean(options?.length);
+  const [presented, setPresented] = useState(false);
+  const wasOpenRef = useRef(false);
+  const animRef = useRef<Animated.CompositeAnimation | null>(null);
+  const dimOpacity = useRef(new Animated.Value(0)).current;
+  const sheetTransY = useRef(new Animated.Value(SHEET_OFFSCREEN_Y)).current;
+
+  useEffect(() => {
+    animRef.current?.stop();
+
+    if (visible) {
+      setPresented(true);
+      dimOpacity.setValue(0);
+      sheetTransY.setValue(SHEET_OFFSCREEN_Y);
+      animRef.current = Animated.parallel([
+        Animated.timing(dimOpacity, {
+          toValue: 1,
+          duration: SHEET_ANIM_DURATION,
+          useNativeDriver: true,
+        }),
+        Animated.timing(sheetTransY, {
+          toValue: 0,
+          duration: SHEET_ANIM_DURATION,
+          useNativeDriver: true,
+        }),
+      ]);
+      animRef.current.start();
+      wasOpenRef.current = true;
+      return;
+    }
+
+    if (!wasOpenRef.current) {
+      return;
+    }
+
+    wasOpenRef.current = false;
+    animRef.current = Animated.parallel([
+      Animated.timing(dimOpacity, {
+        toValue: 0,
+        duration: SHEET_ANIM_DURATION,
+        useNativeDriver: true,
+      }),
+      Animated.timing(sheetTransY, {
+        toValue: SHEET_OFFSCREEN_Y,
+        duration: SHEET_ANIM_DURATION,
+        useNativeDriver: true,
+      }),
+    ]);
+    animRef.current.start(({ finished }) => {
+      if (finished) {
+        setPresented(false);
+      }
+    });
+
+    return () => {
+      animRef.current?.stop();
+    };
+  }, [visible, dimOpacity, sheetTransY]);
+
+  if (!visible && !presented) {
+    return null;
+  }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable
-          style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}
-          onPress={(e) => e.stopPropagation()}
+    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+      <View style={styles.wrapper}>
+        <Animated.View style={[styles.dim, { opacity: dimOpacity }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" />
+        </Animated.View>
+
+        <Animated.View
+          style={[
+            styles.sheet,
+            {
+              paddingBottom: Math.max(insets.bottom, Spacing.lg),
+              transform: [{ translateY: sheetTransY }],
+            },
+          ]}
         >
           <View style={styles.header}>
             <Text style={styles.title}>{title}</Text>
@@ -112,17 +186,20 @@ export default function DaySelectorSheet({
               }}
             />
           )}
-        </Pressable>
-      </Pressable>
+        </Animated.View>
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
+  wrapper: {
     flex: 1,
-    backgroundColor: Colors.light.bgOverlay,
     justifyContent: 'flex-end',
+  },
+  dim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: Colors.light.bgOverlay,
   },
   sheet: {
     backgroundColor: Colors.foundation.white,
