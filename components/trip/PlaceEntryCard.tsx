@@ -16,8 +16,11 @@
  *   · 메모 텍스트 (Body 2 Regular 14/400, black)
  */
 import Text from '@/components/common/AppText';
+import HorizontalEdgeScrollView, {
+  PLACE_ENTRY_SCROLL_LEADING_BLEED,
+} from '@/components/common/HorizontalEdgeScrollView';
 import React from 'react';
-import { Image, ScrollView, StyleSheet, TouchableOpacity, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from 'react-native';
+import { Image, StyleSheet, TouchableOpacity, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from 'react-native';
 
 import { Colors, Typography } from '@/constants/theme';
 
@@ -100,9 +103,8 @@ export default function PlaceEntryCard({ entry, style, showRating = true }: Plac
         {/* 사진 스트립 */}
         {(entry.photoSources && entry.photoSources.length > 0) ||
         (entry.photoUris && entry.photoUris.length > 0) ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
+          <HorizontalEdgeScrollView
+            leadingBleed={PLACE_ENTRY_SCROLL_LEADING_BLEED}
             contentContainerStyle={styles.photoStrip}
           >
             {entry.photoSources
@@ -116,7 +118,7 @@ export default function PlaceEntryCard({ entry, style, showRating = true }: Plac
                     <Image source={{ uri }} style={styles.photo} resizeMode="cover" />
                   </View>
                 ))}
-          </ScrollView>
+          </HorizontalEdgeScrollView>
         ) : null}
 
         {/* 메모 텍스트 */}

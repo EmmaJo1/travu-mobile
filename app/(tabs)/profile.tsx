@@ -4,6 +4,7 @@ import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
+import HorizontalEdgeScrollView from '@/components/common/HorizontalEdgeScrollView';
 import MapPlaceholderCard from '@/components/common/MapPlaceholderCard';
 import MyPageTabs, { type MyPageTabMode } from '@/components/mypage/MyPageTabs';
 import ProfileSummary from '@/components/mypage/ProfileSummary';
@@ -115,16 +116,11 @@ export default function ProfileScreen() {
             <View style={styles.reflectionHeroSection}>
               <Text style={styles.sectionTitle}>여행이 끝난 후에야 보이는 생각들이 있어요</Text>
 
-              <ScrollView
-                horizontal
-                nestedScrollEnabled
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.cardRow}
-              >
+              <HorizontalEdgeScrollView contentContainerStyle={styles.cardRow}>
                 {MOCK_REFLECTION_CARDS.map((card) => (
                   <ReflectionCard key={card.id} data={card} />
                 ))}
-              </ScrollView>
+              </HorizontalEdgeScrollView>
             </View>
 
             <View style={styles.reflectionQuestionSection}>
@@ -255,7 +251,6 @@ const styles = StyleSheet.create({
   },
   cardRow: {
     gap: Spacing.md,
-    paddingHorizontal: Spacing.xl,
   },
   questionList: {
     gap: Spacing.md,

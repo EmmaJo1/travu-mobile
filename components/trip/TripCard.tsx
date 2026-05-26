@@ -299,7 +299,6 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.foundation.grey100,
   },
   badgeList: {
-    paddingHorizontal: 0,
     alignSelf: 'stretch',
   },
 });

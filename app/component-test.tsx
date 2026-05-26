@@ -10,6 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import AuthActionButton from '@/components/common/AuthActionButton';
 import DateBadge from '@/components/common/DateBadge';
+import HorizontalEdgeScrollView from '@/components/common/HorizontalEdgeScrollView';
 import PrimaryButton from '@/components/common/PrimaryButton';
 import SheetActionButton from '@/components/common/SheetActionButton';
 import MyPageTabs, { type MyPageTabMode } from '@/components/mypage/MyPageTabs';
@@ -198,11 +199,11 @@ export default function ComponentTestScreen() {
         {/* ── TripListCard ─────────────────────────────────── */}
         <SectionTitle title="TripListCard (101px 수직 북 스파인)" />
         <Label text="가로 스크롤 목록" />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tripListRow}>
+        <HorizontalEdgeScrollView contentContainerStyle={styles.tripListRow}>
           {MOCK_TRIP_LIST.map((t) => (
             <TripListCard key={t.id} trip={t} onPress={() => {}} />
           ))}
-        </ScrollView>
+        </HorizontalEdgeScrollView>
 
         {/* ── PlaceEntryCard ───────────────────────────────── */}
         <SectionTitle title="PlaceEntryCard (타임라인 구조)" />
@@ -215,12 +216,12 @@ export default function ComponentTestScreen() {
 
         {/* ── DateBadge ─────────────────────────────────────── */}
         <SectionTitle title="DateBadge (80×60)" />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tripListRow}>
+        <HorizontalEdgeScrollView contentContainerStyle={styles.tripListRow}>
           {MOCK_TRIP.dateBadges?.map((b, i) => (
             <DateBadge key={i} date={b.date} day={b.day} imageUri={b.imageUri} />
           ))}
           <DateBadge date="4.1" day="화" />
-        </ScrollView>
+        </HorizontalEdgeScrollView>
 
         {/* ── ReflectionCard ────────────────────────────────── */}
         <SectionTitle title="ReflectionCard (219×269)" />

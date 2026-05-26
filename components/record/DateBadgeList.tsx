@@ -1,15 +1,15 @@
 import React from 'react';
 import {
-    ScrollView,
-    StyleSheet,
-    TouchableOpacity,
-    View,
-    type ImageSourcePropType,
-    type StyleProp,
-    type ViewStyle,
+  StyleSheet,
+  TouchableOpacity,
+  View,
+  type ImageSourcePropType,
+  type StyleProp,
+  type ViewStyle,
 } from 'react-native';
 
 import DateBadge from '@/components/common/DateBadge';
+import HorizontalEdgeScrollView from '@/components/common/HorizontalEdgeScrollView';
 import { Spacing } from '@/constants/theme';
 
 export interface DateBadgeListItem {
@@ -33,12 +33,9 @@ export default function DateBadgeList({
   style,
 }: DateBadgeListProps) {
   return (
-    <ScrollView
-      horizontal
+    <HorizontalEdgeScrollView
       nestedScrollEnabled
       directionalLockEnabled
-      showsHorizontalScrollIndicator={false}
-      style={styles.scroll}
       contentContainerStyle={[styles.row, style]}
     >
       {items.map((item) => {
@@ -62,18 +59,14 @@ export default function DateBadgeList({
           </TouchableOpacity>
         );
       })}
-    </ScrollView>
+    </HorizontalEdgeScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: {
-    flexGrow: 0,
-  },
   row: {
     flexDirection: 'row',
     gap: Spacing.xs,
-    paddingHorizontal: Spacing.xl,
   },
   badgeWrap: {
     borderRadius: 4,

@@ -8,7 +8,6 @@ import React from 'react';
 import {
     Image,
     Pressable,
-    ScrollView,
     StyleSheet,
     useWindowDimensions,
     View,
@@ -16,6 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
+import HorizontalEdgeScrollView from '@/components/common/HorizontalEdgeScrollView';
 import TodaySummary from '@/components/trip/TodaySummary';
 import { HOME_MOCK_DATA } from '@/constants/mockHome';
 import { Colors, FontFamily, Radius, Shadows, Typography } from '@/constants/theme';
@@ -118,32 +118,32 @@ export default function HomeScreen() {
           <Text style={styles.reflectionCaption}>{reflectionPrompt.subtitle}</Text>
         </Pressable>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.photoScroll}
-          contentContainerStyle={styles.photoRow}
-        >
-          {photoCandidates.map((photo) => (
-            <Image
-              key={photo.id}
-              source={photo.image}
-              style={styles.photoThumb}
-              resizeMode="cover"
-              accessibilityLabel={photo.title}
-            />
-          ))}
-          <Pressable
-            style={styles.photoMoreCard}
-            accessibilityRole="button"
-            accessibilityLabel="더보기"
-            onPress={() => {}}
+        <View style={styles.photoSection}>
+          <HorizontalEdgeScrollView
+            style={styles.photoScroll}
+            contentContainerStyle={styles.photoRow}
           >
-            <View style={styles.photoMoreOverlay}>
-              <Text style={styles.photoMoreLabel}>더보기</Text>
-            </View>
-          </Pressable>
-        </ScrollView>
+            {photoCandidates.map((photo) => (
+              <Image
+                key={photo.id}
+                source={photo.image}
+                style={styles.photoThumb}
+                resizeMode="cover"
+                accessibilityLabel={photo.title}
+              />
+            ))}
+            <Pressable
+              style={styles.photoMoreCard}
+              accessibilityRole="button"
+              accessibilityLabel="더보기"
+              onPress={() => {}}
+            >
+              <View style={styles.photoMoreOverlay}>
+                <Text style={styles.photoMoreLabel}>더보기</Text>
+              </View>
+            </Pressable>
+          </HorizontalEdgeScrollView>
+        </View>
       </View>
     </View>
   );
@@ -274,9 +274,11 @@ const styles = StyleSheet.create({
     color: '#4C4C4C',
     marginLeft: 8,
   },
+  photoSection: {
+    paddingHorizontal: 20,
+  },
   photoScroll: {
     marginTop: 8,
-    marginHorizontal: 20,
     height: 150,
   },
   photoRow: {
