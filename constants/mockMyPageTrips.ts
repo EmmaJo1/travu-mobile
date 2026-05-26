@@ -2,33 +2,30 @@ import type { ImageSourcePropType } from 'react-native';
 
 import type { SelectorOption } from '@/components/record/DaySelectorSheet';
 import type { TripListItem } from '@/components/trip/TripListCard';
+import { FIGMA_IMAGES } from '@/constants/figmaImages';
 
-const IMG = {
-  paris: require('../assets/images/home-hero-paris.png'),
-  kyoto: require('../assets/images/record-trip-kyoto-cover.png'),
-  portugal: require('../assets/images/record-trip-portugal-cover.png'),
-  sydney: require('../assets/images/record-trip-sydney-cover.png'),
-  sydneyDay1: require('../assets/images/record-trip-sydney-day-1.png'),
-  kyotoDay1: require('../assets/images/record-trip-kyoto-day-1.png'),
-} as const;
+const IMG = FIGMA_IMAGES.myPageTrips;
 
 export interface MyPageTrip {
   id: string;
-  year: number;
+  /** TripListCard 책표지 대문자 제목 */
+  title: string;
+  /** TripListCard 캡션 도시명 */
   city: string;
   country: string;
+  /** 여행 기간 (예: "2025.8.25-9.1") — 연도 그룹은 시작 연도 기준으로 파생 */
   dateRangeLabel: string;
   coverImage: ImageSourcePropType;
   daysCount: number;
   photoCount: number;
 }
 
-/** Figma mypage-travel — TripListCard 그리드 mock */
+/** Figma mypage-travel — TripListCard 12개 (2025·2024 각 2행×3열) */
 export const MOCK_MY_PAGE_TRIPS: MyPageTrip[] = [
   {
     id: 'mp-paris',
-    year: 2025,
-    city: 'PARIS',
+    title: 'PARIS',
+    city: 'Paris',
     country: 'France',
     dateRangeLabel: '2025.8.25-9.1',
     coverImage: IMG.paris,
@@ -36,84 +33,114 @@ export const MOCK_MY_PAGE_TRIPS: MyPageTrip[] = [
     photoCount: 312,
   },
   {
-    id: 'mp-tokyo',
-    year: 2025,
-    city: 'TOKYO',
-    country: 'Japan',
-    dateRangeLabel: '2025.4.1-4.7',
-    coverImage: IMG.kyoto,
+    id: 'mp-rome',
+    title: 'ROME',
+    city: 'Rome',
+    country: 'Italy',
+    dateRangeLabel: '2025.9.6-9.12',
+    coverImage: IMG.rome,
     daysCount: 7,
-    photoCount: 211,
-  },
-  {
-    id: 'mp-bali',
-    year: 2025,
-    city: 'BALI',
-    country: 'Indonesia',
-    dateRangeLabel: '2025.6.10-6.17',
-    coverImage: IMG.portugal,
-    daysCount: 8,
-    photoCount: 186,
-  },
-  {
-    id: 'mp-nyc',
-    year: 2025,
-    city: 'NEW YORK',
-    country: 'USA',
-    dateRangeLabel: '2025.9.3-9.10',
-    coverImage: IMG.sydney,
-    daysCount: 8,
     photoCount: 248,
   },
   {
-    id: 'mp-sydney',
-    year: 2025,
-    city: 'SYDNEY',
-    country: 'Australia',
-    dateRangeLabel: '2025.3.5-3.15',
-    coverImage: IMG.sydneyDay1,
-    daysCount: 11,
-    photoCount: 734,
+    id: 'mp-venice',
+    title: 'VENICE',
+    city: 'Venice',
+    country: 'Italy',
+    dateRangeLabel: '2025.9.12-9.16',
+    coverImage: IMG.venice,
+    daysCount: 5,
+    photoCount: 186,
   },
   {
-    id: 'mp-kyoto',
-    year: 2025,
-    city: 'KYOTO',
-    country: 'Japan',
-    dateRangeLabel: '2025.3.30-4.3',
-    coverImage: IMG.kyotoDay1,
-    daysCount: 5,
+    id: 'mp-florence',
+    title: 'FLORENCE',
+    city: 'Florence',
+    country: 'Italy',
+    dateRangeLabel: '2025.9.16-9.25',
+    coverImage: IMG.florence,
+    daysCount: 10,
     photoCount: 211,
   },
   {
-    id: 'mp-lisbon',
-    year: 2024,
-    city: 'LISBON',
-    country: 'Portugal',
-    dateRangeLabel: '2024.10.2-10.12',
-    coverImage: IMG.portugal,
-    daysCount: 11,
-    photoCount: 541,
+    id: 'mp-budapest',
+    title: 'BUDAPEST',
+    city: 'Budapest',
+    country: 'Hungary',
+    dateRangeLabel: '2025.9.25-9.30',
+    coverImage: IMG.budapest,
+    daysCount: 6,
+    photoCount: 167,
   },
   {
-    id: 'mp-seoul',
-    year: 2024,
-    city: 'SEOUL',
-    country: 'Korea',
-    dateRangeLabel: '2024.5.1-5.5',
-    coverImage: IMG.sydneyDay1,
+    id: 'mp-vienna',
+    title: 'VIENNA',
+    city: 'Vienna',
+    country: 'Austria',
+    dateRangeLabel: '2025.10.1-10.7',
+    coverImage: IMG.vienna,
+    daysCount: 7,
+    photoCount: 198,
+  },
+  {
+    id: 'mp-tokyo',
+    title: 'VIENNA',
+    city: 'Tokyo',
+    country: 'Japan',
+    dateRangeLabel: '2024.3.23-3.27',
+    coverImage: IMG.tokyo,
+    daysCount: 5,
+    photoCount: 142,
+  },
+  {
+    id: 'mp-hongkong',
+    title: 'HONGKONG',
+    city: 'Hongkong',
+    country: 'Hong Kong',
+    dateRangeLabel: '2024.4.1-4.6',
+    coverImage: IMG.hongkong,
+    daysCount: 6,
+    photoCount: 176,
+  },
+  {
+    id: 'mp-macao',
+    title: 'MACAO',
+    city: 'Macao',
+    country: 'Macao',
+    dateRangeLabel: '2024.4.7-4.12',
+    coverImage: IMG.macao,
+    daysCount: 6,
+    photoCount: 134,
+  },
+  {
+    id: 'mp-osaka',
+    title: 'OSAKA',
+    city: 'Osaka',
+    country: 'Japan',
+    dateRangeLabel: '2024.9.12-9.16',
+    coverImage: IMG.osaka,
     daysCount: 5,
     photoCount: 98,
   },
   {
-    id: 'mp-barcelona',
-    year: 2024,
-    city: 'BARCELONA',
-    country: 'Spain',
-    dateRangeLabel: '2024.7.14-7.21',
-    coverImage: IMG.paris,
-    daysCount: 8,
-    photoCount: 167,
+    id: 'mp-singapore',
+    title: 'SINGAPORE',
+    city: 'Singapore',
+    country: 'Singapore',
+    dateRangeLabel: '2024.9.20-9.30',
+    coverImage: IMG.singapore,
+    daysCount: 11,
+    photoCount: 221,
+  },
+  {
+    id: 'mp-bangkok',
+    title: 'BANGKOK',
+    city: 'Bangkok',
+    country: 'Thailand',
+    dateRangeLabel: '2024.11.7-11.15',
+    coverImage: IMG.bangkok,
+    daysCount: 9,
+    photoCount: 187,
   },
 ];
 
@@ -145,28 +172,39 @@ export const TRAVEL_SORT_OPTIONS: SelectorOption[] = (
   Object.entries(TRAVEL_SORT_LABELS) as [TravelSortOption, string][]
 ).map(([id, label]) => ({ id, label }));
 
+export function getTripYearFromDateRange(dateRangeLabel: string): number {
+  const match = dateRangeLabel.match(/^(\d{4})/);
+  return match ? Number(match[1]) : new Date().getFullYear();
+}
+
 export function groupTripsByYear(trips: MyPageTrip[]): { year: number; trips: MyPageTrip[] }[] {
-  const years = [...new Set(trips.map((t) => t.year))].sort((a, b) => b - a);
+  const years = [...new Set(trips.map((t) => getTripYearFromDateRange(t.dateRangeLabel)))].sort(
+    (a, b) => b - a,
+  );
   return years.map((year) => ({
     year,
-    trips: trips.filter((t) => t.year === year),
+    trips: trips.filter((t) => getTripYearFromDateRange(t.dateRangeLabel) === year),
   }));
 }
 
-function formatCountryLabel(city: string, country: string): string {
-  const label = city
-    .split(' ')
-    .map((word) => word.charAt(0) + word.slice(1).toLowerCase())
-    .join(' ');
-  return `${label}, ${country}`;
+/** TripListCard 캡션 — Figma 표기 유지 (예: Hongkong) */
+function formatTripListCity(city: string): string {
+  if (/^[A-Z\s]+$/.test(city)) {
+    return city
+      .toLowerCase()
+      .split(' ')
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  }
+  return city;
 }
 
 /** TripListCard prop 변환 */
 export function toTripListItem(trip: MyPageTrip): TripListItem {
   return {
     id: trip.id,
-    title: trip.city,
-    country: formatCountryLabel(trip.city, trip.country),
+    title: trip.title,
+    city: formatTripListCity(trip.city),
     date: trip.dateRangeLabel,
     coverImage: trip.coverImage,
   };

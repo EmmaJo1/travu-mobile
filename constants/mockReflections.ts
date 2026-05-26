@@ -67,4 +67,4 @@ export const MOCK_QUESTION_CARDS: ReflectionQuestionItem[] = [
   },
 ];
 
-export const REFLECTION_FOOTER_TEXT = '지금까지 5번의 여행을 성찰로 남겼어요.';
+export const REFLECTION_FOOTER_TEXT = '“지금까지 5번의 여행을 성찰로 남겼어요.”';

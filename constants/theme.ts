@@ -271,8 +271,8 @@ export const Shadows = {
     shadowColor:   '#000000',
     shadowOffset:  { width: 0, height: 0 },
     shadowOpacity: 0.25,
-    shadowRadius:  2,
-    elevation:     2,
+    shadowRadius:  4,
+    elevation: 2,
   },
   /** 플로팅 버튼: 0px 4px 4px 0px rgba(0,0,0,0.25) */
   floating: {
@@ -344,12 +344,11 @@ export const ComponentTokens = {
     badgeBackground: 'transparent',
   },
 
-  /** TripListCard: 리스트형/소형 여행 카드 */
+  /** TripListCard: 리스트형/소형 여행 카드 (img_spot 내부 썸네일) */
   TripListCard: {
-    thumbnailWidth:  80,
-    thumbnailHeight: 60,
+    thumbnailWidth:  64,
+    thumbnailHeight: 76,
     thumbnailRadius: Radius.xs,          // 4
-    // TODO: 카드 전체 높이·padding Figma Section 3 확인 필요
   },
 
   /** DayCard: Day 1, Day 2 같은 하루 선택 카드 */

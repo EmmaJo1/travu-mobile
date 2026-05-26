@@ -26,7 +26,6 @@ const HERO_IMAGE_FRAME_HEIGHT = 508;
 const HERO_IMAGE_TOP = 27;
 const HERO_IMAGE_WIDTH = 395;
 const HERO_IMAGE_HEIGHT = 503;
-const DIM_HEIGHT = 126;
 const HEADER_HEIGHT = 52;
 const WARM_WHITE = '#F9F5F3';
 
@@ -44,15 +43,6 @@ const HERO_MASK_COLORS = [
 ] as const;
 
 const HERO_MASK_LOCATIONS = [0, 0.6822, 0.7562, 0.8178, 0.8777, 0.9253, 1] as const;
-
-const HERO_DIM_COLORS = [
-  'rgba(38, 38, 38, 0.4)',
-  'rgba(134, 134, 134, 0.25)',
-  'rgba(143, 143, 143, 0.15)',
-  'rgba(153, 153, 153, 0)',
-] as const;
-
-const HERO_DIM_LOCATIONS = [0.0028, 0.7981, 0.8972, 0.9963] as const;
 
 export default function HomeScreen() {
   const { width: screenWidth } = useWindowDimensions();
@@ -80,15 +70,6 @@ export default function HomeScreen() {
           start={{ x: 0.5, y: 0 }}
           end={{ x: 0.5, y: 1 }}
           style={styles.heroMask}
-          pointerEvents="none"
-        />
-
-        <LinearGradient
-          colors={[...HERO_DIM_COLORS]}
-          locations={[...HERO_DIM_LOCATIONS]}
-          start={{ x: 0.5, y: 0 }}
-          end={{ x: 0.5, y: 1 }}
-          style={styles.heroDim}
           pointerEvents="none"
         />
 
@@ -202,13 +183,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: HERO_HEIGHT,
-  },
-  heroDim: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: DIM_HEIGHT,
   },
   heroHeaderSafe: {
     position: 'absolute',

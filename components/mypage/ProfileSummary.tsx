@@ -1,3 +1,4 @@
+import Text from '@/components/common/AppText';
 import React from 'react';
 import {
   Image,
@@ -7,7 +8,6 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import Text from '@/components/common/AppText';
 
 import { Colors, Typography } from '@/constants/theme';
 
@@ -15,10 +15,11 @@ interface ProfileSummaryProps {
   userName: string;
   profileUri?: string;
   profileImage?: ImageSourcePropType;
-  tagline?: string;
   recordCount: number;
   countryCount: number;
   tripCount: number;
+  /** 사용자가 직접 작성·수정하는 자기소개/상태 메시지 (mock 또는 Supabase 연동 예정) */
+  tagline?: string;
   style?: StyleProp<ViewStyle>;
 }
 
@@ -38,35 +39,46 @@ export default function ProfileSummary({
   userName,
   profileUri,
   profileImage,
-  tagline,
   recordCount,
   countryCount,
   tripCount,
+  tagline,
   style,
 }: ProfileSummaryProps) {
   const avatarSource = profileImage ?? (profileUri ? { uri: profileUri } : undefined);
 
   return (
     <View style={[styles.container, style]}>
-      <View style={styles.avatarWrap}>
-        {avatarSource ? (
-          <Image source={avatarSource} style={styles.avatar} resizeMode="cover" />
-        ) : (
-          <View style={styles.avatarFallback} />
-        )}
-      </View>
+      <View style={styles.profileRow}>
+        <View style={styles.avatarWrap}>
+          {avatarSource ? (
+            <Image source={avatarSource} style={styles.avatar} resizeMode="cover" />
+          ) : (
+            <View style={styles.avatarFallback} />
+          )}
+        </View>
 
-      <View style={styles.content}>
-        <Text style={styles.name}>{userName}</Text>
-        {tagline ? <Text style={styles.tagline}>{tagline}</Text> : null}
-        <View style={styles.statsRow}>
-          <Stat label="기록" value={recordCount} unit="번" />
-          <View style={styles.divider} />
-          <Stat label="국가" value={countryCount} unit="곳" />
-          <View style={styles.divider} />
-          <Stat label="여행" value={tripCount} unit="번" />
+        <View style={styles.content}>
+          <Text style={styles.name}>{userName}</Text>
+          <View style={styles.statsRow}>
+            <Stat label="기록" value={recordCount} unit="번" />
+            <View style={styles.divider} />
+            <Stat label="국가" value={countryCount} unit="곳" />
+            <View style={styles.divider} />
+            <Stat label="여행" value={tripCount} unit="번" />
+          </View>
         </View>
       </View>
+
+      {tagline ? (
+        <Text
+          style={styles.tagline}
+          accessibilityRole="text"
+          accessibilityLabel={`자기소개, ${tagline}`}
+        >
+          {tagline}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -74,11 +86,13 @@ export default function ProfileSummary({
 const styles = StyleSheet.create({
   container: {
     width: '100%',
-    minHeight: 152,
+    gap: 16,
+  },
+  profileRow: {
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 24,
-    paddingHorizontal: 20,
   },
   avatarWrap: {
     width: 80,
@@ -102,10 +116,6 @@ const styles = StyleSheet.create({
   name: {
     ...Typography.title2,
     color: Colors.foundation.black,
-  },
-  tagline: {
-    ...Typography.body2Regular,
-    color: Colors.foundation.grey600,
   },
   statsRow: {
     flexDirection: 'row',
@@ -131,5 +141,11 @@ const styles = StyleSheet.create({
     width: 2,
     height: 40,
     backgroundColor: Colors.foundation.grey100,
+  },
+  tagline: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.black,
+    textAlign: 'left',
+    alignSelf: 'stretch',
   },
 });

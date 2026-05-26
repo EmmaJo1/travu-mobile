@@ -62,6 +62,7 @@ const styles = StyleSheet.create({
   },
   labelTop: {
     ...Typography.captionEmphasized,
+    lineHeight: 22,
     color: Colors.foundation.black,
     textAlign: 'center',
   },

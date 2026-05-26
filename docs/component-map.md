@@ -277,9 +277,9 @@
 |------|------|
 | **파일** | `components/mypage/ProfileSummary.tsx` |
 | **사용 화면** | My Page |
-| **역할** | 아바타 + 이름 + 기록/국가/여행 통계 |
-| **새로 만들면 안 되는 UI** | 프로필 요약 row |
-| **확장 방식** | count props, optional `tagline` |
+| **역할** | 프로필 이미지, 사용자 이름, 기록/국가/여행 통계, **사용자 소개 문구(tagline/bio)** 를 포함하는 표준 프로필 요약 |
+| **새로 만들면 안 되는 UI** | 프로필 요약 row, My Page에서 tagline/bio를 화면에 직접 렌더링 |
+| **확장 방식** | count props, optional `tagline` (자기소개/상태 메시지). **tagline은 ProfileSummary prop으로 전달하고 컴포넌트 내부에서만 렌더링** |
 
 #### MyPageTabs
 | 항목 | 내용 |
@@ -335,8 +335,8 @@
 |------|------|
 | **현재 사용** | `ScreenHeader`, `ProfileSummary`, `MyPageTabs`, `TripListCard`, `ReflectionCard`, `QuestionCard`, `PrimaryButton`, `DaySelectorSheet`, `MapPlaceholderCard` |
 | **반드시 재사용** | 위 전부 |
-| **직접 구현 금지** | TripListCard 유사 카드, 프로필 요약, 탭 UI, 지도 placeholder |
-| **주의** | 정렬 버튼은 `PrimaryButton` misuse — 향후 FilterChip variant |
+| **직접 구현 금지** | TripListCard 유사 카드, 프로필 요약, **사용자 소개 문구(tagline/bio)를 profile.tsx에 직접 렌더링**, 탭 UI, 지도 placeholder |
+| **주의** | 정렬 버튼은 `PrimaryButton` misuse — 향후 FilterChip variant. **tagline/bio는 `ProfileSummary`의 `tagline` prop으로 전달** |
 
 ### day-archive-detail — `app/day-archive-detail.tsx`
 
