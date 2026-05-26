@@ -1,14 +1,14 @@
+import Text from '@/components/common/AppText';
 import React from 'react';
 import {
-  FlatList,
-  Modal,
-  Pressable,
-  StyleSheet,
-  TouchableOpacity,
-  View,
+    FlatList,
+    Modal,
+    Pressable,
+    StyleSheet,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Text from '@/components/common/AppText';
 
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 

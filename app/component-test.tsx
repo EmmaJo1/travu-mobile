@@ -2,30 +2,30 @@
  * component-test
  * Figma 스펙 기반으로 재작성된 컴포넌트 렌더링 확인 화면.
  */
+import Text from '@/components/common/AppText';
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import Text from '@/components/common/AppText';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import PrimaryButton from '@/components/common/PrimaryButton';
 import AuthActionButton from '@/components/common/AuthActionButton';
-import SheetActionButton from '@/components/common/SheetActionButton';
 import DateBadge from '@/components/common/DateBadge';
-import DayCard from '@/components/trip/DayCard';
-import TripCard, { type TripCardData } from '@/components/trip/TripCard';
-import TripListCard, { type TripListItem } from '@/components/trip/TripListCard';
-import PlaceEntryCard, { type PlaceEntry } from '@/components/trip/PlaceEntryCard';
-import ReflectionCard from '@/components/trip/ReflectionCard';
-import QuestionCard from '@/components/trip/QuestionCard';
-import TodaySummary from '@/components/trip/TodaySummary';
-import TravelStatsCard from '@/components/trip/TravelStatsCard';
-import ProfileSummary from '@/components/mypage/ProfileSummary';
+import PrimaryButton from '@/components/common/PrimaryButton';
+import SheetActionButton from '@/components/common/SheetActionButton';
 import MyPageTabs, { type MyPageTabMode } from '@/components/mypage/MyPageTabs';
+import ProfileSummary from '@/components/mypage/ProfileSummary';
 import BottomTabBar from '@/components/nav/BottomTabBar';
 import ScreenHeader from '@/components/nav/ScreenHeader';
+import DayCard from '@/components/trip/DayCard';
+import PlaceEntryCard, { type PlaceEntry } from '@/components/trip/PlaceEntryCard';
+import QuestionCard from '@/components/trip/QuestionCard';
+import ReflectionCard from '@/components/trip/ReflectionCard';
+import TodaySummary from '@/components/trip/TodaySummary';
+import TravelStatsCard from '@/components/trip/TravelStatsCard';
+import TripCard, { type TripCardData } from '@/components/trip/TripCard';
+import TripListCard, { type TripListItem } from '@/components/trip/TripListCard';
 
-import { Colors, Spacing, Typography, Radius } from '@/constants/theme';
+import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 
 // ─── Mock Data ────────────────────────────────────────────────────────────────
 

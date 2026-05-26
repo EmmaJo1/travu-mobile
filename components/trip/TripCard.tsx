@@ -7,18 +7,18 @@
  *   2) 우상단: 북마크 아이콘 + 저장(아이콘 + "저장")
  *   3) DateBadge 가로 스크롤 행
  */
+import Text from '@/components/common/AppText';
 import React, { useMemo } from 'react';
 import {
-  Image,
-  StyleSheet,
-  TouchableOpacity,
-  View,
-  type ImageSourcePropType,
-  type StyleProp,
-  type ViewStyle,
+    Image,
+    StyleSheet,
+    TouchableOpacity,
+    View,
+    type ImageSourcePropType,
+    type StyleProp,
+    type ViewStyle,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import Text from '@/components/common/AppText';
 
 import DateBadgeList, { type DateBadgeListItem } from '@/components/record/DateBadgeList';
 import { Colors, ComponentTokens, Spacing, Typography } from '@/constants/theme';

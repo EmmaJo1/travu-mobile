@@ -1,12 +1,12 @@
 import React from 'react';
 import {
-  ScrollView,
-  StyleSheet,
-  TouchableOpacity,
-  View,
-  type ImageSourcePropType,
-  type StyleProp,
-  type ViewStyle,
+    ScrollView,
+    StyleSheet,
+    TouchableOpacity,
+    View,
+    type ImageSourcePropType,
+    type StyleProp,
+    type ViewStyle,
 } from 'react-native';
 
 import DateBadge from '@/components/common/DateBadge';

@@ -14,17 +14,17 @@ import ReflectionCard from '@/components/trip/ReflectionCard';
 import TripListCardList from '@/components/trip/TripListCardList';
 import { MOCK_MY_PAGE_PROFILE } from '@/constants/mockMyPageProfile';
 import {
-  MOCK_MY_PAGE_TRIPS,
-  TRAVEL_SORT_LABELS,
-  TRAVEL_SORT_OPTIONS,
-  groupTripsByYear,
-  sortMyPageTrips,
-  toTripListItem,
-  type TravelSortOption,
+    MOCK_MY_PAGE_TRIPS,
+    TRAVEL_SORT_LABELS,
+    TRAVEL_SORT_OPTIONS,
+    groupTripsByYear,
+    sortMyPageTrips,
+    toTripListItem,
+    type TravelSortOption,
 } from '@/constants/mockMyPageTrips';
 import {
-  MOCK_QUESTION_CARDS,
-  MOCK_REFLECTION_CARDS,
+    MOCK_QUESTION_CARDS,
+    MOCK_REFLECTION_CARDS,
 } from '@/constants/mockReflections';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 

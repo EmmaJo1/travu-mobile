@@ -15,9 +15,9 @@
  *   · 사진 스트립 (110×146 × 최대 4장, 가로 스크롤)
  *   · 메모 텍스트 (Body 2 Regular 14/400, black)
  */
+import Text from '@/components/common/AppText';
 import React from 'react';
 import { Image, ScrollView, StyleSheet, TouchableOpacity, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from 'react-native';
-import Text from '@/components/common/AppText';
 
 import { Colors, Typography } from '@/constants/theme';
 

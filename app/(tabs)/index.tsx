@@ -6,12 +6,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
-  Image,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  View,
+    Image,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    useWindowDimensions,
+    View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
 import TodaySummary from '@/components/trip/TodaySummary';
@@ -21,37 +23,29 @@ import { Colors, FontFamily, Radius, Shadows, Typography } from '@/constants/the
 const HERO_HEIGHT = 353;
 const HERO_IMAGE_FRAME_TOP = -139;
 const HERO_IMAGE_FRAME_HEIGHT = 508;
-const HERO_IMAGE_TOP = 8;
-const HERO_IMAGE_HEIGHT = 492;
-const HEADER_HEIGHT = 126;
-const HERO_MASK_HEIGHT = 180;
+const HERO_IMAGE_TOP = 27;
+const HERO_IMAGE_WIDTH = 395;
+const HERO_IMAGE_HEIGHT = 503;
+const HEADER_HEIGHT = 52;
 const WARM_WHITE = '#F9F5F3';
 
 /** Sansita Swashed VF — weight는 fontWeight로 지정 (Figma Point Text EN 18/700) */
 const SANSITA_SWASHED = 'Sansita Swashed';
 
-/** Hero 하단 — WARM_WHITE fade mask */
 const HERO_MASK_COLORS = [
-  'rgba(249,245,243,0)',
-  'rgba(249,245,243,0.25)',
-  'rgba(249,245,243,0.55)',
-  'rgba(249,245,243,0.85)',
+  'rgba(0,0,0,0)',
+  'rgba(0,0,0,0)',
+  'rgba(249,245,243,0.15)',
+  'rgba(249,245,243,0.45)',
+  'rgba(249,245,243,0.72)',
+  'rgba(249,245,243,0.9)',
   WARM_WHITE,
 ] as const;
 
-const HERO_MASK_LOCATIONS = [0, 0.35, 0.6, 0.82, 1] as const;
-
-/** Figma Header fill — dark top fade */
-const HEADER_GRADIENT_COLORS = [
-  'rgba(38,38,38,0.4)',
-  'rgba(134,134,134,0.25)',
-  'rgba(143,143,143,0.15)',
-  'rgba(153,153,153,0)',
-] as const;
-
-const HEADER_GRADIENT_LOCATIONS = [0, 0.8005079030990601, 0.90025395154953, 1] as const;
+const HERO_MASK_LOCATIONS = [0, 0.6822, 0.7562, 0.8178, 0.8777, 0.9253, 1] as const;
 
 export default function HomeScreen() {
+  const { width: screenWidth } = useWindowDimensions();
   const { currentTrip, todaySummary, reflectionPrompt, photoCandidates } = HOME_MOCK_DATA;
 
   return (
@@ -59,10 +53,13 @@ export default function HomeScreen() {
       <StatusBar style="light" translucent backgroundColor="transparent" />
 
       <View style={styles.heroFixed} pointerEvents="box-none">
-        <View style={styles.heroImageFrame}>
+        <View style={[styles.heroImageFrame, { width: screenWidth }]}>
           <Image
             source={currentTrip.heroImage}
-            style={styles.heroImage}
+            style={[
+              styles.heroImage,
+              { left: (screenWidth - HERO_IMAGE_WIDTH) / 2 + 2.5 },
+            ]}
             resizeMode="cover"
           />
         </View>
@@ -76,22 +73,8 @@ export default function HomeScreen() {
           pointerEvents="none"
         />
 
-        <View style={styles.heroHeaderSafe} pointerEvents="box-none">
-          <LinearGradient
-            colors={[...HEADER_GRADIENT_COLORS]}
-            locations={[...HEADER_GRADIENT_LOCATIONS]}
-            start={{ x: 0.433, y: 0 }}
-            end={{ x: 0.433, y: 1 }}
-            style={styles.heroHeaderGradient}
-            pointerEvents="none"
-          />
-
+        <SafeAreaView edges={['top']} style={styles.heroHeaderSafe} pointerEvents="box-none">
           <View style={styles.heroHeader}>
-            <View style={styles.dateColumn} pointerEvents="none">
-              <Text style={styles.dateLabel}>{currentTrip.dateLabel}</Text>
-              <Text style={styles.dayLabel}>{currentTrip.dayLabel}</Text>
-            </View>
-
             <Pressable
               style={styles.bellBtn}
               accessibilityRole="button"
@@ -104,12 +87,19 @@ export default function HomeScreen() {
               />
             </Pressable>
 
-            <View style={styles.locationRow}>
-              <Ionicons name="location-sharp" size={16} color={Colors.foundation.white} />
-              <Text style={styles.locationLabel}>{currentTrip.destination}</Text>
+            <View style={styles.headerMeta}>
+              <View style={styles.dateColumn}>
+                <Text style={styles.dateLabel}>{currentTrip.dateLabel}</Text>
+                <Text style={styles.dayLabel}>{currentTrip.dayLabel}</Text>
+              </View>
+
+              <View style={styles.locationRow}>
+                <Ionicons name="location-sharp" size={16} color={Colors.foundation.white} />
+                <Text style={styles.locationLabel}>{currentTrip.destination}</Text>
+              </View>
             </View>
           </View>
-        </View>
+        </SafeAreaView>
       </View>
 
       <View style={styles.content}>
@@ -174,74 +164,62 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: WARM_WHITE,
   },
-  /** Figma Frame 50 — LEFT + RIGHT / TOP */
   heroImageFrame: {
     position: 'absolute',
     top: HERO_IMAGE_FRAME_TOP,
     left: 0,
-    right: 0,
     height: HERO_IMAGE_FRAME_HEIGHT,
     overflow: 'hidden',
   },
-  /** Figma unsplash — LEFT + RIGHT / TOP */
   heroImage: {
     position: 'absolute',
     top: HERO_IMAGE_TOP,
-    left: 0,
-    right: 0,
-    width: '100%',
+    width: HERO_IMAGE_WIDTH,
     height: HERO_IMAGE_HEIGHT,
   },
-  /** Hero 하단 WARM_WHITE mask — LEFT + RIGHT stretch */
   heroMask: {
     position: 'absolute',
+    top: 0,
     left: 0,
     right: 0,
-    bottom: 0,
-    height: HERO_MASK_HEIGHT,
+    height: HERO_HEIGHT,
   },
-  /** Figma Header — LEFT + RIGHT / TOP */
   heroHeaderSafe: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    height: HEADER_HEIGHT,
-  },
-  heroHeaderGradient: {
-    ...StyleSheet.absoluteFillObject,
   },
   heroHeader: {
-    flex: 1,
     height: HEADER_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingVertical: 4,
     paddingHorizontal: 20,
-  },
-  dateColumn: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   bellBtn: {
     width: 24,
     height: 24,
-    flexShrink: 0,
-    zIndex: 1,
   },
   bellIcon: {
     width: 24,
     height: 24,
   },
+  headerMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: 217,
+    height: 44,
+  },
+  dateColumn: {
+    width: 83,
+  },
   dateLabel: {
     ...Typography.title2,
     color: Colors.foundation.white,
-    textAlign: 'center',
+    textAlign: 'left',
   },
   dayLabel: {
     ...Typography.body2Emphasized,
@@ -252,8 +230,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    flexShrink: 0,
-    zIndex: 1,
+    width: 67,
   },
   locationLabel: {
     fontFamily: SANSITA_SWASHED,
