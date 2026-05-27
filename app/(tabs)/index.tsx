@@ -222,6 +222,7 @@ const styles = StyleSheet.create({
   heroHeader: {
     width: '100%',
     height: HEADER_HEIGHT,
+    marginTop: -4,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
