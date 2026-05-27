@@ -1,6 +1,6 @@
 import { useRouter, type Href } from 'expo-router';
-import React, { useMemo, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
@@ -29,17 +29,35 @@ import {
 } from '@/constants/mockReflections';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 
+const CONTENT_FADE_DURATION_MS = 500;
+
 export default function ProfileScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<MyPageTabMode>('trip');
   const [sortOption, setSortOption] = useState<TravelSortOption>('latest');
   const [sortSheetVisible, setSortSheetVisible] = useState(false);
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const isFirstTabRender = useRef(true);
 
   const sortedTrips = useMemo(
     () => sortMyPageTrips(MOCK_MY_PAGE_TRIPS, sortOption),
     [sortOption],
   );
   const groupedTrips = useMemo(() => groupTripsByYear(sortedTrips), [sortedTrips]);
+
+  useEffect(() => {
+    if (isFirstTabRender.current) {
+      isFirstTabRender.current = false;
+      return;
+    }
+
+    contentOpacity.setValue(0);
+    Animated.timing(contentOpacity, {
+      toValue: 1,
+      duration: CONTENT_FADE_DURATION_MS,
+      useNativeDriver: true,
+    }).start();
+  }, [activeTab, contentOpacity]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -65,75 +83,79 @@ export default function ProfileScreen() {
           <MyPageTabs mode={activeTab} onChange={setActiveTab} />
         </View>
 
-        {activeTab === 'trip' ? (
-          <View style={styles.travelContent}>
-            <View style={styles.mapSection}>
-              <Text style={styles.sectionTitle}>나의 여행지도</Text>
-              <MapPlaceholderCard
-                subtitle="다녀온 곳 자동 표시"
-                align="top"
-              />
-            </View>
+        <Animated.View style={{ opacity: contentOpacity }}>
+          {activeTab === 'trip' ? (
+            <View style={styles.travelContent}>
+              <View style={styles.mapSection}>
+                <Text style={styles.sectionTitle}>나의 여행지도</Text>
+                <MapPlaceholderCard
+                  subtitle="다녀온 곳 자동 표시"
+                  align="top"
+                />
+              </View>
 
-            <View style={styles.tripListSection}>
-              <Text style={styles.sectionTitle}>여행 리스트</Text>
+              <View style={styles.tripListSection}>
+                <Text style={styles.sectionTitle}>여행 리스트</Text>
 
-              <View style={styles.tripList}>
-                {groupedTrips.map(({ year, trips: yearTrips }) => (
-                  <View key={year} style={styles.yearSection}>
-                    <View style={styles.yearHeader}>
-                      <Text style={styles.yearLabel}>{year}</Text>
-                      {year === groupedTrips[0]?.year ? (
-                        <Pressable
-                          onPress={() => setSortSheetVisible(true)}
-                          style={({ pressed }) => [styles.sortTrigger, pressed && styles.sortTriggerPressed]}
-                          accessibilityRole="button"
-                          accessibilityLabel={`정렬, ${TRAVEL_SORT_LABELS[sortOption]}`}
-                        >
-                          <Text style={styles.sortTriggerLabel} numberOfLines={1}>
-                            {TRAVEL_SORT_LABELS[sortOption]}
-                          </Text>
-                          <Image
-                            source={require('@/assets/images/daycard-triangle.png')}
-                            style={styles.sortTriggerIcon}
-                            resizeMode="contain"
-                          />
-                        </Pressable>
-                      ) : null}
+                <View style={styles.tripList}>
+                  {groupedTrips.map(({ year, trips: yearTrips }) => (
+                    <View key={year} style={styles.yearSection}>
+                      <View style={styles.yearHeader}>
+                        <Text style={styles.yearLabel}>{year}</Text>
+                        {year === groupedTrips[0]?.year ? (
+                          <Pressable
+                            onPress={() => setSortSheetVisible(true)}
+                            style={({ pressed }) => [styles.sortTrigger, pressed && styles.sortTriggerPressed]}
+                            accessibilityRole="button"
+                            accessibilityLabel={`정렬, ${TRAVEL_SORT_LABELS[sortOption]}`}
+                          >
+                            <Text style={styles.sortTriggerLabel} numberOfLines={1}>
+                              {TRAVEL_SORT_LABELS[sortOption]}
+                            </Text>
+                            <Image
+                              source={require('@/assets/images/daycard-triangle.png')}
+                              style={styles.sortTriggerIcon}
+                              resizeMode="contain"
+                            />
+                          </Pressable>
+                        ) : null}
+                      </View>
+
+                      <TripListCardList
+                        trips={yearTrips.map(toTripListItem)}
+                        onPressTrip={() => router.push('/day-archive-detail' as Href)}
+                      />
                     </View>
-
-                    <TripListCardList
-                      trips={yearTrips.map(toTripListItem)}
-                      onPressTrip={() => router.push('/day-archive-detail' as Href)}
-                    />
-                  </View>
-                ))}
+                  ))}
+                </View>
               </View>
             </View>
-          </View>
-        ) : (
-          <View style={styles.reflectionContent}>
-            <View style={styles.reflectionHeroSection}>
-              <Text style={styles.sectionTitle}>여행이 끝난 후에야 보이는 생각들이 있어요</Text>
+          ) : (
+            <View style={styles.reflectionContent}>
+              <View style={styles.reflectionHeroSection}>
+                <Text style={styles.sectionTitle}>여행이 끝난 후에야 보이는 생각들이 있어요</Text>
 
-              <HorizontalEdgeScrollView contentContainerStyle={styles.cardRow}>
-                {MOCK_REFLECTION_CARDS.map((card) => (
-                  <ReflectionCard key={card.id} data={card} />
-                ))}
-              </HorizontalEdgeScrollView>
-            </View>
+                <View style={styles.reflectionCardScrollWrap}>
+                  <HorizontalEdgeScrollView contentContainerStyle={styles.cardRow}>
+                    {MOCK_REFLECTION_CARDS.map((card) => (
+                      <ReflectionCard key={card.id} data={card} />
+                    ))}
+                  </HorizontalEdgeScrollView>
+                </View>
+              </View>
 
-            <View style={styles.reflectionQuestionSection}>
-              <Text style={styles.reflectionSectionTitle}>질문이 남긴 생각</Text>
+              <View style={styles.reflectionQuestionSection}>
+                <Text style={styles.reflectionSectionTitle}>질문이 남긴 생각</Text>
 
-              <View style={styles.questionList}>
-                {MOCK_QUESTION_CARDS.map((item) => (
-                  <QuestionCard key={item.id} data={item} style={styles.questionCard} />
-                ))}
+                <View style={styles.questionList}>
+                  {MOCK_QUESTION_CARDS.map((item) => (
+                    <QuestionCard key={item.id} data={item} style={styles.questionCard} />
+                  ))}
+                </View>
               </View>
             </View>
-          </View>
-        )}
+          )}
+        </Animated.View>
       </ScrollView>
 
       <DaySelectorSheet
@@ -175,7 +197,7 @@ const styles = StyleSheet.create({
   },
   /** Figma Frame 203 하단 → 나의 여행지도: 40px */
   travelContent: {
-    marginTop: 40,
+    marginTop: Spacing['2xl'],
     gap: 40,
   },
   /** Figma 나의 여행지도 → 지도 카드: 12px */
@@ -191,6 +213,10 @@ const styles = StyleSheet.create({
   },
   reflectionHeroSection: {
     gap: Spacing.lg,
+  },
+  /** HorizontalEdgeScrollView edge bleed — 부모에 좌우 패딩 필요 */
+  reflectionCardScrollWrap: {
+    paddingHorizontal: Spacing.xl,
   },
   reflectionQuestionSection: {
     marginTop: Spacing['4xl'],
@@ -212,13 +238,14 @@ const styles = StyleSheet.create({
   /** Figma Frame 187 — 연도 그룹 간 gap 40, paddingHorizontal 20 */
   tripList: {
     paddingHorizontal: Spacing.xl,
-    alignItems: 'center',
+    alignSelf: 'stretch',
+    width: '100%',
     gap: 40,
   },
   /** Figma Frame 205/186 — VERTICAL gap 16 */
   yearSection: {
-    width: 350,
-    maxWidth: '100%',
+    width: '100%',
+    alignSelf: 'stretch',
     gap: Spacing.lg,
   },
   yearHeader: {

@@ -347,8 +347,8 @@ export const ComponentTokens = {
   /** TripListCard: 리스트형/소형 여행 카드 (img_spot 내부 썸네일) */
   TripListCard: {
     thumbnailWidth:  64,
-    thumbnailHeight: 76,
-    thumbnailRadius: Radius.xs,          // 4
+    thumbnailHeight: 80,
+    thumbnailRadius: 2,
   },
 
   /** DayCard: Day 1, Day 2 같은 하루 선택 카드 */

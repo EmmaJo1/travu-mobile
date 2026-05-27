@@ -4,11 +4,12 @@ import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import TripListCard, { type TripListItem } from '@/components/trip/TripListCard';
 
 const CARDS_PER_ROW = 3;
-const CARD_WIDTH = 101;
+const CARD_WIDTH = 100;
 /** Figma TripListCardList — 카드 열 간격 */
 const COLUMN_GAP = 16;
 /** Figma: 선반(shelf)과 다음 카드 줄 caption 사이 간격 */
-const SHELF_TO_NEXT_ROW_GAP = 16;
+const SHELF_TO_NEXT_ROW_GAP = 32;
+const ROW_PADDING = 8;
 
 function chunkRows<T>(items: T[], size: number): T[][] {
   const rows: T[][] = [];
@@ -55,6 +56,7 @@ const styles = StyleSheet.create({
   },
   rowGroup: {
     width: '100%',
+    alignSelf: 'stretch',
   },
   rowGroupSpaced: {
     marginTop: SHELF_TO_NEXT_ROW_GAP,
@@ -62,8 +64,10 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     columnGap: COLUMN_GAP,
-    justifyContent: 'center',
+    justifyContent: 'space-between',
+    alignSelf: 'stretch',
     width: '100%',
+    paddingHorizontal: ROW_PADDING,
   },
   card: {
     width: CARD_WIDTH,
