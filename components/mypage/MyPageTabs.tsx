@@ -1,6 +1,6 @@
+import Text from '@/components/common/AppText';
 import React from 'react';
 import { StyleSheet, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
-import Text from '@/components/common/AppText';
 
 import { Colors, FontFamily, Typography } from '@/constants/theme';
 
