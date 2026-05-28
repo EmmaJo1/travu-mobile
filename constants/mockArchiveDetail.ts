@@ -2,12 +2,13 @@ import type { ImageSourcePropType } from 'react-native';
 
 import type { DaySelectorItem } from '@/components/record/DaySelectorSheet';
 import type { PlaceEntry } from '@/components/trip/PlaceEntryCard';
+import { FIGMA_IMAGES } from '@/constants/figmaImages';
 
 const IMG = {
-  hero: require('../assets/images/home-hero-paris.png'),
-  louvre1: require('../assets/images/home-photo-candidate-1.png'),
-  louvre2: require('../assets/images/home-photo-candidate-2.png'),
-  louvre3: require('../assets/images/home-photo-candidate-3.png'),
+  photoFrame: FIGMA_IMAGES.archive.photoFrame,
+  louvre1: FIGMA_IMAGES.home.photoCandidate1,
+  louvre2: FIGMA_IMAGES.home.photoCandidate2,
+  louvre3: FIGMA_IMAGES.home.photoCandidate3,
   pietro1: require('../assets/images/record-day-observatory-1.png'),
   pietro2: require('../assets/images/record-day-observatory-2.png'),
   seine1: require('../assets/images/record-day-bondi-1.png'),
@@ -31,7 +32,9 @@ export interface ArchiveDetailData {
   city: string;
   country: string;
   dateRangeLabel: string;
-  heroImage: ImageSourcePropType;
+  heroTitle: string;
+  /** User-editable hero photo. The blurred backdrop reuses this same image. */
+  photoFrameImage: ImageSourcePropType;
   selectedDay: {
     dayNumber: number;
     dateLabel: string;
@@ -64,10 +67,11 @@ export function formatArchiveDayLabel(day: DaySelectorItem): string {
 /** Figma day-archive-detail (506:704) mock */
 export const MOCK_ARCHIVE_DETAIL: ArchiveDetailData = {
   id: 'archive-paris',
-  city: 'PARIS',
+  city: 'Paris',
   country: 'France',
   dateRangeLabel: '2025.8.25-9.1',
-  heroImage: IMG.hero,
+  heroTitle: 'PARIS',
+  photoFrameImage: IMG.photoFrame,
   selectedDay: {
     dayNumber: 2,
     dateLabel: '2025.8.26 화',

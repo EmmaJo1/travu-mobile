@@ -15,7 +15,7 @@ export const FIGMA_IMAGES = {
   },
   archive: {
     hero: require('../assets/images/home-hero-paris.png') as ImageSourcePropType,
-    photoFrame: require('../assets/images/home-photo-candidate-1.png') as ImageSourcePropType,
+    photoFrame: require('../assets/images/archive-frame-paris.jpg') as ImageSourcePropType,
   },
   record: RECORD_TRIP_IMAGES,
   dayEntry: RECORD_DAY_ENTRY_IMAGES,

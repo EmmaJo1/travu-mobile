@@ -40,9 +40,9 @@ const SCROLL_ORIGIN_Y = 99;
 const FIGMA_Y = {
   blurTop: 92,
   blurHeight: 745,
-  parisTop: 163,
-  photoFrameTop: 228,
-  dayCardTop: 847,
+  parisTop: 134,
+  photoFrameTop: 199,
+  dayCardTop: 810,
 } as const;
 
 const BLUR_TOP = FIGMA_Y.blurTop - SCROLL_ORIGIN_Y;
@@ -55,6 +55,8 @@ const BLUR_REGION_TOP = BLUR_TOP - HERO_MARGIN_TOP;
 const PHOTO_FRAME_WIDTH = 350;
 const PHOTO_FRAME_HEIGHT = 505;
 const PARIS_WIDTH = 298;
+const PARIS_CLIP_PADDING_TOP = 18;
+const PARIS_HEIGHT = 128;
 const PARIS_OFFSET_X = 11;
 const FRAME_IMAGE_WIDTH = 301;
 const FRAME_IMAGE_HEIGHT = 400;
@@ -86,7 +88,9 @@ const MASK_GRADIENT_COLORS = MASK_OPACITIES.map(
 );
 
 function resolveImageUri(source: ImageSourcePropType): string | undefined {
-  return RNImage.resolveAssetSource(source)?.uri;
+  return typeof RNImage.resolveAssetSource === 'function'
+    ? RNImage.resolveAssetSource(source)?.uri
+    : undefined;
 }
 
 const WEB_MASK_IMAGE = `linear-gradient(180deg, ${MASK_LOCATIONS.map(
@@ -186,7 +190,7 @@ export default function DayArchiveDetailScreen() {
       >
         <View style={styles.heroArea}>
           <ArchiveBlurBackground
-            source={detail.heroImage}
+            source={detail.photoFrameImage}
             width={screenWidth}
             height={BLUR_HEIGHT}
           />
@@ -199,7 +203,7 @@ export default function DayArchiveDetailScreen() {
           >
             <Text style={styles.frameDate}>{detail.dateRangeLabel}</Text>
             <Image
-              source={detail.heroImage}
+              source={detail.photoFrameImage}
               style={styles.frameImage}
               contentFit="cover"
               contentPosition="center"
@@ -209,10 +213,10 @@ export default function DayArchiveDetailScreen() {
           <Text
             style={[
               styles.parisTitle,
-              { left: parisLeft, top: PARIS_TOP },
+              { left: parisLeft, top: PARIS_TOP - PARIS_CLIP_PADDING_TOP },
             ]}
           >
-            {detail.city}
+            {detail.heroTitle}
           </Text>
         </View>
 
@@ -222,10 +226,12 @@ export default function DayArchiveDetailScreen() {
             dayNumber={selectedDay.dayNumber}
             date={formatArchiveDayLabel(selectedDay)}
             onPress={() => setSheetVisible(true)}
+            style={styles.dayCard}
           />
           <TravelStatsCard
             placeCount={detail.stats.placeCount}
             distanceKm={detail.stats.distanceKm}
+            style={styles.travelStatsCard}
           />
         </View>
 
@@ -294,6 +300,7 @@ const styles = StyleSheet.create({
     width: PHOTO_FRAME_WIDTH,
     height: PHOTO_FRAME_HEIGHT,
     backgroundColor: '#F9F9F6',
+    zIndex: 1,
   },
   frameDate: {
     position: 'absolute',
@@ -316,18 +323,31 @@ const styles = StyleSheet.create({
   parisTitle: {
     position: 'absolute',
     width: PARIS_WIDTH,
+    height: PARIS_HEIGHT,
+    paddingTop: PARIS_CLIP_PADDING_TOP,
     fontFamily: FontFamily.prata,
     fontSize: 96,
-    lineHeight: 90,
+    lineHeight: 112,
     color: '#000000',
+    includeFontPadding: true,
+    overflow: 'visible',
     textAlign: 'left',
+    textAlignVertical: 'top',
+    zIndex: 2,
   },
   dayStatsRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl,
+    paddingLeft: Spacing.xl,
+    paddingRight: 23,
     marginTop: 10,
+  },
+  dayCard: {
+    width: 98,
+  },
+  travelStatsCard: {
+    marginTop: 12,
   },
   recordSection: {
     paddingHorizontal: Spacing.xl,

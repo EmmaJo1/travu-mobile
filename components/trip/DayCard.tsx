@@ -42,7 +42,7 @@ export default function DayCard({
       </View>
 
       <View style={[styles.dateRow, isLeft && styles.rowLeft]}>
-        <Text style={styles.dateText} numberOfLines={1}>
+        <Text style={styles.dateText}>
           {date}
         </Text>
         <Image
@@ -89,7 +89,7 @@ const styles = StyleSheet.create({
   dateText: {
     ...Typography.body1Regular,
     color:      Colors.foundation.black,
-    flexShrink: 1,
+    flexShrink: 0,
   },
   arrow: {
     width:      12,

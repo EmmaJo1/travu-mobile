@@ -29,6 +29,8 @@ import {
 
 const BODY_WIDTH = 90;
 const BODY_HEIGHT = 120;
+const CARD_WIDTH = 100;
+const CARD_HEIGHT = 180;
 const CONTENT_LEFT = 16;
 const CONTENT_WIDTH = 64;
 const THUMB = ComponentTokens.TripListCard;
@@ -102,13 +104,13 @@ export default function TripListCard({ trip, onPress, style }: TripListCardProps
 
 const styles = StyleSheet.create({
   card: {
-    width: 101,
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT,
     alignItems: 'center',
     gap: 16,
   },
   headerShadow: {
-    alignSelf: 'stretch',
-    width: 101,
+    width: CARD_WIDTH,
     ...Shadows.cardSmall,
   },
   header: {

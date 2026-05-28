@@ -11,7 +11,7 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
 import HorizontalEdgeScrollView from '@/components/common/HorizontalEdgeScrollView';
@@ -27,7 +27,8 @@ const HERO_IMAGE_HEIGHT = 492;
 const HEADER_HEIGHT = 52;
 /** Figma Header(973:1102) 프레임 높이 — dim 배경 영역 */
 const HEADER_DIM_HEIGHT = 126;
-const HERO_MASK_HEIGHT = 180;
+const HERO_MASK_TOP = 180;
+const HERO_MASK_HEIGHT = HERO_HEIGHT - HERO_MASK_TOP;
 const WARM_WHITE = '#F9F5F3';
 
 /** Sansita Swashed VF — weight는 fontWeight로 지정 (Figma Point Text EN 18/700) */
@@ -46,18 +47,16 @@ const HEADER_DIM_LOCATIONS = [0, 0.8005, 0.9003, 1] as const;
 /** Hero 하단 — WARM_WHITE fade mask */
 const HERO_MASK_COLORS = [
   'rgba(249,245,243,0)',
-  'rgba(249,245,243,0.25)',
-  'rgba(249,245,243,0.55)',
-  'rgba(249,245,243,0.85)',
+  'rgba(249,245,243,0.08)',
+  'rgba(249,245,243,0.38)',
+  'rgba(249,245,243,0.72)',
   WARM_WHITE,
 ] as const;
 
-const HERO_MASK_LOCATIONS = [0, 0.35, 0.6, 0.82, 1] as const;
+const HERO_MASK_LOCATIONS = [0, 0.28, 0.58, 0.82, 1] as const;
 
 export default function HomeScreen() {
-  const insets = useSafeAreaInsets();
   const { currentTrip, todaySummary, reflectionPrompt, photoCandidates } = HOME_MOCK_DATA;
-  const headerDimHeight = insets.top + HEADER_DIM_HEIGHT;
 
   return (
     <View style={styles.root}>
@@ -81,7 +80,7 @@ export default function HomeScreen() {
           pointerEvents="none"
         />
 
-        <View style={[styles.heroHeaderWrap, { height: headerDimHeight }]} pointerEvents="box-none">
+        <View style={styles.heroHeaderWrap} pointerEvents="box-none">
           <LinearGradient
             colors={[...HEADER_DIM_COLORS]}
             locations={[...HEADER_DIM_LOCATIONS]}
@@ -203,14 +202,16 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: 0,
+    top: HERO_MASK_TOP,
     height: HERO_MASK_HEIGHT,
+    zIndex: 1,
   },
   heroHeaderWrap: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
+    height: HEADER_DIM_HEIGHT,
     zIndex: 2,
   },
   heroHeaderDim: {
