@@ -35,7 +35,7 @@ const CONTENT_LEFT = 16;
 const CONTENT_WIDTH = 64;
 const THUMB = ComponentTokens.TripListCard;
 const THUMB_LEFT = 16;
-const THUMB_TOP = 38;
+const THUMB_TOP = 33;
 
 export interface TripListItem {
   id: string;
@@ -92,7 +92,7 @@ export default function TripListCard({ trip, onPress, style }: TripListCardProps
 
         <View style={styles.thumbnailWrap}>
           {thumbnailSource ? (
-            <Image source={thumbnailSource} style={styles.thumbnail} resizeMode="cover" />
+            <Image source={thumbnailSource} style={styles.thumbnail} resizeMode="stretch" />
           ) : (
             <View style={styles.thumbnailFallback} />
           )}
