@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import {
   Image,
   Modal,
@@ -124,10 +125,10 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
   const renderHeader = () => {
     if (step === 'create') {
       return (
-        <View style={styles.header}>
+        <View style={styles.createHeader}>
           <Text style={styles.headerTitle}>새 여행 만들기</Text>
-          <TouchableOpacity onPress={handleClose} hitSlop={12}>
-            <Text style={styles.closeText}>×</Text>
+          <TouchableOpacity style={styles.closeBtn} onPress={handleClose} hitSlop={12}>
+            <Ionicons name="close" size={20} color={Colors.foundation.black} />
           </TouchableOpacity>
         </View>
       );
@@ -149,26 +150,28 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
           />
         </TouchableOpacity>
         <Text style={styles.headerTitleStep}>{titles[step]}</Text>
-        <TouchableOpacity onPress={handleClose} hitSlop={12}>
-          <Text style={styles.closeText}>×</Text>
+        <TouchableOpacity style={styles.stepCloseBtn} onPress={handleClose} hitSlop={12}>
+          <Ionicons name="close" size={20} color={Colors.foundation.black} />
         </TouchableOpacity>
       </View>
     );
   };
 
   const renderCreateStep = () => (
-    <View style={styles.stepBody}>
+    <View style={styles.createStepBody}>
       <DestinationSelectField
         label="여행지"
         placeholder="여행지를 선택하세요"
         value={destinationLabel}
         onPress={() => setStep('destination')}
+        style={styles.destinationField}
       />
       <TripDateRangeField
         label="여행 기간"
         placeholder="날짜를 선택하세요"
         value={selectedDateRange?.label}
         onPress={() => setStep('date')}
+        style={styles.dateRangeField}
       />
       <AuthActionButton
         label="여행 만들기"
@@ -176,6 +179,7 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
           if (canCreate) handleCreate();
         }}
         state={canCreate ? 'on' : 'off'}
+        style={styles.createActionButton}
       />
     </View>
   );
@@ -309,7 +313,10 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
       <Pressable style={styles.overlay} onPress={handleClose}>
-        <Pressable style={styles.modal} onPress={(e) => e.stopPropagation()}>
+        <Pressable
+          style={[styles.modal, step === 'create' && styles.createModal]}
+          onPress={(e) => e.stopPropagation()}
+        >
           {renderHeader()}
           {step === 'create' && renderCreateStep()}
           {step === 'destination' && renderDestinationStep()}
@@ -340,6 +347,19 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.xl,
     ...Shadows.modal,
   },
+  createModal: {
+    height: 385,
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+  },
+  createHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 64,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -348,9 +368,13 @@ const styles = StyleSheet.create({
     minHeight: 28,
   },
   headerTitle: {
-    ...Typography.body1Emphasized,
+    ...Typography.title2,
+    position: 'absolute',
+    top: 40,
+    left: 0,
+    right: 0,
     color: Colors.foundation.black,
-    flex: 1,
+    textAlign: 'center',
   },
   headerTitleStep: {
     ...Typography.body1Emphasized,
@@ -369,10 +393,42 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
   },
-  closeText: {
-    fontSize: 22,
-    lineHeight: 22,
-    color: Colors.foundation.black,
+  closeBtn: {
+    position: 'absolute',
+    top: 20,
+    right: 20,
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepCloseBtn: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  createStepBody: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  destinationField: {
+    position: 'absolute',
+    top: 89,
+    left: 21.5,
+    right: 21.5,
+  },
+  dateRangeField: {
+    position: 'absolute',
+    top: 195,
+    left: 21.5,
+    right: 21.5,
+  },
+  createActionButton: {
+    position: 'absolute',
+    left: 34.5,
+    right: 34.5,
+    bottom: 40,
+    height: 40,
   },
   stepBody: {
     gap: Spacing.lg,

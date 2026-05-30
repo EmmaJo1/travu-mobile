@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
 import Text from '@/components/common/AppText';
 
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
@@ -9,6 +9,7 @@ interface DestinationSelectFieldProps {
   placeholder: string;
   value?: string;
   onPress: () => void;
+  style?: StyleProp<ViewStyle>;
 }
 
 export default function DestinationSelectField({
@@ -16,9 +17,10 @@ export default function DestinationSelectField({
   placeholder,
   value,
   onPress,
+  style,
 }: DestinationSelectFieldProps) {
   return (
-    <View style={styles.field}>
+    <View style={[styles.field, style]}>
       <Text style={styles.label}>{label}</Text>
       <TouchableOpacity style={styles.input} onPress={onPress} activeOpacity={0.75}>
         <Text style={[styles.value, !value && styles.placeholder]} numberOfLines={1}>
@@ -31,23 +33,25 @@ export default function DestinationSelectField({
 
 const styles = StyleSheet.create({
   field: {
-    gap: Spacing.sm,
+    gap: Spacing.md,
   },
   label: {
-    ...Typography.body2Emphasized,
+    ...Typography.body1Emphasized,
     color: Colors.foundation.black,
   },
   input: {
-    minHeight: 48,
+    height: 44,
     borderRadius: Radius.sm,
     borderWidth: 1,
-    borderColor: Colors.warm.beige,
+    borderColor: '#969696',
     backgroundColor: Colors.foundation.white,
-    paddingHorizontal: Spacing.lg,
+    paddingHorizontal: Spacing.md,
     justifyContent: 'center',
   },
   value: {
-    ...Typography.body1Regular,
+    fontSize: 14,
+    fontWeight: '500',
+    lineHeight: 17,
     color: Colors.foundation.black,
   },
   placeholder: {

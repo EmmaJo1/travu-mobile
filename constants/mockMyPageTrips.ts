@@ -84,7 +84,7 @@ export const MOCK_MY_PAGE_TRIPS: MyPageTrip[] = [
   },
   {
     id: 'mp-tokyo',
-    title: 'VIENNA',
+    title: 'TOKYO',
     city: 'Tokyo',
     country: 'Japan',
     dateRangeLabel: '2024.3.23-3.27',
