@@ -1,9 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import {
+  Animated,
   Image,
   Modal,
+  PanResponder,
   Pressable,
+  ScrollView,
   StyleSheet,
   TouchableOpacity,
   View,
@@ -45,14 +48,18 @@ interface TripCreateModalProps {
   }) => void;
 }
 
-const MOCK_SELECTED_RANGE: SelectedDateRange = {
-  start: '2025-08-25',
-  end: '2025-09-01',
-  label: '2025.08.25 - 2025.09.01',
-};
-
-const INITIAL_CALENDAR_MONTH = new Date(2025, 7, 1);
 const CALENDAR_MONTHS = Array.from({ length: 12 }, (_, index) => index);
+const CALENDAR_SWIPE_THRESHOLD = 40;
+const YEAR_GRID_COLUMN_COUNT = 3;
+const YEAR_GRID_ROW_HEIGHT = 44;
+const YEAR_GRID_ROW_GAP = Spacing.sm;
+const YEAR_SELECTOR_HEIGHT = 224;
+
+function createCurrentCalendarMonth(): Date {
+  const today = new Date();
+
+  return new Date(today.getFullYear(), today.getMonth(), 1);
+}
 
 function createCalendarWeeks(month: Date): (Date | null)[][] {
   const year = month.getFullYear();
@@ -99,11 +106,16 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
   const [selectedDateRange, setSelectedDateRange] = useState<SelectedDateRange | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedContinent, setSelectedContinent] = useState<'all' | DestinationContinent>('all');
-  const [calendarMonth, setCalendarMonth] = useState(INITIAL_CALENDAR_MONTH);
+  const [calendarMonth, setCalendarMonth] = useState(createCurrentCalendarMonth);
   const [calendarView, setCalendarView] = useState<CalendarView>('days');
+  const yearSelectorRef = useRef<ScrollView>(null);
+  const calendarTransitionX = useRef(new Animated.Value(0)).current;
+  const calendarTransitionOpacity = useRef(new Animated.Value(1)).current;
+  const monthSelectorTransitionX = useRef(new Animated.Value(0)).current;
+  const monthSelectorTransitionOpacity = useRef(new Animated.Value(1)).current;
   const [draftDateRange, setDraftDateRange] = useState<DraftDateRange>({
-    start: MOCK_SELECTED_RANGE.start,
-    end: MOCK_SELECTED_RANGE.end,
+    start: null,
+    end: null,
   });
 
   const destinationLabel = selectedDestination
@@ -115,12 +127,94 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
   const calendarYears = useMemo(
     () =>
       Array.from(
-        { length: 11 },
-        (_, index) => calendarMonth.getFullYear() - 5 + index,
+        { length: 51 },
+        (_, index) => 2000 + index,
       ),
-    [calendarMonth],
+    [],
   );
   const calendarMonthLabel = `${calendarMonth.getFullYear()}년 ${calendarMonth.getMonth() + 1}월`;
+  const calendarSwipeResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gestureState) =>
+          Math.abs(gestureState.dx) > 12 &&
+          Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.2,
+        onPanResponderRelease: (_, gestureState) => {
+          if (Math.abs(gestureState.dx) < CALENDAR_SWIPE_THRESHOLD) return;
+
+          const offset = gestureState.dx < 0 ? 1 : -1;
+          calendarTransitionX.stopAnimation();
+          calendarTransitionOpacity.stopAnimation();
+          calendarTransitionX.setValue(offset > 0 ? 18 : -18);
+          calendarTransitionOpacity.setValue(0);
+          setCalendarMonth(
+            (currentMonth) =>
+              new Date(currentMonth.getFullYear(), currentMonth.getMonth() + offset, 1),
+          );
+          Animated.parallel([
+            Animated.timing(calendarTransitionX, {
+              toValue: 0,
+              duration: 100,
+              useNativeDriver: true,
+            }),
+            Animated.timing(calendarTransitionOpacity, {
+              toValue: 1,
+              duration: 100,
+              useNativeDriver: true,
+            }),
+          ]).start();
+        },
+      }),
+    [calendarTransitionOpacity, calendarTransitionX],
+  );
+  const monthSelectorSwipeResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gestureState) =>
+          Math.abs(gestureState.dx) > 12 &&
+          Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.2,
+        onPanResponderRelease: (_, gestureState) => {
+          if (Math.abs(gestureState.dx) < CALENDAR_SWIPE_THRESHOLD) return;
+
+          const offset = gestureState.dx < 0 ? 1 : -1;
+          monthSelectorTransitionX.stopAnimation();
+          monthSelectorTransitionOpacity.stopAnimation();
+          monthSelectorTransitionX.setValue(offset > 0 ? 18 : -18);
+          monthSelectorTransitionOpacity.setValue(0);
+          setCalendarMonth(
+            (currentMonth) =>
+              new Date(currentMonth.getFullYear() + offset, currentMonth.getMonth(), 1),
+          );
+          Animated.parallel([
+            Animated.timing(monthSelectorTransitionX, {
+              toValue: 0,
+              duration: 100,
+              useNativeDriver: true,
+            }),
+            Animated.timing(monthSelectorTransitionOpacity, {
+              toValue: 1,
+              duration: 100,
+              useNativeDriver: true,
+            }),
+          ]).start();
+        },
+      }),
+    [monthSelectorTransitionOpacity, monthSelectorTransitionX],
+  );
+
+  useEffect(() => {
+    if (calendarView !== 'years') return;
+
+    const yearIndex = calendarMonth.getFullYear() - calendarYears[0];
+    const rowIndex = Math.floor(yearIndex / YEAR_GRID_COLUMN_COUNT);
+    const rowOffset = rowIndex * (YEAR_GRID_ROW_HEIGHT + YEAR_GRID_ROW_GAP);
+    const centeredOffset = Math.max(
+      0,
+      rowOffset - (YEAR_SELECTOR_HEIGHT - YEAR_GRID_ROW_HEIGHT) / 2,
+    );
+
+    yearSelectorRef.current?.scrollTo({ y: centeredOffset, animated: false });
+  }, [calendarMonth, calendarView, calendarYears]);
 
   const resetState = () => {
     setStep('create');
@@ -128,11 +222,11 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
     setSelectedDateRange(null);
     setSearchQuery('');
     setSelectedContinent('all');
-    setCalendarMonth(INITIAL_CALENDAR_MONTH);
+    setCalendarMonth(createCurrentCalendarMonth());
     setCalendarView('days');
     setDraftDateRange({
-      start: MOCK_SELECTED_RANGE.start,
-      end: MOCK_SELECTED_RANGE.end,
+      start: null,
+      end: null,
     });
   };
 
@@ -142,6 +236,16 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
   };
 
   const handleBack = () => {
+    if (step === 'date' && calendarView === 'months') {
+      setCalendarView('years');
+      return;
+    }
+
+    if (step === 'date' && calendarView === 'years') {
+      setCalendarView('days');
+      return;
+    }
+
     if (step === 'destination' || step === 'date') {
       setStep('create');
     }
@@ -163,6 +267,16 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
       label: formatDateRangeLabel(draftDateRange),
     });
     setStep('create');
+  };
+
+  const handleOpenDateSelect = () => {
+    if (!selectedDateRange) {
+      setCalendarMonth(createCurrentCalendarMonth());
+      setDraftDateRange({ start: null, end: null });
+    }
+
+    setCalendarView('days');
+    setStep('date');
   };
 
   const handleSelectDate = (dateKey: string) => {
@@ -246,7 +360,7 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
         label="여행 기간"
         placeholder="날짜를 선택하세요"
         value={selectedDateRange?.label}
-        onPress={() => setStep('date')}
+        onPress={handleOpenDateSelect}
         style={styles.dateRangeField}
       />
       <AuthActionButton
@@ -265,6 +379,7 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
       query={searchQuery}
       selectedContinent={selectedContinent}
       onBack={handleBack}
+      onClose={handleClose}
       onQueryChange={setSearchQuery}
       onContinentChange={setSelectedContinent}
       onSelect={handleSelectDestination}
@@ -312,7 +427,13 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
       </View>
 
       {calendarView === 'days' && (
-        <>
+        <Animated.View
+          {...calendarSwipeResponder.panHandlers}
+          style={{
+            opacity: calendarTransitionOpacity,
+            transform: [{ translateX: calendarTransitionX }],
+          }}
+        >
           <View style={styles.weekHeader}>
             {['일', '월', '화', '수', '목', '금', '토'].map((d) => (
               <Text key={d} style={styles.weekDay}>
@@ -363,11 +484,16 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
               </View>
             ))}
           </View>
-        </>
+        </Animated.View>
       )}
 
       {calendarView === 'years' && (
-        <View style={styles.selectorGrid}>
+        <ScrollView
+          ref={yearSelectorRef}
+          style={styles.selectorScroll}
+          contentContainerStyle={styles.selectorGrid}
+          showsVerticalScrollIndicator={false}
+        >
           {calendarYears.map((year) => {
             const active = year === calendarMonth.getFullYear();
 
@@ -384,11 +510,20 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
               </TouchableOpacity>
             );
           })}
-        </View>
+        </ScrollView>
       )}
 
       {calendarView === 'months' && (
-        <View style={styles.selectorGrid}>
+        <Animated.View
+          {...monthSelectorSwipeResponder.panHandlers}
+          style={[
+            styles.selectorGrid,
+            {
+              opacity: monthSelectorTransitionOpacity,
+              transform: [{ translateX: monthSelectorTransitionX }],
+            },
+          ]}
+        >
           {CALENDAR_MONTHS.map((monthIndex) => {
             const active = monthIndex === calendarMonth.getMonth();
 
@@ -405,7 +540,7 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
               </TouchableOpacity>
             );
           })}
-        </View>
+        </Animated.View>
       )}
 
       <Text style={styles.selectedRange}>{formatDateRangeLabel(draftDateRange)}</Text>
@@ -627,9 +762,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.sm,
-    minHeight: 224,
     alignContent: 'flex-start',
     paddingVertical: Spacing.md,
+  },
+  selectorScroll: {
+    maxHeight: 224,
   },
   selectorCell: {
     width: '30%',
