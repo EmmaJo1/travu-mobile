@@ -196,6 +196,156 @@ export const MOCK_DESTINATIONS: MockDestination[] = [
     searchKeywords: ['케이프타운', '남아프리카공화국', 'cape town', 'south africa'],
   },
   {
+    id: 'melbourne-au',
+    type: 'city',
+    city: 'Melbourne',
+    country: 'Australia',
+    countryCode: 'AU',
+    continent: 'oceania',
+    displayName: 'Melbourne, Australia',
+    searchKeywords: ['멜버른', '호주', 'melbourne', 'australia'],
+  },
+  {
+    id: 'barcelona-es',
+    type: 'city',
+    city: 'Barcelona',
+    country: 'Spain',
+    countryCode: 'ES',
+    continent: 'europe',
+    displayName: 'Barcelona, Spain',
+    searchKeywords: ['바르셀로나', '스페인', 'barcelona', 'spain'],
+  },
+  {
+    id: 'madrid-es',
+    type: 'city',
+    city: 'Madrid',
+    country: 'Spain',
+    countryCode: 'ES',
+    continent: 'europe',
+    displayName: 'Madrid, Spain',
+    searchKeywords: ['마드리드', '스페인', 'madrid', 'spain'],
+  },
+  {
+    id: 'london-gb',
+    type: 'city',
+    city: 'London',
+    country: 'United Kingdom',
+    countryCode: 'GB',
+    continent: 'europe',
+    displayName: 'London, United Kingdom',
+    searchKeywords: ['런던', '영국', 'london', 'united kingdom', 'uk'],
+  },
+  {
+    id: 'lisbon-pt',
+    type: 'city',
+    city: 'Lisbon',
+    country: 'Portugal',
+    countryCode: 'PT',
+    continent: 'europe',
+    displayName: 'Lisbon, Portugal',
+    searchKeywords: ['리스본', '포르투갈', 'lisbon', 'portugal'],
+  },
+  {
+    id: 'fukuoka-jp',
+    type: 'city',
+    city: 'Fukuoka',
+    country: 'Japan',
+    countryCode: 'JP',
+    continent: 'asia',
+    displayName: 'Fukuoka, Japan',
+    searchKeywords: ['후쿠오카', '일본', 'fukuoka', 'japan'],
+  },
+  {
+    id: 'sapporo-jp',
+    type: 'city',
+    city: 'Sapporo',
+    country: 'Japan',
+    countryCode: 'JP',
+    continent: 'asia',
+    displayName: 'Sapporo, Japan',
+    searchKeywords: ['삿포로', '일본', 'sapporo', 'japan'],
+  },
+  {
+    id: 'bangkok-th',
+    type: 'city',
+    city: 'Bangkok',
+    country: 'Thailand',
+    countryCode: 'TH',
+    continent: 'asia',
+    displayName: 'Bangkok, Thailand',
+    searchKeywords: ['방콕', '태국', 'bangkok', 'thailand'],
+  },
+  {
+    id: 'singapore-sg',
+    type: 'city',
+    city: 'Singapore',
+    country: 'Singapore',
+    countryCode: 'SG',
+    continent: 'asia',
+    displayName: 'Singapore',
+    searchKeywords: ['싱가포르', 'singapore'],
+  },
+  {
+    id: 'taipei-tw',
+    type: 'city',
+    city: 'Taipei',
+    country: 'Taiwan',
+    countryCode: 'TW',
+    continent: 'asia',
+    displayName: 'Taipei, Taiwan',
+    searchKeywords: ['타이베이', '대만', 'taipei', 'taiwan'],
+  },
+  {
+    id: 'vancouver-ca',
+    type: 'city',
+    city: 'Vancouver',
+    country: 'Canada',
+    countryCode: 'CA',
+    continent: 'north-america',
+    displayName: 'Vancouver, Canada',
+    searchKeywords: ['밴쿠버', '캐나다', 'vancouver', 'canada'],
+  },
+  {
+    id: 'los-angeles-us',
+    type: 'city',
+    city: 'Los Angeles',
+    country: 'United States',
+    countryCode: 'US',
+    continent: 'north-america',
+    displayName: 'Los Angeles, United States',
+    searchKeywords: ['로스앤젤레스', '미국', 'los angeles', 'united states', 'usa'],
+  },
+  {
+    id: 'buenos-aires-ar',
+    type: 'city',
+    city: 'Buenos Aires',
+    country: 'Argentina',
+    countryCode: 'AR',
+    continent: 'south-america',
+    displayName: 'Buenos Aires, Argentina',
+    searchKeywords: ['부에노스아이레스', '아르헨티나', 'buenos aires', 'argentina'],
+  },
+  {
+    id: 'cairo-eg',
+    type: 'city',
+    city: 'Cairo',
+    country: 'Egypt',
+    countryCode: 'EG',
+    continent: 'africa',
+    displayName: 'Cairo, Egypt',
+    searchKeywords: ['카이로', '이집트', 'cairo', 'egypt'],
+  },
+  {
+    id: 'australia',
+    type: 'country',
+    city: 'Australia',
+    country: 'Australia',
+    countryCode: 'AU',
+    continent: 'oceania',
+    displayName: 'Australia',
+    searchKeywords: ['호주', 'australia'],
+  },
+  {
     id: 'portugal',
     type: 'country',
     city: 'Portugal',
@@ -225,11 +375,60 @@ export const MOCK_DESTINATIONS: MockDestination[] = [
     displayName: 'Italy',
     searchKeywords: ['이탈리아', 'italy'],
   },
+  {
+    id: 'japan',
+    type: 'country',
+    city: 'Japan',
+    country: 'Japan',
+    countryCode: 'JP',
+    continent: 'asia',
+    displayName: 'Japan',
+    searchKeywords: ['일본', 'japan'],
+  },
+  {
+    id: 'spain',
+    type: 'country',
+    city: 'Spain',
+    country: 'Spain',
+    countryCode: 'ES',
+    continent: 'europe',
+    displayName: 'Spain',
+    searchKeywords: ['스페인', 'spain'],
+  },
+  {
+    id: 'thailand',
+    type: 'country',
+    city: 'Thailand',
+    country: 'Thailand',
+    countryCode: 'TH',
+    continent: 'asia',
+    displayName: 'Thailand',
+    searchKeywords: ['태국', 'thailand'],
+  },
+  {
+    id: 'united-kingdom',
+    type: 'country',
+    city: 'United Kingdom',
+    country: 'United Kingdom',
+    countryCode: 'GB',
+    continent: 'europe',
+    displayName: 'United Kingdom',
+    searchKeywords: ['영국', 'united kingdom', 'uk'],
+  },
 ];
 
-export const RECENT_DESTINATIONS = ['sydney-au', 'kyoto-jp', 'paris-fr']
-  .map((id) => MOCK_DESTINATIONS.find((destination) => destination.id === id))
-  .filter((destination): destination is MockDestination => Boolean(destination));
+export function sortDestinations(destinations: MockDestination[]): MockDestination[] {
+  return [...destinations].sort((left, right) => {
+    const countryOrder = left.country.localeCompare(right.country, 'en', {
+      sensitivity: 'base',
+    });
+    if (countryOrder !== 0) return countryOrder;
+
+    if (left.type !== right.type) return left.type === 'country' ? -1 : 1;
+
+    return left.city.localeCompare(right.city, 'en', { sensitivity: 'base' });
+  });
+}
 
 export function formatDestinationLabel(destination: MockDestination): string {
   return destination.displayName;
@@ -237,14 +436,16 @@ export function formatDestinationLabel(destination: MockDestination): string {
 
 export function searchDestinations(query: string): MockDestination[] {
   const normalized = query.trim().toLowerCase();
-  if (!normalized) return MOCK_DESTINATIONS;
+  if (!normalized) return sortDestinations(MOCK_DESTINATIONS);
 
-  return MOCK_DESTINATIONS.filter((destination) =>
-    [
-      destination.city,
-      destination.country,
-      destination.displayName,
-      ...destination.searchKeywords,
-    ].some((keyword) => keyword.toLowerCase().includes(normalized)),
+  return sortDestinations(
+    MOCK_DESTINATIONS.filter((destination) =>
+      [
+        destination.city,
+        destination.country,
+        destination.displayName,
+        ...destination.searchKeywords,
+      ].some((keyword) => keyword.toLowerCase().includes(normalized)),
+    ),
   );
 }

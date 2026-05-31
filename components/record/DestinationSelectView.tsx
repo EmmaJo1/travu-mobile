@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import { Image, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 
 import AppText from '@/components/common/AppText';
@@ -6,8 +7,8 @@ import AppTextInput from '@/components/common/AppTextInput';
 import {
   DESTINATION_CONTINENT_FILTERS,
   MOCK_DESTINATIONS,
-  RECENT_DESTINATIONS,
   searchDestinations,
+  sortDestinations,
   type DestinationContinent,
   type MockDestination,
 } from '@/constants/mockDestinations';
@@ -17,6 +18,7 @@ interface DestinationSelectViewProps {
   query: string;
   selectedContinent: 'all' | DestinationContinent;
   onBack: () => void;
+  onClose: () => void;
   onQueryChange: (query: string) => void;
   onContinentChange: (continent: 'all' | DestinationContinent) => void;
   onSelect: (destination: MockDestination) => void;
@@ -43,6 +45,7 @@ export default function DestinationSelectView({
   query,
   selectedContinent,
   onBack,
+  onClose,
   onQueryChange,
   onContinentChange,
   onSelect,
@@ -50,9 +53,12 @@ export default function DestinationSelectView({
   const trimmedQuery = query.trim();
   const destinations = useMemo(() => {
     if (trimmedQuery) return searchDestinations(trimmedQuery);
-    if (selectedContinent === 'all') return MOCK_DESTINATIONS;
-    return MOCK_DESTINATIONS.filter(
-      (destination) => destination.continent === selectedContinent,
+    return sortDestinations(
+      selectedContinent === 'all'
+        ? MOCK_DESTINATIONS
+        : MOCK_DESTINATIONS.filter(
+            (destination) => destination.continent === selectedContinent,
+          ),
     );
   }, [selectedContinent, trimmedQuery]);
 
@@ -67,7 +73,9 @@ export default function DestinationSelectView({
           />
         </TouchableOpacity>
         <AppText style={styles.title}>여행지 선택</AppText>
-        <View style={styles.headerSpacer} />
+        <TouchableOpacity style={styles.closeButton} onPress={onClose} hitSlop={12}>
+          <Ionicons name="close" size={20} color={Colors.foundation.black} />
+        </TouchableOpacity>
       </View>
 
       <AppTextInput
@@ -79,52 +87,41 @@ export default function DestinationSelectView({
         autoFocus
       />
 
+      {!trimmedQuery && (
+        <>
+          <AppText style={styles.filterTitle}>대륙별 보기</AppText>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterList}
+          >
+            {DESTINATION_CONTINENT_FILTERS.map((filter) => {
+              const active = selectedContinent === filter.id;
+              return (
+                <TouchableOpacity
+                  key={filter.id}
+                  style={[styles.filterChip, active && styles.filterChipActive]}
+                  onPress={() => onContinentChange(filter.id)}
+                  activeOpacity={0.7}
+                >
+                  <AppText
+                    style={[styles.filterLabel, active && styles.filterLabelActive]}
+                  >
+                    {filter.label}
+                  </AppText>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </>
+      )}
+
       <ScrollView
         style={styles.content}
         contentContainerStyle={styles.contentContainer}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {!trimmedQuery && (
-          <>
-            <AppText style={styles.sectionTitle}>최근 선택 여행지</AppText>
-            <View style={styles.recentList}>
-              {RECENT_DESTINATIONS.slice(0, 3).map((destination) => (
-                <DestinationRow
-                  key={destination.id}
-                  destination={destination}
-                  onPress={() => onSelect(destination)}
-                />
-              ))}
-            </View>
-
-            <AppText style={styles.sectionTitle}>대륙별 보기</AppText>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.filterList}
-            >
-              {DESTINATION_CONTINENT_FILTERS.map((filter) => {
-                const active = selectedContinent === filter.id;
-                return (
-                  <TouchableOpacity
-                    key={filter.id}
-                    style={[styles.filterChip, active && styles.filterChipActive]}
-                    onPress={() => onContinentChange(filter.id)}
-                    activeOpacity={0.7}
-                  >
-                    <AppText
-                      style={[styles.filterLabel, active && styles.filterLabelActive]}
-                    >
-                      {filter.label}
-                    </AppText>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </>
-        )}
-
         <AppText style={styles.sectionTitle}>
           {trimmedQuery ? '검색 결과' : '여행지 목록'}
         </AppText>
@@ -166,9 +163,11 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
   },
-  headerSpacer: {
+  closeButton: {
     width: 24,
     height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   title: {
     ...Typography.body1Emphasized,
@@ -196,17 +195,20 @@ const styles = StyleSheet.create({
     marginTop: Spacing.md,
     marginBottom: Spacing.xs,
   },
-  recentList: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: Colors.foundation.grey100,
+  filterTitle: {
+    ...Typography.captionEmphasized,
+    color: Colors.foundation.grey600,
+    marginBottom: Spacing.xs,
   },
   filterList: {
     gap: Spacing.xs,
     paddingVertical: Spacing.xs,
   },
   filterChip: {
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
     borderRadius: Radius.sm,
     borderWidth: 1,
     borderColor: Colors.foundation.grey100,
@@ -216,11 +218,10 @@ const styles = StyleSheet.create({
     borderColor: Colors.foundation.black,
   },
   filterLabel: {
-    ...Typography.captionRegular,
+    ...Typography.captionEmphasized,
     color: Colors.foundation.grey600,
   },
   filterLabelActive: {
-    ...Typography.captionEmphasized,
     color: Colors.foundation.black,
   },
   destinationList: {
