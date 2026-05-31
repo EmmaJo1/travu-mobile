@@ -58,6 +58,7 @@ export default function RootLayout() {
             <Stack.Screen name="figma-node-1207-2245" options={{ headerShown: false }} />
             <Stack.Screen name="record-day-detail" options={{ headerShown: false }} />
             <Stack.Screen name="day-archive-detail" options={{ headerShown: false }} />
+            <Stack.Screen name="settings" options={{ headerShown: false }} />
           </Stack>
           <StatusBar style="auto" />
         </ThemeProvider>
