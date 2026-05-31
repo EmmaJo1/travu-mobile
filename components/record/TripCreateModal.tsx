@@ -4,34 +4,37 @@ import {
   Image,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   TouchableOpacity,
   View,
 } from 'react-native';
 import Text from '@/components/common/AppText';
-import AppTextInput from '@/components/common/AppTextInput';
 
 import AuthActionButton from '@/components/common/AuthActionButton';
 import DestinationSelectField from '@/components/record/DestinationSelectField';
+import DestinationSelectView from '@/components/record/DestinationSelectView';
 import TripDateRangeField from '@/components/record/TripDateRangeField';
 import {
-  DESTINATION_COUNTRIES,
   formatDestinationLabel,
-  getCitiesByCountry,
+  type DestinationContinent,
   type MockDestination,
-  RECOMMENDED_DESTINATIONS,
-  searchDestinations,
 } from '@/constants/mockDestinations';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 
-export type TripCreateStep = 'create' | 'destination' | 'countryCity' | 'date';
+export type TripCreateStep = 'create' | 'destination' | 'date';
 
 export interface SelectedDateRange {
   start: string;
   end: string;
   label: string;
 }
+
+interface DraftDateRange {
+  start: string | null;
+  end: string | null;
+}
+
+type CalendarView = 'days' | 'years' | 'months';
 
 interface TripCreateModalProps {
   visible: boolean;
@@ -42,47 +45,95 @@ interface TripCreateModalProps {
   }) => void;
 }
 
-const MOCK_CALENDAR_WEEKS = [
-  [null, null, null, null, 1, 2, 3],
-  [4, 5, 6, 7, 8, 9, 10],
-  [11, 12, 13, 14, 15, 16, 17],
-  [18, 19, 20, 21, 22, 23, 24],
-  [25, 26, 27, 28, 29, 30, 31],
-];
-
-const MOCK_MONTH_LABEL = '2025년 8월';
 const MOCK_SELECTED_RANGE: SelectedDateRange = {
   start: '2025-08-25',
   end: '2025-09-01',
   label: '2025.08.25 - 2025.09.01',
 };
 
+const INITIAL_CALENDAR_MONTH = new Date(2025, 7, 1);
+const CALENDAR_MONTHS = Array.from({ length: 12 }, (_, index) => index);
+
+function createCalendarWeeks(month: Date): (Date | null)[][] {
+  const year = month.getFullYear();
+  const monthIndex = month.getMonth();
+  const firstDay = new Date(year, monthIndex, 1).getDay();
+  const lastDate = new Date(year, monthIndex + 1, 0).getDate();
+  const cells: (Date | null)[] = Array.from({ length: firstDay }, () => null);
+
+  for (let day = 1; day <= lastDate; day += 1) {
+    cells.push(new Date(year, monthIndex, day));
+  }
+
+  while (cells.length % 7 !== 0) {
+    cells.push(null);
+  }
+
+  return Array.from({ length: cells.length / 7 }, (_, index) =>
+    cells.slice(index * 7, index * 7 + 7),
+  );
+}
+
+function toDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateKey(dateKey: string): string {
+  return dateKey.replaceAll('-', '.');
+}
+
+function formatDateRangeLabel(range: DraftDateRange): string {
+  if (!range.start) return '날짜를 선택하세요';
+  if (!range.end) return `${formatDateKey(range.start)} - 종료일 선택`;
+
+  return `${formatDateKey(range.start)} - ${formatDateKey(range.end)}`;
+}
+
 export default function TripCreateModal({ visible, onClose, onCreate }: TripCreateModalProps) {
   const [step, setStep] = useState<TripCreateStep>('create');
   const [selectedDestination, setSelectedDestination] = useState<MockDestination | null>(null);
-  const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [selectedDateRange, setSelectedDateRange] = useState<SelectedDateRange | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedContinent, setSelectedContinent] = useState<'all' | DestinationContinent>('all');
+  const [calendarMonth, setCalendarMonth] = useState(INITIAL_CALENDAR_MONTH);
+  const [calendarView, setCalendarView] = useState<CalendarView>('days');
+  const [draftDateRange, setDraftDateRange] = useState<DraftDateRange>({
+    start: MOCK_SELECTED_RANGE.start,
+    end: MOCK_SELECTED_RANGE.end,
+  });
 
   const destinationLabel = selectedDestination
     ? formatDestinationLabel(selectedDestination)
     : undefined;
 
   const canCreate = Boolean(selectedDestination && selectedDateRange);
-
-  const destinationResults = useMemo(
-    () => searchDestinations(searchQuery),
-    [searchQuery],
+  const calendarWeeks = useMemo(() => createCalendarWeeks(calendarMonth), [calendarMonth]);
+  const calendarYears = useMemo(
+    () =>
+      Array.from(
+        { length: 11 },
+        (_, index) => calendarMonth.getFullYear() - 5 + index,
+      ),
+    [calendarMonth],
   );
-
-  const countryCities = selectedCountry ? getCitiesByCountry(selectedCountry) : [];
+  const calendarMonthLabel = `${calendarMonth.getFullYear()}년 ${calendarMonth.getMonth() + 1}월`;
 
   const resetState = () => {
     setStep('create');
     setSelectedDestination(null);
-    setSelectedCountry(null);
     setSelectedDateRange(null);
     setSearchQuery('');
+    setSelectedContinent('all');
+    setCalendarMonth(INITIAL_CALENDAR_MONTH);
+    setCalendarView('days');
+    setDraftDateRange({
+      start: MOCK_SELECTED_RANGE.start,
+      end: MOCK_SELECTED_RANGE.end,
+    });
   };
 
   const handleClose = () => {
@@ -91,10 +142,6 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
   };
 
   const handleBack = () => {
-    if (step === 'countryCity') {
-      setStep('destination');
-      return;
-    }
     if (step === 'destination' || step === 'date') {
       setStep('create');
     }
@@ -104,16 +151,45 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
     setSelectedDestination(destination);
     setStep('create');
     setSearchQuery('');
-  };
-
-  const handleSelectCountry = (country: string) => {
-    setSelectedCountry(country);
-    setStep('countryCity');
+    setSelectedContinent('all');
   };
 
   const handleApplyDate = () => {
-    setSelectedDateRange(MOCK_SELECTED_RANGE);
+    if (!draftDateRange.start || !draftDateRange.end) return;
+
+    setSelectedDateRange({
+      start: draftDateRange.start,
+      end: draftDateRange.end,
+      label: formatDateRangeLabel(draftDateRange),
+    });
     setStep('create');
+  };
+
+  const handleSelectDate = (dateKey: string) => {
+    setDraftDateRange((currentRange) => {
+      if (!currentRange.start || currentRange.end || dateKey < currentRange.start) {
+        return { start: dateKey, end: null };
+      }
+
+      return { start: currentRange.start, end: dateKey };
+    });
+  };
+
+  const handleChangeMonth = (offset: number) => {
+    setCalendarMonth(
+      (currentMonth) =>
+        new Date(currentMonth.getFullYear(), currentMonth.getMonth() + offset, 1),
+    );
+  };
+
+  const handleSelectYear = (year: number) => {
+    setCalendarMonth((currentMonth) => new Date(year, currentMonth.getMonth(), 1));
+    setCalendarView('months');
+  };
+
+  const handleSelectMonth = (monthIndex: number) => {
+    setCalendarMonth((currentMonth) => new Date(currentMonth.getFullYear(), monthIndex, 1));
+    setCalendarView('days');
   };
 
   const handleCreate = () => {
@@ -123,6 +199,8 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
   };
 
   const renderHeader = () => {
+    if (step === 'destination') return null;
+
     if (step === 'create') {
       return (
         <View style={styles.createHeader}>
@@ -134,9 +212,7 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
       );
     }
 
-    const titles: Record<Exclude<TripCreateStep, 'create'>, string> = {
-      destination: '여행지 선택',
-      countryCity: selectedCountry ?? '',
+    const titles: Record<Exclude<TripCreateStep, 'create' | 'destination'>, string> = {
       date: '여행 기간 선택',
     };
 
@@ -185,128 +261,160 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
   );
 
   const renderDestinationStep = () => (
-    <ScrollView
-      style={styles.stepScroll}
-      contentContainerStyle={styles.stepScrollContent}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-    >
-      <AppTextInput
-        style={styles.searchInput}
-        placeholder="도시 또는 국가 검색"
-        placeholderTextColor={Colors.foundation.grey500}
-        value={searchQuery}
-        onChangeText={setSearchQuery}
-      />
-
-      <Text style={styles.sectionTitle}>
-        {searchQuery.trim() ? '검색 결과' : '추천 여행지'}
-      </Text>
-      {(searchQuery.trim() ? destinationResults : RECOMMENDED_DESTINATIONS).map((item) => (
-        <TouchableOpacity
-          key={item.id}
-          style={styles.listRow}
-          onPress={() => handleSelectDestination(item)}
-        >
-          <Text style={styles.listRowText}>{formatDestinationLabel(item)}</Text>
-        </TouchableOpacity>
-      ))}
-
-      {!searchQuery.trim() && (
-        <>
-          <Text style={[styles.sectionTitle, styles.sectionGap]}>국가별로 찾아보기</Text>
-          {DESTINATION_COUNTRIES.map((country) => (
-            <TouchableOpacity
-              key={country}
-              style={styles.listRow}
-              onPress={() => handleSelectCountry(country)}
-            >
-              <Text style={styles.listRowText}>{country}</Text>
-            </TouchableOpacity>
-          ))}
-        </>
-      )}
-    </ScrollView>
-  );
-
-  const renderCountryCityStep = () => (
-    <ScrollView
-      style={styles.stepScroll}
-      contentContainerStyle={styles.stepScrollContent}
-      showsVerticalScrollIndicator={false}
-    >
-      {countryCities.map((item) => (
-        <TouchableOpacity
-          key={item.id}
-          style={styles.listRow}
-          onPress={() => handleSelectDestination(item)}
-        >
-          <Text style={styles.listRowText}>{item.city}</Text>
-        </TouchableOpacity>
-      ))}
-    </ScrollView>
+    <DestinationSelectView
+      query={searchQuery}
+      selectedContinent={selectedContinent}
+      onBack={handleBack}
+      onQueryChange={setSearchQuery}
+      onContinentChange={setSelectedContinent}
+      onSelect={handleSelectDestination}
+    />
   );
 
   const renderDateStep = () => (
     <View style={styles.stepBody}>
       <View style={styles.monthNav}>
-        <TouchableOpacity style={styles.monthArrow} activeOpacity={0.6}>
-          <Text style={styles.monthArrowText}>‹</Text>
-        </TouchableOpacity>
-        <Text style={styles.monthLabel}>{MOCK_MONTH_LABEL}</Text>
-        <TouchableOpacity style={styles.monthArrow} activeOpacity={0.6}>
-          <Text style={styles.monthArrowText}>›</Text>
-        </TouchableOpacity>
+        {calendarView === 'days' ? (
+          <>
+            <TouchableOpacity
+              style={styles.monthArrow}
+              activeOpacity={0.6}
+              onPress={() => handleChangeMonth(-1)}
+            >
+              <Text style={styles.monthArrowText}>‹</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.monthLabelButton}
+              activeOpacity={0.65}
+              onPress={() => setCalendarView('years')}
+            >
+              <Text style={styles.monthLabel}>{calendarMonthLabel}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.monthArrow}
+              activeOpacity={0.6}
+              onPress={() => handleChangeMonth(1)}
+            >
+              <Text style={styles.monthArrowText}>›</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity
+            style={styles.selectorTitleButton}
+            activeOpacity={0.65}
+            onPress={() => setCalendarView(calendarView === 'years' ? 'days' : 'years')}
+          >
+            <Text style={styles.monthLabel}>
+              {calendarView === 'years' ? '연도 선택' : `${calendarMonth.getFullYear()}년`}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
-      <View style={styles.weekHeader}>
-        {['일', '월', '화', '수', '목', '금', '토'].map((d) => (
-          <Text key={d} style={styles.weekDay}>
-            {d}
-          </Text>
-        ))}
-      </View>
-
-      <View style={styles.calendar}>
-        {MOCK_CALENDAR_WEEKS.map((week, wi) => (
-          <View key={wi} style={styles.calendarRow}>
-            {week.map((day, di) => {
-              if (day == null) {
-                return <View key={`empty-${wi}-${di}`} style={styles.dayCell} />;
-              }
-
-              const inRange = day >= 25 && day <= 31;
-              const isStart = day === 25;
-              const isEnd = day === 31;
-
-              return (
-                <View
-                  key={day}
-                  style={[
-                    styles.dayCell,
-                    inRange && styles.dayInRange,
-                    isStart && styles.dayStart,
-                    isEnd && styles.dayEnd,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.dayText,
-                      (isStart || isEnd) && styles.dayTextSelected,
-                    ]}
-                  >
-                    {day}
-                  </Text>
-                </View>
-              );
-            })}
+      {calendarView === 'days' && (
+        <>
+          <View style={styles.weekHeader}>
+            {['일', '월', '화', '수', '목', '금', '토'].map((d) => (
+              <Text key={d} style={styles.weekDay}>
+                {d}
+              </Text>
+            ))}
           </View>
-        ))}
-      </View>
 
-      <Text style={styles.selectedRange}>{MOCK_SELECTED_RANGE.label}</Text>
+          <View style={styles.calendar}>
+            {calendarWeeks.map((week, wi) => (
+              <View key={wi} style={styles.calendarRow}>
+                {week.map((date, di) => {
+                  if (date == null) {
+                    return <View key={`empty-${wi}-${di}`} style={styles.dayCell} />;
+                  }
 
-      <AuthActionButton label="적용하기" onPress={handleApplyDate} state="on" />
+                  const dateKey = toDateKey(date);
+                  const inRange =
+                    Boolean(draftDateRange.start) &&
+                    dateKey >= draftDateRange.start! &&
+                    dateKey <= (draftDateRange.end ?? draftDateRange.start!);
+                  const isStart = dateKey === draftDateRange.start;
+                  const isEnd = dateKey === draftDateRange.end;
+
+                  return (
+                    <TouchableOpacity
+                      key={dateKey}
+                      style={[
+                        styles.dayCell,
+                        inRange && styles.dayInRange,
+                        isStart && styles.dayStart,
+                        isEnd && styles.dayEnd,
+                      ]}
+                      activeOpacity={0.65}
+                      onPress={() => handleSelectDate(dateKey)}
+                    >
+                      <Text
+                        style={[
+                          styles.dayText,
+                          (isStart || isEnd) && styles.dayTextSelected,
+                        ]}
+                      >
+                        {date.getDate()}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ))}
+          </View>
+        </>
+      )}
+
+      {calendarView === 'years' && (
+        <View style={styles.selectorGrid}>
+          {calendarYears.map((year) => {
+            const active = year === calendarMonth.getFullYear();
+
+            return (
+              <TouchableOpacity
+                key={year}
+                style={[styles.selectorCell, active && styles.selectorCellActive]}
+                activeOpacity={0.65}
+                onPress={() => handleSelectYear(year)}
+              >
+                <Text style={[styles.selectorCellText, active && styles.selectorCellTextActive]}>
+                  {year}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+
+      {calendarView === 'months' && (
+        <View style={styles.selectorGrid}>
+          {CALENDAR_MONTHS.map((monthIndex) => {
+            const active = monthIndex === calendarMonth.getMonth();
+
+            return (
+              <TouchableOpacity
+                key={monthIndex}
+                style={[styles.selectorCell, active && styles.selectorCellActive]}
+                activeOpacity={0.65}
+                onPress={() => handleSelectMonth(monthIndex)}
+              >
+                <Text style={[styles.selectorCellText, active && styles.selectorCellTextActive]}>
+                  {monthIndex + 1}월
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+
+      <Text style={styles.selectedRange}>{formatDateRangeLabel(draftDateRange)}</Text>
+
+      <AuthActionButton
+        label="적용하기"
+        onPress={handleApplyDate}
+        state={draftDateRange.start && draftDateRange.end ? 'on' : 'off'}
+      />
     </View>
   );
 
@@ -320,7 +428,6 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
           {renderHeader()}
           {step === 'create' && renderCreateStep()}
           {step === 'destination' && renderDestinationStep()}
-          {step === 'countryCity' && renderCountryCityStep()}
           {step === 'date' && renderDateStep()}
         </Pressable>
       </Pressable>
@@ -482,6 +589,17 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: Colors.foundation.grey600,
   },
+  monthLabelButton: {
+    minHeight: 32,
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.sm,
+  },
+  selectorTitleButton: {
+    minHeight: 32,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   monthLabel: {
     ...Typography.body1Emphasized,
     color: Colors.foundation.black,
@@ -504,6 +622,33 @@ const styles = StyleSheet.create({
   calendarRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+  },
+  selectorGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    minHeight: 224,
+    alignContent: 'flex-start',
+    paddingVertical: Spacing.md,
+  },
+  selectorCell: {
+    width: '30%',
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.foundation.white,
+  },
+  selectorCellActive: {
+    backgroundColor: Colors.foundation.black,
+  },
+  selectorCellText: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+  },
+  selectorCellTextActive: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.white,
   },
   dayCell: {
     width: 36,
