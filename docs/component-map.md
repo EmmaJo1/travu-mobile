@@ -293,6 +293,22 @@
 | **역할** | 여행 직접 추가 multi-step modal |
 | **확장 방식** | `visible`, `onClose`, `onCreate` |
 
+#### PlaceCreateModal
+| Item | Detail |
+|------|--------|
+| **File** | `components/record/PlaceCreateModal.tsx` |
+| **Screen** | record-day-detail |
+| **Role** | Add a place entry to the currently selected day |
+| **Props** | `visible`, `onClose`, `onSubmit`, `initialValue` (time/category/photoUris included) |
+
+#### TimeWheelPickerModal
+| Item | Detail |
+|------|--------|
+| **File** | `components/record/TimeWheelPickerModal.tsx` |
+| **Screen** | PlaceCreateModal |
+| **Role** | Bottom sheet wheel picker for place-entry time |
+| **Props** | `visible`, `value`, `onClose`, `onConfirm` |
+
 #### TripCreatedModal
 | 항목 | 내용 |
 |------|------|
