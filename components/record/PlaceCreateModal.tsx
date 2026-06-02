@@ -466,23 +466,33 @@ export default function PlaceCreateModal({
                 />
               </ScrollView>
 
-              <AuthActionButton
-                label={mode === 'edit' ? '수정 완료' : '추가하기'}
-                onPress={handleSubmit}
-                state={canSubmit ? 'on' : 'off'}
-              />
+              {mode === 'edit' ? (
+                <View style={styles.editFooter}>
+                  <AuthActionButton
+                    label="수정 완료"
+                    onPress={handleSubmit}
+                    state={canSubmit ? 'on' : 'off'}
+                  />
 
-              {mode === 'edit' && initialValue?.id && onDelete ? (
-                <View style={styles.deleteArea}>
-                  <TouchableOpacity
-                    activeOpacity={0.7}
-                    onPress={() => setDeleteConfirmationVisible(true)}
-                    style={styles.deleteAction}
-                  >
-                    <Text style={styles.deleteActionText}>장소 기록 삭제</Text>
-                  </TouchableOpacity>
+                  {initialValue?.id && onDelete ? (
+                    <View style={styles.deleteArea}>
+                      <TouchableOpacity
+                        activeOpacity={0.7}
+                        onPress={() => setDeleteConfirmationVisible(true)}
+                        style={styles.deleteAction}
+                      >
+                        <Text style={styles.deleteActionText}>장소 기록 삭제</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
                 </View>
-              ) : null}
+              ) : (
+                <AuthActionButton
+                  label="추가하기"
+                  onPress={handleSubmit}
+                  state={canSubmit ? 'on' : 'off'}
+                />
+              )}
             </>
           )}
 
@@ -545,6 +555,15 @@ export default function PlaceCreateModal({
             onPress={() => setDeleteConfirmationVisible(false)}
           />
           <View style={styles.deleteConfirmationModal}>
+            <TouchableOpacity
+              accessibilityLabel="삭제 확인 닫기"
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+              onPress={() => setDeleteConfirmationVisible(false)}
+              style={styles.deleteConfirmationCloseButton}
+            >
+              <Ionicons color={Colors.foundation.black} name="close" size={20} />
+            </TouchableOpacity>
             <Text style={styles.deleteConfirmationTitle}>
               이 장소 기록을 삭제할까요?
             </Text>
@@ -725,12 +744,15 @@ const styles = StyleSheet.create({
     ...Typography.body2Regular,
     color: Colors.foundation.black,
   },
+  editFooter: {
+    gap: Spacing.lg,
+    marginTop: -Spacing.xs,
+  },
   deleteArea: {
     alignItems: 'center',
-    paddingTop: Spacing.lg,
   },
   deleteAction: {
-    minHeight: 40,
+    minHeight: 24,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.lg,
@@ -750,11 +772,22 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 334,
     paddingHorizontal: Spacing['2xl'],
-    paddingVertical: Spacing['3xl'],
+    paddingTop: 52,
+    paddingBottom: Spacing['3xl'],
     gap: Spacing['2xl'],
     backgroundColor: Colors.foundation.white,
     borderRadius: Radius.lg,
     ...Shadows.modal,
+  },
+  deleteConfirmationCloseButton: {
+    position: 'absolute',
+    top: Spacing.lg,
+    right: Spacing.lg,
+    zIndex: 1,
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   deleteConfirmationTitle: {
     ...Typography.title2,
@@ -785,7 +818,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.foundation.white,
   },
   deleteConfirmationConfirm: {
-    backgroundColor: Colors.warm.dark,
+    backgroundColor: Colors.foundation.black,
   },
   deleteConfirmationCancelText: {
     ...Typography.body2Emphasized,

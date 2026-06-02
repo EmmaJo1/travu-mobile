@@ -250,8 +250,12 @@ const styles = StyleSheet.create({
   title: {
     ...Typography.title2,
     color: Colors.foundation.black,
+    textAlign: 'center',
   },
   pickerArea: {
+    alignSelf: 'center',
+    width: '82%',
+    maxWidth: 288,
     height: WHEEL_HEIGHT,
     flexDirection: 'row',
     gap: Spacing.md,
