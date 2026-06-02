@@ -87,6 +87,14 @@
 | **새로 만들면 안 되는 UI** | 흰 카드 + "지도" 텍스트 인라인 View |
 | **확장 방식** | `subtitle`, `height`, `align` prop |
 
+#### FullScreenImageViewer
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/common/FullScreenImageViewer.tsx` |
+| **사용 화면** | `PlaceEntryCard` 내부에서 재사용 |
+| **역할** | 여행 사진 썸네일 선택 시 전체화면 이미지 탐색 Modal |
+| **확장 방식** | `images`, `initialIndex`, `visible`, `onClose` prop |
+
 #### ScreenContainer
 | 항목 | 내용 |
 |------|------|
@@ -165,7 +173,7 @@
 |------|------|
 | **파일** | `components/trip/PlaceEntryCard.tsx` |
 | **사용 화면** | record-day-detail, day-archive-detail |
-| **역할** | 타임라인 장소 기록 카드 |
+| **역할** | 타임라인 장소 기록 카드 + 여행 사진 전체화면 뷰어 진입 |
 | **새로 만들면 안 되는 UI** | 시간+장소+사진 strip 카드 |
 | **확장 방식** | `showRating` prop |
 
