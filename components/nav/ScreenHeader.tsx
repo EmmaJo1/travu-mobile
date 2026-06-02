@@ -31,7 +31,7 @@ export default function ScreenHeader({
   if (balancedSlots) {
     return (
       <View style={[styles.header, styles.headerBalanced, style]}>
-        <View style={styles.balancedSideSlot}>
+        <View style={[styles.balancedSideSlot, styles.balancedLeftSlot]}>
           {onBackPress ? (
             <TouchableOpacity onPress={onBackPress} activeOpacity={0.75} style={styles.sideBtn}>
               <Image
@@ -47,7 +47,7 @@ export default function ScreenHeader({
 
         <View style={styles.balancedCenter}>{centerSlot}</View>
 
-        <View style={styles.balancedSideSlot}>
+        <View style={[styles.balancedSideSlot, styles.balancedRightSlot]}>
           {rightSlot ?? <View style={styles.sideBtn} />}
         </View>
       </View>
@@ -108,17 +108,24 @@ const styles = StyleSheet.create({
   headerBalanced: {
     paddingLeft: Spacing.xl,
     paddingRight: Spacing.xl,
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
   },
   balancedSideSlot: {
-    width: BALANCED_SIDE_SLOT_WIDTH,
+    position: 'absolute',
+    minWidth: BALANCED_SIDE_SLOT_WIDTH,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  balancedLeftSlot: {
+    left: Spacing.xl,
+  },
   balancedCenter: {
-    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  balancedRightSlot: {
+    right: Spacing.xl,
+    alignItems: 'flex-end',
   },
   sideBtn: {
     width: 24,
