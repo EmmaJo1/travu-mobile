@@ -26,6 +26,14 @@ import { Colors, Typography } from '@/constants/theme';
 
 export interface PlaceEntry {
   id: string;
+  source?: 'mock' | 'manual';
+  googlePlaceId?: string;
+  placeName?: string;
+  formattedAddress?: string;
+  cityName?: string;
+  countryName?: string;
+  latitude?: number;
+  longitude?: number;
   /** 방문 시각 (예: "7 PM") */
   time?: string;
   /** 장소명 (예: "세느 강") */
@@ -107,17 +115,18 @@ export default function PlaceEntryCard({ entry, style, showRating = true }: Plac
             leadingBleed={PLACE_ENTRY_SCROLL_LEADING_BLEED}
             contentContainerStyle={styles.photoStrip}
           >
-            {entry.photoSources
-              ? entry.photoSources.slice(0, 4).map((source, i) => (
-                  <View key={i} style={styles.photoItem}>
-                    <Image source={source} style={styles.photo} resizeMode="cover" />
-                  </View>
-                ))
-              : entry.photoUris!.slice(0, 4).map((uri, i) => (
-                  <View key={i} style={styles.photoItem}>
-                    <Image source={{ uri }} style={styles.photo} resizeMode="cover" />
-                  </View>
-                ))}
+            {entry.photoSources?.slice(0, 5).map((source, i) => (
+              <View key={`source-${i}`} style={styles.photoItem}>
+                <Image source={source} style={styles.photo} resizeMode="cover" />
+              </View>
+            ))}
+            {entry.photoUris
+              ?.slice(0, Math.max(0, 5 - (entry.photoSources?.length ?? 0)))
+              .map((uri) => (
+                <View key={uri} style={styles.photoItem}>
+                  <Image source={{ uri }} style={styles.photo} resizeMode="cover" />
+                </View>
+              ))}
           </HorizontalEdgeScrollView>
         ) : null}
 
