@@ -16,10 +16,11 @@
  *   · 메모 텍스트 (Body 2 Regular 14/400, black)
  */
 import Text from '@/components/common/AppText';
+import FullScreenImageViewer from '@/components/common/FullScreenImageViewer';
 import HorizontalEdgeScrollView, {
   PLACE_ENTRY_SCROLL_LEADING_BLEED,
 } from '@/components/common/HorizontalEdgeScrollView';
-import React from 'react';
+import React, { useState } from 'react';
 import { Image, StyleSheet, TouchableOpacity, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from 'react-native';
 
 import { Colors, Typography } from '@/constants/theme';
@@ -62,8 +63,17 @@ interface PlaceEntryCardProps {
 }
 
 export default function PlaceEntryCard({ entry, style, showRating = true }: PlaceEntryCardProps) {
+  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(null);
+  const photoSources = [
+    ...(entry.photoSources ?? []).slice(0, 5),
+    ...(entry.photoUris ?? [])
+      .slice(0, Math.max(0, 5 - (entry.photoSources?.length ?? 0)))
+      .map((uri) => ({ uri })),
+  ];
+
   return (
-    <View style={[styles.card, style]}>
+    <>
+      <View style={[styles.card, style]}>
       {/* ── 왼쪽 타임라인 컬럼 ── */}
       <View style={styles.timeline}>
         <Text style={styles.time}>{entry.time ?? ''}</Text>
@@ -115,18 +125,16 @@ export default function PlaceEntryCard({ entry, style, showRating = true }: Plac
             leadingBleed={PLACE_ENTRY_SCROLL_LEADING_BLEED}
             contentContainerStyle={styles.photoStrip}
           >
-            {entry.photoSources?.slice(0, 5).map((source, i) => (
-              <View key={`source-${i}`} style={styles.photoItem}>
+            {photoSources.map((source, index) => (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                key={`photo-${index}`}
+                onPress={() => setSelectedPhotoIndex(index)}
+                style={styles.photoItem}
+              >
                 <Image source={source} style={styles.photo} resizeMode="cover" />
-              </View>
+              </TouchableOpacity>
             ))}
-            {entry.photoUris
-              ?.slice(0, Math.max(0, 5 - (entry.photoSources?.length ?? 0)))
-              .map((uri) => (
-                <View key={uri} style={styles.photoItem}>
-                  <Image source={{ uri }} style={styles.photo} resizeMode="cover" />
-                </View>
-              ))}
           </HorizontalEdgeScrollView>
         ) : null}
 
@@ -135,7 +143,15 @@ export default function PlaceEntryCard({ entry, style, showRating = true }: Plac
           <Text style={styles.noteText}>{entry.text}</Text>
         ) : null}
       </View>
-    </View>
+      </View>
+
+      <FullScreenImageViewer
+        images={photoSources}
+        initialIndex={selectedPhotoIndex ?? 0}
+        onClose={() => setSelectedPhotoIndex(null)}
+        visible={selectedPhotoIndex != null}
+      />
+    </>
   );
 }
 
