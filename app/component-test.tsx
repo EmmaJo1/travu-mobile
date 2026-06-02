@@ -48,10 +48,10 @@ const MOCK_TRIP: TripCardData = {
 };
 
 const MOCK_TRIP_LIST: TripListItem[] = [
-  { id: 'tl-1', country: 'Paris, France', date: '2025.8.25-9.1', title: 'PARIS',   imageUri: 'https://picsum.photos/seed/paris/180/240' },
-  { id: 'tl-2', country: 'Tokyo, Japan',  date: '2025.4.1-4.7',  title: 'TOKYO',   imageUri: 'https://picsum.photos/seed/tokyo/180/240' },
-  { id: 'tl-3', country: 'Bali, Indonesia',date:'2025.6.10-6.17',title: 'BALI',    imageUri: 'https://picsum.photos/seed/bali/180/240' },
-  { id: 'tl-4', country: 'New York, USA', date: '2025.9.3-9.10', title: 'NEW YORK' },
+  { id: 'tl-1', city: 'Paris, France', date: '2025.8.25-9.1', title: 'PARIS',   imageUri: 'https://picsum.photos/seed/paris/180/240' },
+  { id: 'tl-2', city: 'Tokyo, Japan',  date: '2025.4.1-4.7',  title: 'TOKYO',   imageUri: 'https://picsum.photos/seed/tokyo/180/240' },
+  { id: 'tl-3', city: 'Bali, Indonesia',date:'2025.6.10-6.17',title: 'BALI',    imageUri: 'https://picsum.photos/seed/bali/180/240' },
+  { id: 'tl-4', city: 'New York, USA', date: '2025.9.3-9.10', title: 'NEW YORK' },
 ];
 
 const MOCK_PLACE_ENTRIES: PlaceEntry[] = [
