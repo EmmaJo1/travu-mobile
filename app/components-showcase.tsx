@@ -51,9 +51,9 @@ const TRIP: TripCardData = {
 };
 
 const TRIP_LIST: TripListItem[] = [
-  { id: 'tl1', country: 'Paris, France', date: '2024.8.25-9.1', title: 'PARIS', imageUri: 'https://picsum.photos/seed/paris/90/120' },
-  { id: 'tl2', country: 'Tokyo, Japan', date: '2024.11.1-11.7', title: 'TOKYO', imageUri: 'https://picsum.photos/seed/tokyo/90/120' },
-  { id: 'tl3', country: 'Seoul, Korea', date: '2025.1.15-1.20', title: 'SEOUL', imageUri: 'https://picsum.photos/seed/seoul/90/120' },
+  { id: 'tl1', city: 'Paris, France', date: '2024.8.25-9.1', title: 'PARIS', imageUri: 'https://picsum.photos/seed/paris/90/120' },
+  { id: 'tl2', city: 'Tokyo, Japan', date: '2024.11.1-11.7', title: 'TOKYO', imageUri: 'https://picsum.photos/seed/tokyo/90/120' },
+  { id: 'tl3', city: 'Seoul, Korea', date: '2025.1.15-1.20', title: 'SEOUL', imageUri: 'https://picsum.photos/seed/seoul/90/120' },
 ];
 
 const PLACE: PlaceEntry = {

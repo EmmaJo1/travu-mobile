@@ -14,6 +14,7 @@ import {
   useWindowDimensions,
   View,
   type ImageSourcePropType,
+  type ViewStyle,
 } from 'react-native';
 import MaskedView from '@react-native-masked-view/masked-view';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -66,8 +67,6 @@ const FRAME_IMAGE_LEFT = (PHOTO_FRAME_WIDTH - FRAME_IMAGE_WIDTH) / 2;
 
 const BLUR_RADIUS = 15;
 
-const MASK_OPACITIES = [0, 0.0625, 0.125, 0.25, 0.5, 0.75, 1, 0.75, 0.5, 0.25, 0.125, 0] as const;
-
 const MASK_LOCATIONS = [
   0,
   0.0416,
@@ -83,9 +82,20 @@ const MASK_LOCATIONS = [
   1,
 ] as const;
 
-const MASK_GRADIENT_COLORS = MASK_OPACITIES.map(
-  (opacity) => `rgba(255,255,255,${opacity})`,
-);
+const MASK_GRADIENT_COLORS = [
+  'rgba(255,255,255,0)',
+  'rgba(255,255,255,0.0625)',
+  'rgba(255,255,255,0.125)',
+  'rgba(255,255,255,0.25)',
+  'rgba(255,255,255,0.5)',
+  'rgba(255,255,255,0.75)',
+  'rgba(255,255,255,1)',
+  'rgba(255,255,255,0.75)',
+  'rgba(255,255,255,0.5)',
+  'rgba(255,255,255,0.25)',
+  'rgba(255,255,255,0.125)',
+  'rgba(255,255,255,0)',
+] as const;
 
 function resolveImageUri(source: ImageSourcePropType): string | undefined {
   return typeof RNImage.resolveAssetSource === 'function'
@@ -96,6 +106,11 @@ function resolveImageUri(source: ImageSourcePropType): string | undefined {
 const WEB_MASK_IMAGE = `linear-gradient(180deg, ${MASK_LOCATIONS.map(
   (loc, index) => `${MASK_GRADIENT_COLORS[index]} ${loc * 100}%`,
 ).join(', ')})`;
+
+type WebMaskStyle = ViewStyle & {
+  WebkitMaskImage: string;
+  maskImage: string;
+};
 
 function ArchiveBlurBackground({
   source,
@@ -113,19 +128,20 @@ function ArchiveBlurBackground({
       return <View style={[styles.blurRegion, { width, height }]} />;
     }
 
+    const webMaskStyle: WebMaskStyle = {
+      width,
+      height,
+      backgroundImage: `url(${uri})`,
+      WebkitMaskImage: WEB_MASK_IMAGE,
+      maskImage: WEB_MASK_IMAGE,
+    };
+
     return (
       <View
         style={[
           styles.blurRegion,
           styles.blurRegionWeb,
-          {
-            width,
-            height,
-            // @ts-expect-error RN web backgroundImage
-            backgroundImage: `url(${uri})`,
-            WebkitMaskImage: WEB_MASK_IMAGE,
-            maskImage: WEB_MASK_IMAGE,
-          },
+          webMaskStyle,
         ]}
       />
     );
