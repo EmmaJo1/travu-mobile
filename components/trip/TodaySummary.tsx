@@ -25,10 +25,10 @@ export default function TodaySummary({
       style={[styles.shadowWrap, style]}
       contentStyle={styles.wrap}
       borderRadius={16}
-      intensity={42}
-      tint="light"
-      fillColor="rgba(255, 255, 255, 0.40)"
-      borderColor="rgba(255, 255, 255, 0.56)"
+      intensity={28}
+      tint="default"
+      fillColor="rgba(255, 255, 255, 0.18)"
+      borderColor="rgba(255, 255, 255, 0.46)"
     >
       <View style={styles.content}>
         <Text style={styles.title}>TODAY&apos;S JOURNEY</Text>
