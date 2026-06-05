@@ -24,10 +24,10 @@ export default function TodaySummary({
     <FrostedGlassSurface
       style={[styles.shadowWrap, style]}
       contentStyle={styles.wrap}
-      borderRadius={24}
+      borderRadius={16}
       intensity={42}
       tint="light"
-      fillColor="rgba(255, 255, 255, 0.26)"
+      fillColor="rgba(255, 255, 255, 0.40)"
       borderColor="rgba(255, 255, 255, 0.56)"
     >
       <View style={styles.content}>
@@ -71,7 +71,7 @@ function SummaryMetric({
 const styles = StyleSheet.create({
   shadowWrap: {
     height: 104,
-    borderRadius: 24,
+    borderRadius: 16,
   },
   wrap: {
     height: 104,
