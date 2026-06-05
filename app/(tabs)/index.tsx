@@ -126,7 +126,6 @@ export default function HomeScreen() {
             distanceKm={todaySummary.distanceKm}
             placeCount={todaySummary.visitedPlacesCount}
             momentCount={todaySummary.recordedMomentsCount}
-            backdropImage={currentTrip.heroImage}
           />
         </View>
 

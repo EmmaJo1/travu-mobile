@@ -1,15 +1,8 @@
-import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Radius } from '@/constants/theme';
 import React from 'react';
-import {
-  Image,
-  StyleSheet,
-  View,
-  type ImageSourcePropType,
-  type StyleProp,
-  type ViewStyle,
-} from 'react-native';
+import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import Text from '@/components/common/AppText';
+import FrostedGlassSurface from '@/components/common/FrostedGlassSurface';
 
 const FIGMA_PRETENDARD = 'Pretendard';
 const FIGMA_NOTO_SERIF_KR = 'Noto Serif KR';
@@ -18,7 +11,6 @@ interface TodaySummaryProps {
   distanceKm: number;
   placeCount: number;
   momentCount: number;
-  backdropImage?: ImageSourcePropType;
   style?: StyleProp<ViewStyle>;
 }
 
@@ -26,56 +18,18 @@ export default function TodaySummary({
   distanceKm,
   placeCount,
   momentCount,
-  backdropImage,
   style,
 }: TodaySummaryProps) {
   return (
-    <View style={[styles.shadowWrap, style]}>
-      <View style={styles.wrap}>
-        {backdropImage ? (
-          <Image
-            source={backdropImage}
-            style={styles.backdropImage}
-            resizeMode="cover"
-            blurRadius={18}
-          />
-        ) : null}
-        <View style={styles.fillLayer} />
-        <LinearGradient
-          colors={[
-            'rgba(255, 255, 255, 0.46)',
-            'rgba(255, 255, 255, 0.14)',
-            'rgba(255, 255, 255, 0.04)',
-          ]}
-          locations={[0, 0.44, 1]}
-          start={{ x: 1, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={styles.glassLight}
-        />
-        <LinearGradient
-          colors={[
-            'rgba(255, 255, 255, 0.30)',
-            'rgba(255, 255, 255, 0.02)',
-            'rgba(255, 255, 255, 0.24)',
-          ]}
-          locations={[0, 0.52, 1]}
-          start={{ x: 0.12, y: 0 }}
-          end={{ x: 0.88, y: 1 }}
-          style={styles.refractionLayer}
-        />
-        <LinearGradient
-          colors={[
-            'rgba(52, 145, 255, 0.10)',
-            'rgba(255, 255, 255, 0)',
-            'rgba(255, 112, 145, 0.10)',
-          ]}
-          locations={[0, 0.5, 1]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.dispersionLayer}
-        />
-        <View style={styles.frostLayer} />
-
+    <FrostedGlassSurface
+      style={[styles.shadowWrap, style]}
+      contentStyle={styles.wrap}
+      intensity={80}
+      tint="light"
+      fillColor="rgba(255, 255, 255, 0.40)"
+      borderColor="rgba(199, 199, 199, 0.50)"
+    >
+      <View style={styles.content}>
         <Text style={styles.title}>TODAY&apos;S JOURNEY</Text>
         <View style={styles.statsRow}>
           <SummaryMetric value={placeCount} unit="곳" label="방문" metricWidth={29} valueSize={17} />
@@ -85,7 +39,7 @@ export default function TodaySummary({
           <SummaryMetric value={momentCount} unit="개" label="기록" metricWidth={29} valueSize={17} />
         </View>
       </View>
-    </View>
+    </FrostedGlassSurface>
   );
 }
 
@@ -117,46 +71,15 @@ const styles = StyleSheet.create({
   shadowWrap: {
     height: 104,
     borderRadius: Radius.lg,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.14,
-    shadowRadius: 10,
-    elevation: 4,
   },
   wrap: {
     height: 104,
+  },
+  content: {
+    flex: 1,
     paddingVertical: 16,
     paddingHorizontal: 24,
     gap: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(199, 199, 199, 0.5)',
-    borderRadius: Radius.lg,
-    backgroundColor: 'rgba(255, 255, 255, 0.4)',
-    overflow: 'hidden',
-  },
-  glassLight: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  backdropImage: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.54,
-    transform: [{ scale: 1.08 }],
-  },
-  fillLayer: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.4)',
-  },
-  refractionLayer: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.8,
-  },
-  dispersionLayer: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.5,
-  },
-  frostLayer: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
   },
   title: {
     fontFamily: FIGMA_PRETENDARD,

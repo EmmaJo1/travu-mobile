@@ -192,9 +192,18 @@
 |------|------|
 | **파일** | `components/trip/TodaySummary.tsx` |
 | **사용 화면** | Home |
-| **역할** | Home Hero 하단에 overlap되는 glass 통계 요약 (`TODAY'S JOURNEY`, 방문/이동/기록 3지표) |
+| **역할** | Home Hero 하단에 overlap되는 frosted glass 통계 요약 (`TODAY'S JOURNEY`, 방문/이동/기록 3지표) |
 | **새로 만들면 안 되는 UI** | Home용 오늘 이동/방문/기록 stats glass 카드 |
-| **확장 방식** | `distanceKm`, `placeCount`, `momentCount`, `backdropImage` |
+| **확장 방식** | `distanceKm`, `placeCount`, `momentCount` |
+
+#### FrostedGlassSurface
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/common/FrostedGlassSurface.tsx` |
+| **사용 화면** | Home |
+| **역할** | `expo-blur`의 SDK 54 `BlurView` 기반 frosted glass surface. Shadow wrapper, clip container, blur, tint, highlight border를 제공 |
+| **주요 Props** | `children`, `style`, `contentStyle`, `borderRadius`, `intensity`, `tint`, `fillColor`, `borderColor` |
+| **재사용성** | Hero 위 glass surface가 필요한 컴포넌트에서 재사용 가능 |
 
 #### TravelStatsCard
 | 항목 | 내용 |
