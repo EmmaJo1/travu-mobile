@@ -202,7 +202,7 @@
 | **파일** | `components/common/FrostedGlassSurface.tsx` |
 | **사용 화면** | Home |
 | **역할** | `expo-blur`의 SDK 54 `BlurView` 기반 frosted glass surface. Shadow wrapper, clip container, blur, tint, highlight border를 제공 |
-| **주요 Props** | `children`, `style`, `contentStyle`, `borderRadius`, `borderWidth`, `intensity`, `tint`, `fillColor`, `borderColor`, `highlightColor`, `shadowEnabled` |
+| **주요 Props** | `children`, `style`, `contentStyle`, `borderRadius`, `intensity`, `tint`, `fillColor`, `borderColor` |
 | **재사용성** | Hero 위 glass surface가 필요한 컴포넌트에서 재사용 가능 |
 
 #### TravelStatsCard
@@ -224,7 +224,7 @@
 | **파일** | `components/home/TravelStatusButton.tsx` |
 | **사용 화면** | Home |
 | **역할** | Hero 오른쪽 `여행 중` 상태 pill 버튼 |
-| **주요 Props** | `onPress`, `style` |
+| **주요 Props** | `onPress`, `backdropImage`, `style` |
 | **재사용성** | Home 전용에 가깝지만 향후 여행 상태 관리 UI와 연결 가능 |
 
 #### TimeLineCard
