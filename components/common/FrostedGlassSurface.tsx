@@ -2,8 +2,11 @@ import { BlurView, type BlurTint } from 'expo-blur';
 import React from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
+type FrostedGlassMode = 'translucent' | 'blur';
+
 interface FrostedGlassSurfaceProps {
   children: React.ReactNode;
+  mode?: FrostedGlassMode;
   style?: StyleProp<ViewStyle>;
   contentStyle?: StyleProp<ViewStyle>;
   borderRadius?: number;
@@ -15,6 +18,7 @@ interface FrostedGlassSurfaceProps {
 
 export default function FrostedGlassSurface({
   children,
+  mode = 'blur',
   style,
   contentStyle,
   borderRadius = 24,
@@ -26,13 +30,15 @@ export default function FrostedGlassSurface({
   return (
     <View style={[styles.shadowWrapper, { borderRadius }, style]}>
       <View style={[styles.clipContainer, { borderColor, borderRadius }, contentStyle]}>
-        <BlurView
-          intensity={intensity}
-          tint={tint}
-          experimentalBlurMethod="dimezisBlurView"
-          blurReductionFactor={2.4}
-          style={StyleSheet.absoluteFill}
-        />
+        {mode === 'blur' ? (
+          <BlurView
+            intensity={intensity}
+            tint={tint}
+            experimentalBlurMethod="dimezisBlurView"
+            blurReductionFactor={2.4}
+            style={StyleSheet.absoluteFill}
+          />
+        ) : null}
         <View style={[styles.tintLayer, { backgroundColor: fillColor }]} />
         <View style={[styles.innerHighlight, { borderRadius }]} pointerEvents="none" />
         <View style={styles.content}>{children}</View>

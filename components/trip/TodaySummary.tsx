@@ -22,13 +22,12 @@ export default function TodaySummary({
 }: TodaySummaryProps) {
   return (
     <FrostedGlassSurface
+      mode="translucent"
       style={[styles.shadowWrap, style]}
       contentStyle={styles.wrap}
       borderRadius={16}
-      intensity={28}
-      tint="default"
-      fillColor="rgba(255, 255, 255, 0.18)"
-      borderColor="rgba(255, 255, 255, 0.46)"
+      fillColor="rgba(255, 255, 255, 0.40)"
+      borderColor="rgba(199, 199, 199, 0.50)"
     >
       <View style={styles.content}>
         <Text style={styles.title}>TODAY&apos;S JOURNEY</Text>

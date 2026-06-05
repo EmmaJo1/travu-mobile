@@ -1,5 +1,4 @@
 import { Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import React from 'react';
 import {
   Image,
@@ -35,11 +34,22 @@ export default function TimeLineCard({
   isLast = false,
   onPressMore,
 }: TimeLineCardProps) {
+  const normalizedTimeLabel = timeLabel.trim();
+  const timeMatch = normalizedTimeLabel.match(/^(.+?)\s*(AM|PM)$/i);
+  const normalizedTimeText = (timeMatch?.[1] ?? normalizedTimeLabel).trim();
+  const period = timeMatch?.[2]?.toUpperCase() ?? '';
+  const shouldStackTime = normalizedTimeText.length > 1;
+
   return (
     <View style={styles.card}>
       <View style={styles.leftContent}>
         <View style={styles.timeColumn}>
-          <Text style={styles.timeLabel}>{timeLabel}</Text>
+          <View style={styles.timeArea}>
+            <View style={shouldStackTime ? styles.timeStacked : styles.timeInline}>
+              <Text style={styles.timeNumber}>{normalizedTimeText}</Text>
+              {period ? <Text style={styles.timePeriod}>{period}</Text> : null}
+            </View>
+          </View>
           <View style={[styles.timelineLine, isLast && styles.timelineLineLast]} />
         </View>
 
@@ -57,41 +67,6 @@ export default function TimeLineCard({
                 onPress={onPressMore}
               >
                 <View style={styles.moreCircle}>
-                  <View style={styles.moreBlurBloom} />
-                  <LinearGradient
-                    colors={[
-                      'rgba(255, 255, 255, 0.54)',
-                      'rgba(255, 255, 255, 0.18)',
-                      'rgba(255, 255, 255, 0.06)',
-                    ]}
-                    locations={[0, 0.44, 1]}
-                    start={{ x: 1, y: 0 }}
-                    end={{ x: 0, y: 1 }}
-                    style={styles.moreGlassLight}
-                  />
-                  <LinearGradient
-                    colors={[
-                      'rgba(255, 255, 255, 0.58)',
-                      'rgba(255, 255, 255, 0.08)',
-                      'rgba(255, 255, 255, 0.34)',
-                    ]}
-                    locations={[0, 0.52, 1]}
-                    start={{ x: 0.12, y: 0 }}
-                    end={{ x: 0.88, y: 1 }}
-                    style={styles.moreRefractionLayer}
-                  />
-                  <LinearGradient
-                    colors={[
-                      'rgba(52, 145, 255, 0.18)',
-                      'rgba(255, 255, 255, 0)',
-                      'rgba(255, 112, 145, 0.16)',
-                    ]}
-                    locations={[0, 0.5, 1]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.moreDispersionLayer}
-                  />
-                  <View style={styles.moreFrostLayer} />
                   <Feather name="more-horizontal" size={14} color="#353535" />
                 </View>
               </Pressable>
@@ -148,11 +123,36 @@ const styles = StyleSheet.create({
   },
   timeColumn: {
     width: 28,
-    minHeight: 100,
+    height: 100,
     alignItems: 'center',
     gap: 8,
   },
-  timeLabel: {
+  timeArea: {
+    width: 28,
+    minHeight: 30,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  timeInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  timeStacked: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 0,
+  },
+  timeNumber: {
+    fontFamily: FontFamily.pretendardMedium,
+    fontSize: 12,
+    lineHeight: 14,
+    color: Colors.foundation.grey500,
+    textAlign: 'center',
+  },
+  timePeriod: {
     fontFamily: FontFamily.pretendardMedium,
     fontSize: 12,
     lineHeight: 14,
@@ -162,11 +162,9 @@ const styles = StyleSheet.create({
   timelineLine: {
     width: 2,
     flex: 1,
-    minHeight: 78,
     backgroundColor: Colors.foundation.grey100,
   },
   timelineLineLast: {
-    minHeight: 78,
   },
   detailColumn: {
     flex: 1,
@@ -206,32 +204,6 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     backgroundColor: 'rgba(255, 255, 255, 0.4)',
     overflow: 'hidden',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.14,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  moreGlassLight: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  moreBlurBloom: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    opacity: 0.9,
-    transform: [{ scale: 1.15 }],
-  },
-  moreRefractionLayer: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.8,
-  },
-  moreDispersionLayer: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.5,
-  },
-  moreFrostLayer: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
   },
   categoryRow: {
     flexDirection: 'row',
