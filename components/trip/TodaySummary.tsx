@@ -1,4 +1,4 @@
-import { Colors, Radius } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
 import React from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import Text from '@/components/common/AppText';
@@ -24,10 +24,11 @@ export default function TodaySummary({
     <FrostedGlassSurface
       style={[styles.shadowWrap, style]}
       contentStyle={styles.wrap}
-      intensity={80}
+      borderRadius={24}
+      intensity={42}
       tint="light"
-      fillColor="rgba(255, 255, 255, 0.40)"
-      borderColor="rgba(199, 199, 199, 0.50)"
+      fillColor="rgba(255, 255, 255, 0.26)"
+      borderColor="rgba(255, 255, 255, 0.56)"
     >
       <View style={styles.content}>
         <Text style={styles.title}>TODAY&apos;S JOURNEY</Text>
@@ -70,7 +71,7 @@ function SummaryMetric({
 const styles = StyleSheet.create({
   shadowWrap: {
     height: 104,
-    borderRadius: Radius.lg,
+    borderRadius: 24,
   },
   wrap: {
     height: 104,

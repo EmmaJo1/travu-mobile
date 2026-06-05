@@ -1,9 +1,6 @@
 import { BlurView, type BlurTint } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import React from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-
-import { Radius } from '@/constants/theme';
 
 interface FrostedGlassSurfaceProps {
   children: React.ReactNode;
@@ -20,11 +17,11 @@ export default function FrostedGlassSurface({
   children,
   style,
   contentStyle,
-  borderRadius = Radius.lg,
-  intensity = 80,
+  borderRadius = 24,
+  intensity = 42,
   tint = 'light',
-  fillColor = 'rgba(255, 255, 255, 0.40)',
-  borderColor = 'rgba(199, 199, 199, 0.50)',
+  fillColor = 'rgba(255, 255, 255, 0.26)',
+  borderColor = 'rgba(255, 255, 255, 0.56)',
 }: FrostedGlassSurfaceProps) {
   return (
     <View style={[styles.shadowWrapper, { borderRadius }, style]}>
@@ -37,28 +34,6 @@ export default function FrostedGlassSurface({
           style={StyleSheet.absoluteFill}
         />
         <View style={[styles.tintLayer, { backgroundColor: fillColor }]} />
-        <LinearGradient
-          colors={[
-            'rgba(255, 255, 255, 0.50)',
-            'rgba(255, 255, 255, 0.12)',
-            'rgba(255, 255, 255, 0.02)',
-          ]}
-          locations={[0, 0.44, 1]}
-          start={{ x: 1, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-        <LinearGradient
-          colors={[
-            'rgba(255, 255, 255, 0.32)',
-            'rgba(255, 255, 255, 0.02)',
-            'rgba(255, 255, 255, 0.24)',
-          ]}
-          locations={[0, 0.52, 1]}
-          start={{ x: 0.12, y: 0 }}
-          end={{ x: 0.88, y: 1 }}
-          style={styles.refractionLayer}
-        />
         <View style={[styles.innerHighlight, { borderRadius }]} pointerEvents="none" />
         <View style={styles.content}>{children}</View>
       </View>
@@ -69,9 +44,9 @@ export default function FrostedGlassSurface({
 const styles = StyleSheet.create({
   shadowWrapper: {
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.14,
-    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
     elevation: 4,
   },
   clipContainer: {
@@ -82,14 +57,12 @@ const styles = StyleSheet.create({
   tintLayer: {
     ...StyleSheet.absoluteFillObject,
   },
-  refractionLayer: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.8,
-  },
   innerHighlight: {
     ...StyleSheet.absoluteFillObject,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.28)',
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.72)',
+    borderLeftColor: 'rgba(255, 255, 255, 0.48)',
   },
   content: {
     flex: 1,
