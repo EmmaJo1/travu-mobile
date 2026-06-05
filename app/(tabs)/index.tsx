@@ -112,10 +112,7 @@ export default function HomeScreen() {
                   <Text style={styles.dateLabel}>{currentTrip.dateLabel}</Text>
                 </View>
 
-                <TravelStatusButton
-                  backdropImage={currentTrip.heroImage}
-                  onPress={handlePressTravelStatus}
-                />
+                <TravelStatusButton onPress={handlePressTravelStatus} />
               </View>
             </SafeAreaView>
           </View>

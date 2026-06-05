@@ -1,5 +1,4 @@
 import { Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import React from 'react';
 import {
   Image,
@@ -9,6 +8,7 @@ import {
   type ImageSourcePropType,
 } from 'react-native';
 
+import FrostedGlassSurface from '@/components/common/FrostedGlassSurface';
 import Text from '@/components/common/AppText';
 import { Colors, FontFamily, Radius, Typography } from '@/constants/theme';
 
@@ -56,44 +56,20 @@ export default function TimeLineCard({
                 hitSlop={10}
                 onPress={onPressMore}
               >
-                <View style={styles.moreCircle}>
-                  <View style={styles.moreBlurBloom} />
-                  <LinearGradient
-                    colors={[
-                      'rgba(255, 255, 255, 0.54)',
-                      'rgba(255, 255, 255, 0.18)',
-                      'rgba(255, 255, 255, 0.06)',
-                    ]}
-                    locations={[0, 0.44, 1]}
-                    start={{ x: 1, y: 0 }}
-                    end={{ x: 0, y: 1 }}
-                    style={styles.moreGlassLight}
-                  />
-                  <LinearGradient
-                    colors={[
-                      'rgba(255, 255, 255, 0.58)',
-                      'rgba(255, 255, 255, 0.08)',
-                      'rgba(255, 255, 255, 0.34)',
-                    ]}
-                    locations={[0, 0.52, 1]}
-                    start={{ x: 0.12, y: 0 }}
-                    end={{ x: 0.88, y: 1 }}
-                    style={styles.moreRefractionLayer}
-                  />
-                  <LinearGradient
-                    colors={[
-                      'rgba(52, 145, 255, 0.18)',
-                      'rgba(255, 255, 255, 0)',
-                      'rgba(255, 112, 145, 0.16)',
-                    ]}
-                    locations={[0, 0.5, 1]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.moreDispersionLayer}
-                  />
-                  <View style={styles.moreFrostLayer} />
+                <FrostedGlassSurface
+                  style={styles.moreCircle}
+                  contentStyle={styles.moreCircleContent}
+                  borderRadius={Radius.full}
+                  borderWidth={0}
+                  intensity={80}
+                  tint="light"
+                  fillColor="rgba(255, 255, 255, 0.40)"
+                  borderColor="rgba(255, 255, 255, 0)"
+                  highlightColor="rgba(255, 255, 255, 0.18)"
+                  shadowEnabled={false}
+                >
                   <Feather name="more-horizontal" size={14} color="#353535" />
-                </View>
+                </FrostedGlassSurface>
               </Pressable>
             </View>
 
@@ -201,37 +177,13 @@ const styles = StyleSheet.create({
   moreCircle: {
     width: 20,
     height: 20,
+    borderRadius: Radius.full,
+  },
+  moreCircleContent: {
+    width: 20,
+    height: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: Radius.full,
-    backgroundColor: 'rgba(255, 255, 255, 0.4)',
-    overflow: 'hidden',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.14,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  moreGlassLight: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  moreBlurBloom: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    opacity: 0.9,
-    transform: [{ scale: 1.15 }],
-  },
-  moreRefractionLayer: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.8,
-  },
-  moreDispersionLayer: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.5,
-  },
-  moreFrostLayer: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
   },
   categoryRow: {
     flexDirection: 'row',

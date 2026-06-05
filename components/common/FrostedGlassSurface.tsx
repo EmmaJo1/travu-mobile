@@ -10,10 +10,13 @@ interface FrostedGlassSurfaceProps {
   style?: StyleProp<ViewStyle>;
   contentStyle?: StyleProp<ViewStyle>;
   borderRadius?: number;
+  borderWidth?: number;
   intensity?: number;
   tint?: BlurTint;
   fillColor?: string;
   borderColor?: string;
+  highlightColor?: string;
+  shadowEnabled?: boolean;
 }
 
 export default function FrostedGlassSurface({
@@ -21,14 +24,17 @@ export default function FrostedGlassSurface({
   style,
   contentStyle,
   borderRadius = Radius.lg,
+  borderWidth = 1,
   intensity = 80,
   tint = 'light',
   fillColor = 'rgba(255, 255, 255, 0.40)',
   borderColor = 'rgba(199, 199, 199, 0.50)',
+  highlightColor = 'rgba(255, 255, 255, 0.28)',
+  shadowEnabled = true,
 }: FrostedGlassSurfaceProps) {
   return (
-    <View style={[styles.shadowWrapper, { borderRadius }, style]}>
-      <View style={[styles.clipContainer, { borderColor, borderRadius }, contentStyle]}>
+    <View style={[shadowEnabled && styles.shadowWrapper, { borderRadius }, style]}>
+      <View style={[styles.clipContainer, { borderColor, borderRadius, borderWidth }, contentStyle]}>
         <BlurView
           intensity={intensity}
           tint={tint}
@@ -39,8 +45,8 @@ export default function FrostedGlassSurface({
         <View style={[styles.tintLayer, { backgroundColor: fillColor }]} />
         <LinearGradient
           colors={[
-            'rgba(255, 255, 255, 0.50)',
-            'rgba(255, 255, 255, 0.12)',
+            'rgba(255, 255, 255, 0.42)',
+            'rgba(255, 255, 255, 0.10)',
             'rgba(255, 255, 255, 0.02)',
           ]}
           locations={[0, 0.44, 1]}
@@ -50,16 +56,27 @@ export default function FrostedGlassSurface({
         />
         <LinearGradient
           colors={[
-            'rgba(255, 255, 255, 0.32)',
+            'rgba(255, 255, 255, 0.28)',
             'rgba(255, 255, 255, 0.02)',
-            'rgba(255, 255, 255, 0.24)',
+            'rgba(255, 255, 255, 0.22)',
           ]}
           locations={[0, 0.52, 1]}
           start={{ x: 0.12, y: 0 }}
           end={{ x: 0.88, y: 1 }}
           style={styles.refractionLayer}
         />
-        <View style={[styles.innerHighlight, { borderRadius }]} pointerEvents="none" />
+        <LinearGradient
+          colors={[
+            'rgba(52, 145, 255, 0.10)',
+            'rgba(255, 255, 255, 0)',
+            'rgba(255, 112, 145, 0.10)',
+          ]}
+          locations={[0, 0.5, 1]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.dispersionLayer}
+        />
+        <View style={[styles.innerHighlight, { borderColor: highlightColor, borderRadius }]} pointerEvents="none" />
         <View style={styles.content}>{children}</View>
       </View>
     </View>
@@ -86,10 +103,13 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     opacity: 0.8,
   },
+  dispersionLayer: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0.5,
+  },
   innerHighlight: {
     ...StyleSheet.absoluteFillObject,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.28)',
   },
   content: {
     flex: 1,
