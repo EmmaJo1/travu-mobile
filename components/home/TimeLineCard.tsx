@@ -57,11 +57,12 @@ export default function TimeLineCard({
                 onPress={onPressMore}
               >
                 <View style={styles.moreCircle}>
+                  <View style={styles.moreBlurBloom} />
                   <LinearGradient
                     colors={[
-                      'rgba(255, 255, 255, 0.34)',
-                      'rgba(255, 255, 255, 0.10)',
-                      'rgba(255, 255, 255, 0)',
+                      'rgba(255, 255, 255, 0.54)',
+                      'rgba(255, 255, 255, 0.18)',
+                      'rgba(255, 255, 255, 0.06)',
                     ]}
                     locations={[0, 0.44, 1]}
                     start={{ x: 1, y: 0 }}
@@ -70,9 +71,9 @@ export default function TimeLineCard({
                   />
                   <LinearGradient
                     colors={[
-                      'rgba(255, 255, 255, 0.42)',
-                      'rgba(255, 255, 255, 0.06)',
-                      'rgba(255, 255, 255, 0.24)',
+                      'rgba(255, 255, 255, 0.58)',
+                      'rgba(255, 255, 255, 0.08)',
+                      'rgba(255, 255, 255, 0.34)',
                     ]}
                     locations={[0, 0.52, 1]}
                     start={{ x: 0.12, y: 0 }}
@@ -81,9 +82,9 @@ export default function TimeLineCard({
                   />
                   <LinearGradient
                     colors={[
-                      'rgba(52, 145, 255, 0.14)',
+                      'rgba(52, 145, 255, 0.18)',
                       'rgba(255, 255, 255, 0)',
-                      'rgba(255, 112, 145, 0.12)',
+                      'rgba(255, 112, 145, 0.16)',
                     ]}
                     locations={[0, 0.5, 1]}
                     start={{ x: 0, y: 0 }}
@@ -214,6 +215,12 @@ const styles = StyleSheet.create({
   moreGlassLight: {
     ...StyleSheet.absoluteFillObject,
   },
+  moreBlurBloom: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    opacity: 0.9,
+    transform: [{ scale: 1.15 }],
+  },
   moreRefractionLayer: {
     ...StyleSheet.absoluteFillObject,
     opacity: 0.8,
@@ -224,7 +231,7 @@ const styles = StyleSheet.create({
   },
   moreFrostLayer: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
   },
   categoryRow: {
     flexDirection: 'row',

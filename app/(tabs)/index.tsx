@@ -112,7 +112,10 @@ export default function HomeScreen() {
                   <Text style={styles.dateLabel}>{currentTrip.dateLabel}</Text>
                 </View>
 
-                <TravelStatusButton onPress={handlePressTravelStatus} />
+                <TravelStatusButton
+                  backdropImage={currentTrip.heroImage}
+                  onPress={handlePressTravelStatus}
+                />
               </View>
             </SafeAreaView>
           </View>
@@ -123,6 +126,7 @@ export default function HomeScreen() {
             distanceKm={todaySummary.distanceKm}
             placeCount={todaySummary.visitedPlacesCount}
             momentCount={todaySummary.recordedMomentsCount}
+            backdropImage={currentTrip.heroImage}
           />
         </View>
 
