@@ -200,8 +200,8 @@
 |------|------|
 | **파일** | `components/trip/TodaySummary.tsx` |
 | **사용 화면** | Home |
-| **역할** | Noto Serif "오늘은 X km…" 요약 |
-| **새로 만들면 안 되는 UI** | 오늘 이동/방문/기록 서사 텍스트 |
+| **역할** | Home Hero 하단에 overlap되는 glass 통계 요약 (`TODAY'S JOURNEY`, 방문/이동/기록 3지표) |
+| **새로 만들면 안 되는 UI** | Home용 오늘 이동/방문/기록 stats glass 카드 |
 | **확장 방식** | `distanceKm`, `placeCount`, `momentCount` |
 
 #### TravelStatsCard
@@ -212,6 +212,37 @@
 | **역할** | 아이콘 + 방문/이동 수치 (87w) |
 | **새로 만들면 안 되는 UI** | compact 통계 아이콘 row |
 | **확장 방식** | `placeCount`, `distanceKm` |
+
+---
+
+### home
+
+#### TravelStatusButton
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/TravelStatusButton.tsx` |
+| **사용 화면** | Home |
+| **역할** | Hero 오른쪽 `여행 중` 상태 pill 버튼 |
+| **주요 Props** | `onPress`, `style` |
+| **재사용성** | Home 전용에 가깝지만 향후 여행 상태 관리 UI와 연결 가능 |
+
+#### TimeLineCard
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/TimeLineCard.tsx` |
+| **사용 화면** | Home |
+| **역할** | 오늘의 타임라인 장소별 기록 카드. 시간, timeline line, 장소명, 카테고리·도시, 메모/사진 수, 대표 이미지 표시 |
+| **주요 Props** | `timeLabel`, `placeName`, `categoryLabel`, `cityLabel`, `memoCount`, `photoCount`, `imageSource`, `isLast`, `onPressMore` |
+| **재사용성** | Home 타임라인 전용. record/archive의 `PlaceEntryCard`와 역할이 달라 별도 유지 |
+
+#### TodayTimelineSection
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/TodayTimelineSection.tsx` |
+| **사용 화면** | Home |
+| **역할** | `오늘의 타임라인` 섹션 제목/설명과 `TimeLineCard` 세로 목록 렌더링 |
+| **주요 Props** | `items`, `onPressMore` |
+| **재사용성** | Home 전용 섹션 컴포넌트 |
 
 ---
 
