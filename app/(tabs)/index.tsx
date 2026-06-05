@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Text from '@/components/common/AppText';
 import TodayTimelineSection from '@/components/home/TodayTimelineSection';
 import TravelStatusButton from '@/components/home/TravelStatusButton';
+import TravelStatusSheet from '@/components/home/TravelStatusSheet';
 import TodaySummary from '@/components/trip/TodaySummary';
 import { HOME_MOCK_DATA } from '@/constants/mockHome';
 import { HOME_TIMELINE_ITEMS } from '@/constants/mockHomeTimeline';
@@ -55,9 +56,14 @@ const HERO_MASK_LOCATIONS = [0, 0.34, 0.58, 0.82, 1] as const;
 
 export default function HomeScreen() {
   const { currentTrip, todaySummary } = HOME_MOCK_DATA;
+  const [isTravelStatusSheetVisible, setTravelStatusSheetVisible] = React.useState(false);
 
   const handlePressTravelStatus = React.useCallback(() => {
-    // TODO: Connect travel management bottom sheet.
+    setTravelStatusSheetVisible(true);
+  }, []);
+
+  const handleCloseTravelStatusSheet = React.useCallback(() => {
+    setTravelStatusSheetVisible(false);
   }, []);
 
   const handlePressTimelineMore = React.useCallback(() => {
@@ -134,6 +140,11 @@ export default function HomeScreen() {
           onPressMore={handlePressTimelineMore}
         />
       </ScrollView>
+
+      <TravelStatusSheet
+        visible={isTravelStatusSheetVisible}
+        onClose={handleCloseTravelStatusSheet}
+      />
     </View>
   );
 }
