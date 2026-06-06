@@ -61,7 +61,10 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader style={styles.header} onSettingsPress={() => {}} />
+      <ScreenHeader
+        style={styles.header}
+        onSettingsPress={() => router.push('/settings' as Href)}
+      />
 
       <ScrollView
         style={styles.scroll}

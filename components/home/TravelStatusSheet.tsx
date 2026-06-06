@@ -23,6 +23,7 @@ const ANIMATION_DURATION = 400;
 interface TravelStatusSheetProps {
   visible: boolean;
   onClose: () => void;
+  onDismiss?: () => void;
   onPressEditPeriod?: () => void;
   onPressChangeDestination?: () => void;
   onPressEndTrip?: () => void;
@@ -31,6 +32,9 @@ interface TravelStatusSheetProps {
   dateLabel?: string;
   weekdayLabel?: string;
   dayLabel?: string;
+  statusLabel?: string;
+  statusDotColor?: string;
+  dateRangeDescription?: string;
 }
 
 interface SheetMenuItemProps {
@@ -75,6 +79,7 @@ function SheetMenuItem({
 export default function TravelStatusSheet({
   visible,
   onClose,
+  onDismiss,
   onPressEditPeriod,
   onPressChangeDestination,
   onPressEndTrip,
@@ -83,6 +88,9 @@ export default function TravelStatusSheet({
   dateLabel = '11월 2일',
   weekdayLabel = 'Mon',
   dayLabel = 'Day 1',
+  statusLabel = '여행 기록 중',
+  statusDotColor = '#D13434',
+  dateRangeDescription = '11월 2일~11월 12일 (11일)',
 }: TravelStatusSheetProps) {
   const [shouldRender, setShouldRender] = React.useState(visible);
   const sheetTranslateY = React.useRef(new Animated.Value(SHEET_HEIGHT)).current;
@@ -110,6 +118,10 @@ export default function TravelStatusSheet({
       return;
     }
 
+    if (!shouldRender) {
+      return;
+    }
+
     Animated.parallel([
       Animated.timing(sheetTranslateY, {
         toValue: SHEET_HEIGHT,
@@ -126,9 +138,12 @@ export default function TravelStatusSheet({
     ]).start(({ finished }) => {
       if (finished) {
         setShouldRender(false);
+        requestAnimationFrame(() => {
+          onDismiss?.();
+        });
       }
     });
-  }, [backdropOpacity, sheetTranslateY, visible]);
+  }, [backdropOpacity, onDismiss, sheetTranslateY, shouldRender, visible]);
 
   const handleClose = React.useCallback(() => {
     onClose();
@@ -180,8 +195,8 @@ export default function TravelStatusSheet({
               <View style={styles.titleRow}>
                 <Text style={styles.tripTitle}>{title}</Text>
                 <View style={styles.recordingBadge}>
-                  <View style={styles.statusDot} />
-                  <Text style={styles.recordingText}>여행 기록 중</Text>
+                  <View style={[styles.statusDot, { backgroundColor: statusDotColor }]} />
+                  <Text style={styles.recordingText}>{statusLabel}</Text>
                 </View>
               </View>
 
@@ -202,8 +217,9 @@ export default function TravelStatusSheet({
               intensity={4}
               experimentalBlurMethod="dimezisBlurView"
               style={StyleSheet.absoluteFill}
+              pointerEvents="none"
             />
-            <View style={styles.menuCardFill} />
+            <View style={styles.menuCardFill} pointerEvents="none" />
             <LinearGradient
               colors={[
                 'rgba(255, 255, 255, 0.34)',
@@ -214,6 +230,7 @@ export default function TravelStatusSheet({
               start={{ x: 1, y: 0 }}
               end={{ x: 0, y: 1 }}
               style={styles.menuGlassLight}
+              pointerEvents="none"
             />
             <LinearGradient
               colors={[
@@ -225,6 +242,7 @@ export default function TravelStatusSheet({
               start={{ x: 0.12, y: 0 }}
               end={{ x: 0.88, y: 1 }}
               style={styles.menuRefractionLayer}
+              pointerEvents="none"
             />
             <LinearGradient
               colors={[
@@ -236,29 +254,32 @@ export default function TravelStatusSheet({
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.menuDispersionLayer}
+              pointerEvents="none"
             />
-            <View style={styles.menuFrostLayer} />
-            <SheetMenuItem
-              iconName="calendar"
-              title="여행 기간 수정"
-              description="11월 2일~11월 12일 (11일)"
-              onPress={onPressEditPeriod}
-            />
-            <View style={styles.divider} />
-            <SheetMenuItem
-              iconName="map-pin"
-              title="여행지 변경"
-              description="여행 장소를 변경합니다"
-              onPress={onPressChangeDestination}
-            />
-            <View style={styles.divider} />
-            <SheetMenuItem
-              iconName="power"
-              title="여행 종료"
-              description="자동 기록을 종료합니다"
-              isDestructive
-              onPress={onPressEndTrip}
-            />
+            <View style={styles.menuFrostLayer} pointerEvents="none" />
+            <View style={styles.menuContent}>
+              <SheetMenuItem
+                iconName="calendar"
+                title="여행 기간 수정"
+                description={dateRangeDescription}
+                onPress={onPressEditPeriod}
+              />
+              <View style={styles.divider} />
+              <SheetMenuItem
+                iconName="map-pin"
+                title="여행지 변경"
+                description="여행 장소를 변경합니다"
+                onPress={onPressChangeDestination}
+              />
+              <View style={styles.divider} />
+              <SheetMenuItem
+                iconName="power"
+                title="여행 종료"
+                description="자동 기록을 종료합니다"
+                isDestructive
+                onPress={onPressEndTrip}
+              />
+            </View>
           </View>
         </Animated.View>
       </View>
@@ -416,6 +437,10 @@ const styles = StyleSheet.create({
   menuFrostLayer: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(255, 255, 255, 0.04)',
+  },
+  menuContent: {
+    position: 'relative',
+    zIndex: 1,
   },
   menuRow: {
     height: 40,

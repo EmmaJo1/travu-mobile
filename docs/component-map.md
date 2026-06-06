@@ -233,8 +233,35 @@
 | **파일** | `components/home/TravelStatusSheet.tsx` |
 | **사용 화면** | Home |
 | **역할** | `TravelStatusButton`을 눌렀을 때 표시되는 여행 상태 관리 바텀시트. dim/blur overlay, 여행 요약 헤더, 여행 기간 수정/여행지 변경/여행 종료 액션 row 렌더링 |
-| **주요 Props** | `visible`, `onClose`, `onPressEditPeriod`, `onPressChangeDestination`, `onPressEndTrip`, `avatarImage`, `title`, `dateLabel`, `weekdayLabel`, `dayLabel` |
+| **주요 Props** | `visible`, `onClose`, `onPressEditPeriod`, `onPressChangeDestination`, `onPressEndTrip`, `avatarImage`, `title`, `dateLabel`, `weekdayLabel`, `dayLabel`, `statusLabel`, `statusDotColor`, `dateRangeDescription` |
 | **재사용성** | Home 전용에 가깝고, 액션 handler는 향후 여행 관리 flow 연결 지점 |
+
+#### TripDatePickerModal
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/TripDatePickerModal.tsx` |
+| **사용 화면** | Home |
+| **역할** | 여행 상태 바텀시트의 `여행 기간 수정`에서 열리는 날짜 범위 편집 모달. draft start/end date, range highlight, 취소/저장 처리 |
+| **주요 Props** | `visible`, `startDate`, `endDate`, `onCancel`, `onSave` |
+| **재사용성** | Home 여행 상태 편집 전용. record의 `TripCreateModal` 날짜 step은 아직 내부 구현이라 직접 재사용 불가 |
+
+#### DestinationSearchModal
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/DestinationSearchModal.tsx` |
+| **사용 화면** | Home |
+| **역할** | 여행 상태 바텀시트의 `여행지 변경`에서 열리는 mock 검색/선택 모달. 도시/국가 타입 결과, 현재 여행지, 취소/저장 처리 |
+| **주요 Props** | `visible`, `currentDestination`, `onCancel`, `onSave` |
+| **재사용성** | Home 여행 상태 편집 전용. 검색 데이터는 `constants/mockTripDestinations.ts` provider로 분리 |
+
+#### EndTripConfirmModal
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/EndTripConfirmModal.tsx` |
+| **사용 화면** | Home |
+| **역할** | 여행 상태 바텀시트의 `여행 종료`에서 열리는 확인 모달. 자동 기록 종료 상태만 반영하고 기존 기록은 삭제하지 않음 |
+| **주요 Props** | `visible`, `onCancel`, `onConfirm` |
+| **재사용성** | Home 여행 상태 편집 전용 |
 
 #### TimeLineCard
 | 항목 | 내용 |

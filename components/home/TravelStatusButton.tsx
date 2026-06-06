@@ -20,14 +20,22 @@ interface TravelStatusButtonProps {
   onPress?: () => void;
   backdropImage?: ImageSourcePropType;
   style?: StyleProp<ViewStyle>;
+  label?: string;
+  dotColor?: string;
 }
 
-export default function TravelStatusButton({ onPress, backdropImage, style }: TravelStatusButtonProps) {
+export default function TravelStatusButton({
+  onPress,
+  backdropImage,
+  style,
+  label = '여행 중',
+  dotColor = '#D13434',
+}: TravelStatusButtonProps) {
   return (
     <Pressable
       style={[styles.button, style]}
       accessibilityRole="button"
-      accessibilityLabel="여행 중 상태"
+      accessibilityLabel={`${label} 상태`}
       onPress={onPress}
     >
       {backdropImage ? (
@@ -74,8 +82,8 @@ export default function TravelStatusButton({ onPress, backdropImage, style }: Tr
       />
       <View style={styles.frostLayer} />
       <View style={styles.statusContent}>
-        <View style={styles.statusDot} />
-        <Text style={styles.label}>여행 중</Text>
+        <View style={[styles.statusDot, { backgroundColor: dotColor }]} />
+        <Text style={styles.label}>{label}</Text>
       </View>
       <View style={styles.chevronSlot}>
         <Svg width={4} height={6} viewBox="0 0 4 6" style={styles.chevronVector}>
