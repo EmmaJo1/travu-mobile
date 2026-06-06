@@ -14,12 +14,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
+import DestinationSearchModal from '@/components/home/DestinationSearchModal';
+import EndTripConfirmModal from '@/components/home/EndTripConfirmModal';
 import TodayTimelineSection from '@/components/home/TodayTimelineSection';
+import TripDatePickerModal from '@/components/home/TripDatePickerModal';
 import TravelStatusButton from '@/components/home/TravelStatusButton';
 import TravelStatusSheet from '@/components/home/TravelStatusSheet';
 import TodaySummary from '@/components/trip/TodaySummary';
 import { HOME_MOCK_DATA } from '@/constants/mockHome';
 import { HOME_TIMELINE_ITEMS } from '@/constants/mockHomeTimeline';
+import type { DestinationOption } from '@/constants/mockTripDestinations';
 import { Colors, Typography } from '@/constants/theme';
 
 const HERO_HEIGHT = 336;
@@ -54,9 +58,93 @@ const HERO_MASK_COLORS = [
 
 const HERO_MASK_LOCATIONS = [0, 0.34, 0.58, 0.82, 1] as const;
 
+type PendingTravelStatusAction = 'date' | 'destination' | 'endTrip' | null;
+
+interface ActiveTripState {
+  destination: DestinationOption;
+  startDate: string;
+  endDate: string;
+  dayNumber: number;
+  isRecording: boolean;
+}
+
+const INITIAL_ACTIVE_TRIP: ActiveTripState = {
+  destination: {
+    id: 'city-paris-fr',
+    displayName: 'Paris',
+    countryName: 'France',
+    type: 'city',
+  },
+  startDate: '2025-11-02',
+  endDate: '2025-11-12',
+  dayNumber: 1,
+  isRecording: true,
+};
+
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+function parseDateKey(dateKey: string): Date {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(year, (month ?? 1) - 1, day ?? 1);
+}
+
+function formatHeroDateLabel(dateKey: string): string {
+  const date = parseDateKey(dateKey);
+  return `${date.getMonth() + 1}.${date.getDate()} ${WEEKDAY_LABELS[date.getDay()]}`;
+}
+
+function formatSheetDateLabel(dateKey: string): string {
+  const date = parseDateKey(dateKey);
+  return `${date.getMonth() + 1}월 ${date.getDate()}일`;
+}
+
+function getInclusiveDayCount(startDate: string, endDate: string): number {
+  const start = parseDateKey(startDate).getTime();
+  const end = parseDateKey(endDate).getTime();
+  const dayMs = 24 * 60 * 60 * 1000;
+  return Math.max(1, Math.round((end - start) / dayMs) + 1);
+}
+
+function formatDateRangeDescription(startDate: string, endDate: string): string {
+  const start = parseDateKey(startDate);
+  const end = parseDateKey(endDate);
+  const days = getInclusiveDayCount(startDate, endDate);
+
+  return `${start.getMonth() + 1}월 ${start.getDate()}일~${end.getMonth() + 1}월 ${end.getDate()}일 (${days}일)`;
+}
+
 export default function HomeScreen() {
   const { currentTrip, todaySummary } = HOME_MOCK_DATA;
+  const [activeTrip, setActiveTrip] = React.useState(INITIAL_ACTIVE_TRIP);
   const [isTravelStatusSheetVisible, setTravelStatusSheetVisible] = React.useState(false);
+  const [isDatePickerVisible, setDatePickerVisible] = React.useState(false);
+  const [isDestinationSearchVisible, setDestinationSearchVisible] = React.useState(false);
+  const [isEndTripConfirmVisible, setEndTripConfirmVisible] = React.useState(false);
+  const [pendingTravelStatusAction, setPendingTravelStatusAction] =
+    React.useState<PendingTravelStatusAction>(null);
+
+  const closeSheetThenOpen = React.useCallback((action: Exclude<PendingTravelStatusAction, null>) => {
+    setPendingTravelStatusAction(action);
+    setTravelStatusSheetVisible(false);
+  }, []);
+
+  const handleTravelStatusSheetDismiss = React.useCallback(() => {
+    if (!pendingTravelStatusAction) return;
+
+    if (pendingTravelStatusAction === 'date') {
+      setDatePickerVisible(true);
+    }
+
+    if (pendingTravelStatusAction === 'destination') {
+      setDestinationSearchVisible(true);
+    }
+
+    if (pendingTravelStatusAction === 'endTrip') {
+      setEndTripConfirmVisible(true);
+    }
+
+    setPendingTravelStatusAction(null);
+  }, [pendingTravelStatusAction]);
 
   const handlePressTravelStatus = React.useCallback(() => {
     setTravelStatusSheetVisible(true);
@@ -69,6 +157,53 @@ export default function HomeScreen() {
   const handlePressTimelineMore = React.useCallback(() => {
     // TODO: Connect timeline item action bottom sheet.
   }, []);
+
+  const handlePressEditPeriod = React.useCallback(() => {
+    closeSheetThenOpen('date');
+  }, [closeSheetThenOpen]);
+
+  const handlePressChangeDestination = React.useCallback(() => {
+    closeSheetThenOpen('destination');
+  }, [closeSheetThenOpen]);
+
+  const handlePressEndTrip = React.useCallback(() => {
+    closeSheetThenOpen('endTrip');
+  }, [closeSheetThenOpen]);
+
+  const handleSaveDateRange = React.useCallback((range: {
+    startDate: string;
+    endDate: string;
+  }) => {
+    setActiveTrip((prev) => ({
+      ...prev,
+      startDate: range.startDate,
+      endDate: range.endDate,
+    }));
+    setDatePickerVisible(false);
+  }, []);
+
+  const handleSaveDestination = React.useCallback((destination: DestinationOption) => {
+    setActiveTrip((prev) => ({
+      ...prev,
+      destination,
+    }));
+    setDestinationSearchVisible(false);
+  }, []);
+
+  const handleConfirmEndTrip = React.useCallback(() => {
+    setActiveTrip((prev) => ({
+      ...prev,
+      isRecording: false,
+    }));
+    setEndTripConfirmVisible(false);
+  }, []);
+
+  const statusButtonLabel = activeTrip.isRecording ? '여행 중' : '종료됨';
+  const statusBadgeLabel = activeTrip.isRecording ? '여행 기록 중' : '여행 종료됨';
+  const statusDotColor = activeTrip.isRecording ? '#D13434' : Colors.foundation.grey500;
+  const heroDateLabel = formatHeroDateLabel(activeTrip.startDate);
+  const sheetDateLabel = formatSheetDateLabel(activeTrip.startDate);
+  const dateRangeDescription = formatDateRangeDescription(activeTrip.startDate, activeTrip.endDate);
 
   return (
     <View style={styles.root}>
@@ -110,16 +245,18 @@ export default function HomeScreen() {
               <View style={styles.heroHeader}>
                 <View style={styles.locationRow}>
                   <Ionicons name="location-outline" size={16} color={Colors.foundation.white} />
-                  <Text style={styles.locationLabel}>{currentTrip.destination}</Text>
+                  <Text style={styles.locationLabel}>{activeTrip.destination.displayName}</Text>
                 </View>
 
                 <View style={styles.headerCenter}>
-                  <Text style={styles.dayLabel}>{currentTrip.dayLabel}</Text>
-                  <Text style={styles.dateLabel}>{currentTrip.dateLabel}</Text>
+                  <Text style={styles.dayLabel}>Day {activeTrip.dayNumber}</Text>
+                  <Text style={styles.dateLabel}>{heroDateLabel}</Text>
                 </View>
 
                 <TravelStatusButton
                   backdropImage={currentTrip.heroImage}
+                  label={statusButtonLabel}
+                  dotColor={statusDotColor}
                   onPress={handlePressTravelStatus}
                 />
               </View>
@@ -144,6 +281,38 @@ export default function HomeScreen() {
       <TravelStatusSheet
         visible={isTravelStatusSheetVisible}
         onClose={handleCloseTravelStatusSheet}
+        onDismiss={handleTravelStatusSheetDismiss}
+        title={`${activeTrip.destination.displayName} 여행`}
+        dateLabel={sheetDateLabel}
+        weekdayLabel={WEEKDAY_LABELS[parseDateKey(activeTrip.startDate).getDay()]}
+        dayLabel={`Day ${activeTrip.dayNumber}`}
+        statusLabel={statusBadgeLabel}
+        statusDotColor={statusDotColor}
+        dateRangeDescription={dateRangeDescription}
+        onPressEditPeriod={handlePressEditPeriod}
+        onPressChangeDestination={handlePressChangeDestination}
+        onPressEndTrip={handlePressEndTrip}
+      />
+
+      <TripDatePickerModal
+        visible={isDatePickerVisible}
+        startDate={activeTrip.startDate}
+        endDate={activeTrip.endDate}
+        onCancel={() => setDatePickerVisible(false)}
+        onSave={handleSaveDateRange}
+      />
+
+      <DestinationSearchModal
+        visible={isDestinationSearchVisible}
+        currentDestination={activeTrip.destination}
+        onCancel={() => setDestinationSearchVisible(false)}
+        onSave={handleSaveDestination}
+      />
+
+      <EndTripConfirmModal
+        visible={isEndTripConfirmVisible}
+        onCancel={() => setEndTripConfirmVisible(false)}
+        onConfirm={handleConfirmEndTrip}
       />
     </View>
   );
@@ -214,7 +383,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   locationRow: {
-    width: 67,
+    width: 90,
     height: 28,
     flexDirection: 'row',
     alignItems: 'center',
@@ -222,7 +391,7 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   locationLabel: {
-    width: 47,
+    maxWidth: 70,
     height: 24,
     fontFamily: FIGMA_POINT_EN,
     fontSize: 18,

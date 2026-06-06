@@ -54,6 +54,7 @@ export default function RootLayout() {
             <Stack.Screen name="components-showcase" options={{ headerShown: false }} />
             <Stack.Screen name="component-test" options={{ title: 'Component Test', headerShown: false }} />
             <Stack.Screen name="auth-start" options={{ headerShown: false }} />
+            <Stack.Screen name="settings" options={{ headerShown: false }} />
             <Stack.Screen name="day-record-1207-2245" options={{ headerShown: false }} />
             <Stack.Screen name="figma-node-1207-2245" options={{ headerShown: false }} />
             <Stack.Screen name="record-day-detail" options={{ headerShown: false }} />
