@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Text from '@/components/common/AppText';
 import DestinationSearchModal from '@/components/home/DestinationSearchModal';
 import EndTripConfirmModal from '@/components/home/EndTripConfirmModal';
+import HomeIdleState from '@/components/home/HomeIdleState';
 import TodayTimelineSection from '@/components/home/TodayTimelineSection';
 import TripDatePickerModal from '@/components/home/TripDatePickerModal';
 import TravelStatusButton from '@/components/home/TravelStatusButton';
@@ -115,6 +116,7 @@ function formatDateRangeDescription(startDate: string, endDate: string): string 
 
 export default function HomeScreen() {
   const { currentTrip, todaySummary } = HOME_MOCK_DATA;
+  const [isTraveling, setIsTraveling] = React.useState(true);
   const [activeTrip, setActiveTrip] = React.useState(INITIAL_ACTIVE_TRIP);
   const [isTravelStatusSheetVisible, setTravelStatusSheetVisible] = React.useState(false);
   const [isDatePickerVisible, setDatePickerVisible] = React.useState(false);
@@ -154,6 +156,12 @@ export default function HomeScreen() {
     setTravelStatusSheetVisible(false);
   }, []);
 
+  const reopenTravelStatusSheet = React.useCallback(() => {
+    requestAnimationFrame(() => {
+      setTravelStatusSheetVisible(true);
+    });
+  }, []);
+
   const handlePressTimelineMore = React.useCallback(() => {
     // TODO: Connect timeline item action bottom sheet.
   }, []);
@@ -180,7 +188,8 @@ export default function HomeScreen() {
       endDate: range.endDate,
     }));
     setDatePickerVisible(false);
-  }, []);
+    reopenTravelStatusSheet();
+  }, [reopenTravelStatusSheet]);
 
   const handleSaveDestination = React.useCallback((destination: DestinationOption) => {
     setActiveTrip((prev) => ({
@@ -188,7 +197,8 @@ export default function HomeScreen() {
       destination,
     }));
     setDestinationSearchVisible(false);
-  }, []);
+    reopenTravelStatusSheet();
+  }, [reopenTravelStatusSheet]);
 
   const handleConfirmEndTrip = React.useCallback(() => {
     setActiveTrip((prev) => ({
@@ -196,6 +206,31 @@ export default function HomeScreen() {
       isRecording: false,
     }));
     setEndTripConfirmVisible(false);
+    setTravelStatusSheetVisible(false);
+    setIsTraveling(false);
+  }, []);
+
+  const handleCancelDatePicker = React.useCallback(() => {
+    setDatePickerVisible(false);
+    reopenTravelStatusSheet();
+  }, [reopenTravelStatusSheet]);
+
+  const handleCancelDestinationSearch = React.useCallback(() => {
+    setDestinationSearchVisible(false);
+    reopenTravelStatusSheet();
+  }, [reopenTravelStatusSheet]);
+
+  const handleCancelEndTripConfirm = React.useCallback(() => {
+    setEndTripConfirmVisible(false);
+    reopenTravelStatusSheet();
+  }, [reopenTravelStatusSheet]);
+
+  const handlePressStartTripFromIdle = React.useCallback(() => {
+    setActiveTrip((prev) => ({
+      ...prev,
+      isRecording: true,
+    }));
+    setIsTraveling(true);
   }, []);
 
   const statusButtonLabel = activeTrip.isRecording ? '여행 중' : '종료됨';
@@ -204,6 +239,12 @@ export default function HomeScreen() {
   const heroDateLabel = formatHeroDateLabel(activeTrip.startDate);
   const sheetDateLabel = formatSheetDateLabel(activeTrip.startDate);
   const dateRangeDescription = formatDateRangeDescription(activeTrip.startDate, activeTrip.endDate);
+
+  if (!isTraveling) {
+    return (
+      <HomeIdleState onPressStartTrip={handlePressStartTripFromIdle} />
+    );
+  }
 
   return (
     <View style={styles.root}>
@@ -298,20 +339,20 @@ export default function HomeScreen() {
         visible={isDatePickerVisible}
         startDate={activeTrip.startDate}
         endDate={activeTrip.endDate}
-        onCancel={() => setDatePickerVisible(false)}
+        onCancel={handleCancelDatePicker}
         onSave={handleSaveDateRange}
       />
 
       <DestinationSearchModal
         visible={isDestinationSearchVisible}
         currentDestination={activeTrip.destination}
-        onCancel={() => setDestinationSearchVisible(false)}
+        onCancel={handleCancelDestinationSearch}
         onSave={handleSaveDestination}
       />
 
       <EndTripConfirmModal
         visible={isEndTripConfirmVisible}
-        onCancel={() => setEndTripConfirmVisible(false)}
+        onCancel={handleCancelEndTripConfirm}
         onConfirm={handleConfirmEndTrip}
       />
     </View>

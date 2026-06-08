@@ -17,7 +17,7 @@ import Text from '@/components/common/AppText';
 import { Colors, FontFamily, Radius } from '@/constants/theme';
 
 const AVATAR_IMAGE = require('../../assets/images/archive-frame-paris.jpg') as ImageSourcePropType;
-const SHEET_HEIGHT = 388;
+const SHEET_HEIGHT = 396;
 const ANIMATION_DURATION = 400;
 
 interface TravelStatusSheetProps {
@@ -68,10 +68,17 @@ function SheetMenuItem({
           <Text style={[styles.menuTitle, isDestructive && styles.destructiveTitle]}>
             {title}
           </Text>
-          <Text style={styles.menuDescription}>{description}</Text>
+          <Text style={styles.menuDescription} numberOfLines={1}>
+            {description}
+          </Text>
         </View>
       </View>
-      <Feather name="chevron-right" size={24} color={Colors.foundation.black} />
+      <Feather
+        name="chevron-right"
+        size={24}
+        color={Colors.foundation.black}
+        style={styles.chevron}
+      />
     </Pressable>
   );
 }
@@ -165,7 +172,7 @@ export default function TravelStatusSheet({
         <Animated.View style={[StyleSheet.absoluteFill, { opacity: backdropOpacity }]}>
           <BlurView
             tint="default"
-            intensity={18}
+            intensity={2}
             experimentalBlurMethod="dimezisBlurView"
             style={StyleSheet.absoluteFill}
           />
@@ -193,10 +200,14 @@ export default function TravelStatusSheet({
 
             <View style={styles.tripTextBlock}>
               <View style={styles.titleRow}>
-                <Text style={styles.tripTitle}>{title}</Text>
+                <Text style={styles.tripTitle} numberOfLines={1}>
+                  {title}
+                </Text>
                 <View style={styles.recordingBadge}>
-                  <View style={[styles.statusDot, { backgroundColor: statusDotColor }]} />
-                  <Text style={styles.recordingText}>{statusLabel}</Text>
+                  <View style={styles.recordingBadgeContent}>
+                    <View style={[styles.statusDot, { backgroundColor: statusDotColor }]} />
+                    <Text style={styles.recordingText}>{statusLabel}</Text>
+                  </View>
                 </View>
               </View>
 
@@ -206,7 +217,9 @@ export default function TravelStatusSheet({
                   <Text style={styles.metaText}>{weekdayLabel}</Text>
                 </View>
                 <View style={styles.metaDot} />
-                <Text style={styles.metaText}>{dayLabel}</Text>
+                <Text style={styles.metaText} numberOfLines={1}>
+                  {dayLabel}
+                </Text>
               </View>
             </View>
           </View>
@@ -219,44 +232,20 @@ export default function TravelStatusSheet({
               style={StyleSheet.absoluteFill}
               pointerEvents="none"
             />
-            <View style={styles.menuCardFill} pointerEvents="none" />
+            <View style={styles.menuFillLayer} pointerEvents="none" />
             <LinearGradient
               colors={[
-                'rgba(255, 255, 255, 0.34)',
-                'rgba(255, 255, 255, 0.06)',
-                'rgba(255, 255, 255, 0.00)',
+                'rgba(255, 255, 255, 0.38)',
+                'rgba(255, 255, 255, 0.08)',
+                'rgba(255, 255, 255, 0.16)',
               ]}
-              locations={[0, 0.52, 1]}
-              start={{ x: 1, y: 0 }}
-              end={{ x: 0, y: 1 }}
-              style={styles.menuGlassLight}
-              pointerEvents="none"
-            />
-            <LinearGradient
-              colors={[
-                'rgba(255, 255, 255, 0.24)',
-                'rgba(255, 255, 255, 0.00)',
-                'rgba(255, 255, 255, 0.18)',
-              ]}
-              locations={[0, 0.5, 1]}
-              start={{ x: 0.12, y: 0 }}
-              end={{ x: 0.88, y: 1 }}
-              style={styles.menuRefractionLayer}
-              pointerEvents="none"
-            />
-            <LinearGradient
-              colors={[
-                'rgba(52, 145, 255, 0.08)',
-                'rgba(255, 255, 255, 0.00)',
-                'rgba(255, 112, 145, 0.08)',
-              ]}
-              locations={[0, 0.5, 1]}
+              locations={[0, 0.48, 1]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
-              style={styles.menuDispersionLayer}
+              style={StyleSheet.absoluteFill}
               pointerEvents="none"
             />
-            <View style={styles.menuFrostLayer} pointerEvents="none" />
+            <View style={styles.menuInnerHighlight} pointerEvents="none" />
             <View style={styles.menuContent}>
               <SheetMenuItem
                 iconName="calendar"
@@ -317,7 +306,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 38,
     left: 21,
-    right: 99,
+    right: 21,
     height: 64,
     flexDirection: 'row',
     alignItems: 'center',
@@ -330,19 +319,19 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.foundation.grey100,
   },
   tripTextBlock: {
-    width: 174,
+    flex: 1,
     height: 48,
     gap: 4,
   },
   titleRow: {
-    width: 174,
     height: 24,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
   tripTitle: {
-    width: 78,
+    flexShrink: 1,
+    minWidth: 0,
     height: 24,
     fontFamily: FontFamily.pretendardSemiBold,
     fontSize: 18,
@@ -351,20 +340,24 @@ const styles = StyleSheet.create({
   },
   recordingBadge: {
     width: 88,
-    height: 24,
+    height: 28,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
+    gap: 2,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 16,
     backgroundColor: 'rgba(255, 255, 255, 0.10)',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.25,
-    shadowRadius: 2,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(193, 193, 193, 0.30)',
+  },
+  recordingBadgeContent: {
+    width: 68,
+    height: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   statusDot: {
     width: 6,
@@ -382,28 +375,29 @@ const styles = StyleSheet.create({
     color: Colors.foundation.black,
   },
   metaRow: {
-    width: 128,
-    height: 20,
+    minHeight: 20,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    alignSelf: 'flex-start',
   },
   dateRow: {
-    width: 82,
-    height: 20,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    flexShrink: 0,
   },
   metaText: {
     fontFamily: FontFamily.pretendardMedium,
     fontSize: 14,
     lineHeight: 20,
     color: Colors.foundation.grey400,
+    flexShrink: 0,
   },
   metaDot: {
     width: 4,
     height: 4,
+    flexShrink: 0,
     borderRadius: Radius.full,
     backgroundColor: Colors.foundation.grey400,
   },
@@ -411,32 +405,32 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 20,
     right: 20,
-    bottom: 28,
+    bottom: 32,
     height: 236,
     paddingTop: 24,
     paddingHorizontal: 28,
     borderRadius: 16,
     overflow: 'hidden',
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: 'rgba(193, 193, 193, 0.20)',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
   },
-  menuCardFill: {
+  menuFillLayer: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.10)',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
   },
-  menuGlassLight: {
+  menuInnerHighlight: {
     ...StyleSheet.absoluteFillObject,
-    opacity: 0.8,
-  },
-  menuRefractionLayer: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.8,
-  },
-  menuDispersionLayer: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.5,
-  },
-  menuFrostLayer: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: 16,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.4)',
+    borderLeftColor: 'rgba(255, 255, 255, 0.2)',
   },
   menuContent: {
     position: 'relative',
@@ -449,12 +443,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   menuLeft: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 24,
   },
   menuTextBlock: {
-    width: 132,
+    flex: 1,
+    minWidth: 0,
     height: 40,
     gap: 2,
   },
@@ -475,11 +472,13 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     color: Colors.foundation.grey400,
   },
+  chevron: {
+    flexShrink: 0,
+    marginLeft: 12,
+  },
   divider: {
-    height: 2,
+    height: 1,
     marginVertical: 16,
-    marginLeft: 40,
-    marginRight: 2,
     backgroundColor: 'rgba(217, 217, 217, 0.20)',
   },
 });

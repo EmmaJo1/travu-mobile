@@ -289,6 +289,42 @@
 | **주요 Props** | `items`, `onPressMore` |
 | **재사용성** | Home 전용 섹션 컴포넌트 |
 
+#### HomeIdleState
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/HomeIdleState.tsx` |
+| **사용 화면** | Home 일상 모드 |
+| **역할** | 여행 종료 후 표시되는 일상 모드 홈. Idle hero, 자동 감지 여행, 최근 여행, 지난 여행의 순간 섹션을 렌더링 |
+| **주요 Props** | `onPressStartTrip` |
+| **재사용성** | Home 전용 상태 화면. 기존 여행 중 홈 UI를 대체하지 않고 상태 분기로만 사용 |
+
+#### DetectedTripSection
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/DetectedTripSection.tsx` |
+| **사용 화면** | Home 일상 모드 |
+| **역할** | 자동 감지된 여행 카드 섹션. 감지 데이터가 없으면 섹션 전체를 렌더링하지 않음 |
+| **주요 Props** | `trip`, `onSave` |
+| **재사용성** | Home 일상 모드 전용 |
+
+#### RecentTripsSection
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/RecentTripsSection.tsx` |
+| **사용 화면** | Home 일상 모드 |
+| **역할** | 최근 여행 가로 스크롤 카드 목록 |
+| **주요 Props** | `trips` |
+| **재사용성** | Home 일상 모드 전용 |
+
+#### PastMomentsSection
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/PastMomentsSection.tsx` |
+| **사용 화면** | Home 일상 모드 |
+| **역할** | 지난 여행의 순간 가로 스크롤 카드 목록 |
+| **주요 Props** | `moments` |
+| **재사용성** | Home 일상 모드 전용 |
+
 ---
 
 ### record
