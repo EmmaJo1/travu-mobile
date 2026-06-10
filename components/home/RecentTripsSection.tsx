@@ -24,7 +24,15 @@ export default function RecentTripsSection({ trips }: RecentTripsSectionProps) {
           <View key={trip.id} style={styles.card}>
             <Image source={trip.image} style={styles.image} resizeMode="cover" />
             <LinearGradient
-              colors={['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0.62)']}
+              colors={[
+                'rgba(206, 206, 206, 0)',
+                'rgba(153, 153, 153, 0.07)',
+                'rgba(91, 91, 91, 0.15)',
+                'rgba(85, 85, 85, 0.25)',
+                'rgba(72, 72, 72, 0.35)',
+                'rgba(51, 51, 51, 0.40)',
+              ]}
+              locations={[0, 0.08, 0.19, 0.31, 0.42, 1]}
               start={{ x: 0.5, y: 0 }}
               end={{ x: 0.5, y: 1 }}
               style={styles.dim}
@@ -65,7 +73,11 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   dim: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: '36%',
   },
   city: {
     position: 'absolute',
