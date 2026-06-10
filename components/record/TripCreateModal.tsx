@@ -17,6 +17,12 @@ import AuthActionButton from '@/components/common/AuthActionButton';
 import DestinationSelectField from '@/components/record/DestinationSelectField';
 import DestinationSelectView from '@/components/record/DestinationSelectView';
 import TripDateRangeField from '@/components/record/TripDateRangeField';
+import TripDateRangePickerModal, {
+  dateKeyToDate,
+  dateToDateKey,
+  formatTripDateRangeLabel,
+  type TripDateRangePickerValue,
+} from '@/components/record/TripDateRangePickerModal';
 import {
   formatDestinationLabel,
   type DestinationContinent,
@@ -28,7 +34,8 @@ export type TripCreateStep = 'create' | 'destination' | 'date';
 
 export interface SelectedDateRange {
   start: string;
-  end: string;
+  end: string | null;
+  isEndDateUndecided: boolean;
   label: string;
 }
 
@@ -104,6 +111,7 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
   const [step, setStep] = useState<TripCreateStep>('create');
   const [selectedDestination, setSelectedDestination] = useState<MockDestination | null>(null);
   const [selectedDateRange, setSelectedDateRange] = useState<SelectedDateRange | null>(null);
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedContinent, setSelectedContinent] = useState<'all' | DestinationContinent>('all');
   const [calendarMonth, setCalendarMonth] = useState(createCurrentCalendarMonth);
@@ -220,6 +228,7 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
     setStep('create');
     setSelectedDestination(null);
     setSelectedDateRange(null);
+    setDatePickerVisible(false);
     setSearchQuery('');
     setSelectedContinent('all');
     setCalendarMonth(createCurrentCalendarMonth());
@@ -264,19 +273,29 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
     setSelectedDateRange({
       start: draftDateRange.start,
       end: draftDateRange.end,
+      isEndDateUndecided: false,
       label: formatDateRangeLabel(draftDateRange),
     });
     setStep('create');
   };
 
   const handleOpenDateSelect = () => {
-    if (!selectedDateRange) {
-      setCalendarMonth(createCurrentCalendarMonth());
-      setDraftDateRange({ start: null, end: null });
-    }
+    setDatePickerVisible(true);
+  };
 
-    setCalendarView('days');
-    setStep('date');
+  const handleConfirmDateRange = (value: TripDateRangePickerValue) => {
+    if (!value.startDate) return;
+
+    const start = dateToDateKey(value.startDate);
+    const end = value.endDate ? dateToDateKey(value.endDate) : null;
+
+    setSelectedDateRange({
+      start,
+      end,
+      isEndDateUndecided: value.isEndDateUndecided,
+      label: formatTripDateRangeLabel(value),
+    });
+    setDatePickerVisible(false);
   };
 
   const handleSelectDate = (dateKey: string) => {
@@ -554,19 +573,37 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
   );
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
-      <Pressable style={styles.overlay} onPress={handleClose}>
-        <Pressable
-          style={[styles.modal, step === 'create' && styles.createModal]}
-          onPress={(e) => e.stopPropagation()}
-        >
-          {renderHeader()}
-          {step === 'create' && renderCreateStep()}
-          {step === 'destination' && renderDestinationStep()}
-          {step === 'date' && renderDateStep()}
+    <>
+      <Modal
+        visible={visible && !datePickerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={handleClose}
+      >
+        <Pressable style={styles.overlay} onPress={handleClose}>
+          <Pressable
+            style={[styles.modal, step === 'create' && styles.createModal]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            {renderHeader()}
+            {step === 'create' && renderCreateStep()}
+            {step === 'destination' && renderDestinationStep()}
+            {step === 'date' && renderDateStep()}
+          </Pressable>
         </Pressable>
-      </Pressable>
-    </Modal>
+      </Modal>
+
+      <TripDateRangePickerModal
+        visible={visible && datePickerVisible}
+        title="여행 기간 선택"
+        initialStartDate={dateKeyToDate(selectedDateRange?.start)}
+        initialEndDate={dateKeyToDate(selectedDateRange?.end)}
+        initialIsEndDateUndecided={selectedDateRange?.isEndDateUndecided ?? false}
+        showEndDateUndecided={false}
+        onCancel={() => setDatePickerVisible(false)}
+        onConfirm={handleConfirmDateRange}
+      />
+    </>
   );
 }
 
@@ -712,10 +749,11 @@ const styles = StyleSheet.create({
   monthNav: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+    gap: Spacing.sm,
   },
   monthArrow: {
-    width: 32,
+    width: 24,
     height: 32,
     alignItems: 'center',
     justifyContent: 'center',
@@ -727,7 +765,6 @@ const styles = StyleSheet.create({
   monthLabelButton: {
     minHeight: 32,
     justifyContent: 'center',
-    paddingHorizontal: Spacing.sm,
   },
   selectorTitleButton: {
     minHeight: 32,

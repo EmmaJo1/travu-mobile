@@ -71,6 +71,7 @@ interface ActiveTripState {
   destination: DestinationOption;
   startDate: string;
   endDate: string;
+  isEndDateUndecided: boolean;
   dayNumber: number;
   isRecording: boolean;
 }
@@ -84,6 +85,7 @@ const INITIAL_ACTIVE_TRIP: ActiveTripState = {
   },
   startDate: '2025-11-02',
   endDate: '2025-11-12',
+  isEndDateUndecided: false,
   dayNumber: 1,
   isRecording: true,
 };
@@ -119,8 +121,16 @@ function getInclusiveDayCount(startDate: string, endDate: string): number {
   return Math.max(1, Math.round((end - start) / dayMs) + 1);
 }
 
-function formatDateRangeDescription(startDate: string, endDate: string): string {
+function formatDateRangeDescription(
+  startDate: string,
+  endDate: string,
+  isEndDateUndecided = false,
+): string {
   const start = parseDateKey(startDate);
+  if (isEndDateUndecided) {
+    return `${start.getMonth() + 1}월 ${start.getDate()}일 시작 · 종료일 미정`;
+  }
+
   const end = parseDateKey(endDate);
   const days = getInclusiveDayCount(startDate, endDate);
 
@@ -204,11 +214,13 @@ export default function HomeScreen() {
   const handleSaveDateRange = React.useCallback((range: {
     startDate: string;
     endDate: string;
+    isEndDateUndecided?: boolean;
   }) => {
     setActiveTrip((prev) => ({
       ...prev,
       startDate: range.startDate,
       endDate: range.endDate,
+      isEndDateUndecided: range.isEndDateUndecided ?? false,
     }));
     setDatePickerVisible(false);
     reopenTravelStatusSheet();
@@ -280,6 +292,7 @@ export default function HomeScreen() {
       },
       startDate: setup.startDate,
       endDate: setup.endDate,
+      isEndDateUndecided: setup.isEndDateUndecided ?? false,
       dayNumber: 1,
       isRecording: true,
     }));
@@ -299,7 +312,11 @@ export default function HomeScreen() {
   const statusDotColor = activeTrip.isRecording ? '#D13434' : Colors.foundation.grey500;
   const heroDateLabel = formatHeroDateLabel(activeTrip.startDate);
   const sheetDateLabel = formatSheetDateLabel(activeTrip.startDate);
-  const dateRangeDescription = formatDateRangeDescription(activeTrip.startDate, activeTrip.endDate);
+  const dateRangeDescription = formatDateRangeDescription(
+    activeTrip.startDate,
+    activeTrip.endDate,
+    activeTrip.isEndDateUndecided,
+  );
   const recordedPhotoCount = HOME_TIMELINE_ITEMS.reduce(
     (sum, item) => sum + item.photoCount,
     0,
@@ -418,6 +435,7 @@ export default function HomeScreen() {
         visible={isDatePickerVisible}
         startDate={activeTrip.startDate}
         endDate={activeTrip.endDate}
+        isEndDateUndecided={activeTrip.isEndDateUndecided}
         onCancel={handleCancelDatePicker}
         onSave={handleSaveDateRange}
       />

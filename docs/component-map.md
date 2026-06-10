@@ -250,8 +250,8 @@
 | **파일** | `components/home/TripDatePickerModal.tsx` |
 | **사용 화면** | Home |
 | **역할** | 여행 상태 바텀시트의 `여행 기간 수정`에서 열리는 날짜 범위 편집 모달. draft start/end date, range highlight, 취소/저장 처리 |
-| **주요 Props** | `visible`, `startDate`, `endDate`, `onCancel`, `onSave` |
-| **재사용성** | Home 여행 상태 편집 전용. record의 `TripCreateModal` 날짜 step은 아직 내부 구현이라 직접 재사용 불가 |
+| **주요 Props** | `visible`, `startDate`, `endDate`, `isEndDateUndecided`, `onCancel`, `onSave` |
+| **재사용성** | Home 여행 상태 편집 전용. Record 직접 추가/홈 여행 시작의 기간 선택은 `components/record/TripDateRangePickerModal.tsx` 사용 |
 
 #### DestinationSearchModal
 | 항목 | 내용 |
@@ -332,7 +332,7 @@
 | **사용 화면** | Home 일상 모드 |
 | **역할** | `여행을 시작할까요?` 확인 이후 여행지와 여행 기간을 간단히 설정하고 여행 시작을 확정하는 중앙 모달 |
 | **주요 Props** | `visible`, `initialValue`, `onCancel`, `onSkip`, `onStart` |
-| **재사용성** | Home 시작 플로우 전용. 여행지/기간 draft 값을 상위 Home 상태에 저장 |
+| **재사용성** | Home 시작 플로우 전용. 여행 기간 선택은 Record 직접 추가와 같은 `TripDateRangePickerModal`을 재사용 |
 
 #### DetectedTripSection
 | 항목 | 내용 |
@@ -398,7 +398,16 @@
 | **파일** | `components/record/TripCreateModal.tsx` |
 | **사용 화면** | Record |
 | **역할** | 여행 직접 추가 multi-step modal |
-| **확장 방식** | `visible`, `onClose`, `onCreate` |
+| **확장 방식** | `visible`, `onClose`, `onCreate`; 여행 기간은 `TripDateRangePickerModal`로 분리해 재사용 |
+
+#### TripDateRangePickerModal
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/record/TripDateRangePickerModal.tsx` |
+| **사용 화면** | Record 직접 추가, Home 여행 시작 설정 |
+| **역할** | Record 직접 추가 플로우의 여행 기간 달력 UI/로직을 공용화한 날짜 범위 선택 모달. 월 이동, 연도/월 선택, 범위 선택, `종료일 미정` toggle 처리 |
+| **주요 Props** | `visible`, `title`, `initialStartDate`, `initialEndDate`, `initialIsEndDateUndecided`, `onCancel`, `onConfirm` |
+| **재사용성** | Record와 Home 시작 플로우에서 공유. 새 홈 전용 달력 컴포넌트를 만들지 말고 이 컴포넌트를 재사용 |
 
 #### PlaceCreateModal
 | Item | Detail |
