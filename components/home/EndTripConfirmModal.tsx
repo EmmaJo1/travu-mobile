@@ -7,18 +7,25 @@ import {
   View,
 } from 'react-native';
 
-import AuthActionButton from '@/components/common/AuthActionButton';
 import Text from '@/components/common/AppText';
+import AuthActionButton from '@/components/common/AuthActionButton';
+import TripEndStatsPanel from '@/components/home/TripEndStatsPanel';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 
 interface EndTripConfirmModalProps {
   visible: boolean;
+  photoCount: number;
+  placeCount: number;
+  momentCount: number;
   onCancel: () => void;
   onConfirm: () => void;
 }
 
 export default function EndTripConfirmModal({
   visible,
+  photoCount,
+  placeCount,
+  momentCount,
   onCancel,
   onConfirm,
 }: EndTripConfirmModalProps) {
@@ -30,20 +37,31 @@ export default function EndTripConfirmModal({
             <Feather name="power" size={28} color="#DB2222" />
           </View>
 
-          <Text style={styles.title}>여행을 종료할까요?</Text>
+          <Text style={styles.title}>자동 기록을 종료할까요?</Text>
           <Text style={styles.description}>
-            자동 기록을 종료합니다. 기존 기록은 삭제되지 않습니다.
+            이후에는 사진 자동 정리가 중단되며,{'\n'}
+            현재까지의 기록은 '내 여행'에 안전하게 저장됩니다.
           </Text>
 
+          <TripEndStatsPanel
+            photoCount={photoCount}
+            placeCount={placeCount}
+            recordCount={momentCount}
+            style={styles.statsPanel}
+          />
+
           <View style={styles.actionRow}>
-            <Pressable style={styles.cancelButton} onPress={onCancel}>
-              <Text style={styles.cancelLabel}>취소</Text>
-            </Pressable>
+            <AuthActionButton
+              label="계속 기록하기"
+              state="off"
+              onPress={onCancel}
+              style={styles.actionButton}
+            />
             <AuthActionButton
               label="여행 종료"
               state="on"
               onPress={onConfirm}
-              style={styles.confirmButton}
+              style={[styles.actionButton, styles.confirmButton]}
             />
           </View>
         </Pressable>
@@ -63,10 +81,11 @@ const styles = StyleSheet.create({
   modal: {
     width: '100%',
     maxWidth: 329,
-    borderRadius: Radius.lg,
+    borderRadius: 24,
     backgroundColor: Colors.foundation.white,
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.xl,
+    paddingHorizontal: 24,
+    paddingTop: 32,
+    paddingBottom: 24,
     alignItems: 'center',
     ...Shadows.modal,
   },
@@ -77,10 +96,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(219, 34, 34, 0.08)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: Spacing.lg,
+    marginBottom: 22,
   },
   title: {
-    ...Typography.body1Emphasized,
+    fontFamily: Typography.title2.fontFamily,
+    fontSize: 20,
+    lineHeight: 28,
     color: Colors.foundation.black,
     textAlign: 'center',
     marginBottom: Spacing.sm,
@@ -89,29 +110,21 @@ const styles = StyleSheet.create({
     ...Typography.body2Regular,
     color: Colors.foundation.grey600,
     textAlign: 'center',
-    marginBottom: Spacing.xl,
+    marginBottom: 24,
+    lineHeight: 22,
+  },
+  statsPanel: {
+    marginBottom: 24,
   },
   actionRow: {
     alignSelf: 'stretch',
     flexDirection: 'row',
-    gap: Spacing.sm,
+    gap: 12,
   },
-  cancelButton: {
+  actionButton: {
     flex: 1,
-    height: 48,
-    borderWidth: 1,
-    borderColor: Colors.warm.beige,
-    borderRadius: Radius.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.foundation.white,
-  },
-  cancelLabel: {
-    ...Typography.body2Emphasized,
-    color: Colors.foundation.black,
   },
   confirmButton: {
-    flex: 1,
     backgroundColor: '#DB2222',
   },
 });

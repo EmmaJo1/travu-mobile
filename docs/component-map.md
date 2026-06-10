@@ -267,9 +267,27 @@
 |------|------|
 | **파일** | `components/home/EndTripConfirmModal.tsx` |
 | **사용 화면** | Home |
-| **역할** | 여행 상태 바텀시트의 `여행 종료`에서 열리는 확인 모달. 자동 기록 종료 상태만 반영하고 기존 기록은 삭제하지 않음 |
-| **주요 Props** | `visible`, `onCancel`, `onConfirm` |
+| **역할** | 여행 상태 바텀시트의 `여행 종료`에서 열리는 확인 모달. 현재까지의 사진/장소/순간 수를 보여주고 종료 확인을 받음 |
+| **주요 Props** | `visible`, `photoCount`, `placeCount`, `momentCount`, `onCancel`, `onConfirm` |
 | **재사용성** | Home 여행 상태 편집 전용 |
+
+#### EndTripCompleteModal
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/EndTripCompleteModal.tsx` |
+| **사용 화면** | Home |
+| **역할** | 여행 종료 확인 후 표시되는 완료 모달. 여행지, 기록 기간, 사진/장소/순간 요약과 `내 여행에서 보기` 액션을 표시 |
+| **주요 Props** | `visible`, `destinationName`, `dateRangeDescription`, `photoCount`, `placeCount`, `momentCount`, `onViewMyTrips` |
+| **재사용성** | Home 여행 종료 플로우 전용 |
+
+#### TripEndStatsPanel
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/TripEndStatsPanel.tsx` |
+| **사용 화면** | Home |
+| **역할** | 여행 종료 확인/완료 모달에서 공통으로 쓰는 사진·장소·기록 통계 패널 |
+| **주요 Props** | `photoCount`, `placeCount`, `recordCount`, `style` |
+| **재사용성** | Home 여행 종료 플로우 전용 공통 조각 |
 
 #### TimeLineCard
 | 항목 | 내용 |
@@ -297,6 +315,24 @@
 | **역할** | 여행 종료 후 표시되는 일상 모드 홈. Idle hero, 자동 감지 여행, 최근 여행, 지난 여행의 순간 섹션을 렌더링 |
 | **주요 Props** | `onPressStartTrip` |
 | **재사용성** | Home 전용 상태 화면. 기존 여행 중 홈 UI를 대체하지 않고 상태 분기로만 사용 |
+
+#### StartTripConfirmModal
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/StartTripConfirmModal.tsx` |
+| **사용 화면** | Home 일상 모드 |
+| **역할** | `여행 시작` 버튼을 누른 뒤 여행 중 화면으로 전환하기 전에 표시되는 중앙 확인 모달 |
+| **주요 Props** | `visible`, `onCancel`, `onConfirm` |
+| **재사용성** | Home 시작 플로우 전용. 실제 권한 요청이나 기록 시작 로직은 상위 handler에서 연결 |
+
+#### StartTripSetupModal
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/StartTripSetupModal.tsx` |
+| **사용 화면** | Home 일상 모드 |
+| **역할** | `여행을 시작할까요?` 확인 이후 여행지와 여행 기간을 간단히 설정하고 여행 시작을 확정하는 중앙 모달 |
+| **주요 Props** | `visible`, `initialValue`, `onCancel`, `onSkip`, `onStart` |
+| **재사용성** | Home 시작 플로우 전용. 여행지/기간 draft 값을 상위 Home 상태에 저장 |
 
 #### DetectedTripSection
 | 항목 | 내용 |

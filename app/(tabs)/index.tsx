@@ -7,6 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
   Image,
+  InteractionManager,
   ScrollView,
   StyleSheet,
   View,
@@ -15,8 +16,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
 import DestinationSearchModal from '@/components/home/DestinationSearchModal';
+import EndTripCompleteModal from '@/components/home/EndTripCompleteModal';
 import EndTripConfirmModal from '@/components/home/EndTripConfirmModal';
 import HomeIdleState from '@/components/home/HomeIdleState';
+import StartTripConfirmModal from '@/components/home/StartTripConfirmModal';
+import StartTripSetupModal, {
+  type StartTripSetupValue,
+} from '@/components/home/StartTripSetupModal';
 import TodayTimelineSection from '@/components/home/TodayTimelineSection';
 import TripDatePickerModal from '@/components/home/TripDatePickerModal';
 import TravelStatusButton from '@/components/home/TravelStatusButton';
@@ -82,6 +88,13 @@ const INITIAL_ACTIVE_TRIP: ActiveTripState = {
   isRecording: true,
 };
 
+const DEFAULT_START_TRIP_SETUP: StartTripSetupValue = {
+  destinationName: '시드니',
+  countryName: '호주',
+  startDate: '2020-03-02',
+  endDate: '2020-03-14',
+};
+
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 
 function parseDateKey(dateKey: string): Date {
@@ -122,6 +135,9 @@ export default function HomeScreen() {
   const [isDatePickerVisible, setDatePickerVisible] = React.useState(false);
   const [isDestinationSearchVisible, setDestinationSearchVisible] = React.useState(false);
   const [isEndTripConfirmVisible, setEndTripConfirmVisible] = React.useState(false);
+  const [isEndTripCompleteVisible, setEndTripCompleteVisible] = React.useState(false);
+  const [isStartTripConfirmVisible, setStartTripConfirmVisible] = React.useState(false);
+  const [isStartTripSetupVisible, setStartTripSetupVisible] = React.useState(false);
   const [pendingTravelStatusAction, setPendingTravelStatusAction] =
     React.useState<PendingTravelStatusAction>(null);
 
@@ -131,21 +147,28 @@ export default function HomeScreen() {
   }, []);
 
   const handleTravelStatusSheetDismiss = React.useCallback(() => {
-    if (!pendingTravelStatusAction) return;
-
-    if (pendingTravelStatusAction === 'date') {
-      setDatePickerVisible(true);
+    if (!pendingTravelStatusAction) {
+      return;
     }
 
-    if (pendingTravelStatusAction === 'destination') {
-      setDestinationSearchVisible(true);
-    }
-
-    if (pendingTravelStatusAction === 'endTrip') {
-      setEndTripConfirmVisible(true);
-    }
-
+    const nextAction = pendingTravelStatusAction;
     setPendingTravelStatusAction(null);
+
+    InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() => {
+        if (nextAction === 'date') {
+          setDatePickerVisible(true);
+        }
+
+        if (nextAction === 'destination') {
+          setDestinationSearchVisible(true);
+        }
+
+        if (nextAction === 'endTrip') {
+          setEndTripConfirmVisible(true);
+        }
+      });
+    });
   }, [pendingTravelStatusAction]);
 
   const handlePressTravelStatus = React.useCallback(() => {
@@ -207,6 +230,11 @@ export default function HomeScreen() {
     }));
     setEndTripConfirmVisible(false);
     setTravelStatusSheetVisible(false);
+    setEndTripCompleteVisible(true);
+  }, []);
+
+  const handleViewCompletedTrip = React.useCallback(() => {
+    setEndTripCompleteVisible(false);
     setIsTraveling(false);
   }, []);
 
@@ -226,12 +254,45 @@ export default function HomeScreen() {
   }, [reopenTravelStatusSheet]);
 
   const handlePressStartTripFromIdle = React.useCallback(() => {
+    setStartTripConfirmVisible(true);
+  }, []);
+
+  const handleCancelStartTripConfirm = React.useCallback(() => {
+    setStartTripConfirmVisible(false);
+  }, []);
+
+  const handleConfirmStartTrip = React.useCallback(() => {
+    setStartTripConfirmVisible(false);
+    requestAnimationFrame(() => {
+      setStartTripSetupVisible(true);
+    });
+  }, []);
+
+  const startTripWithSetup = React.useCallback((setup: StartTripSetupValue) => {
+    setStartTripSetupVisible(false);
     setActiveTrip((prev) => ({
       ...prev,
+      destination: {
+        id: `manual-${setup.destinationName.toLowerCase().replaceAll(' ', '-')}`,
+        displayName: setup.destinationName,
+        countryName: setup.countryName,
+        type: 'city',
+      },
+      startDate: setup.startDate,
+      endDate: setup.endDate,
+      dayNumber: 1,
       isRecording: true,
     }));
     setIsTraveling(true);
   }, []);
+
+  const handleCancelStartTripSetup = React.useCallback(() => {
+    setStartTripSetupVisible(false);
+  }, []);
+
+  const handleSkipStartTripSetup = React.useCallback(() => {
+    startTripWithSetup(DEFAULT_START_TRIP_SETUP);
+  }, [startTripWithSetup]);
 
   const statusButtonLabel = activeTrip.isRecording ? '여행 중' : '종료됨';
   const statusBadgeLabel = activeTrip.isRecording ? '여행 기록 중' : '여행 종료됨';
@@ -239,10 +300,28 @@ export default function HomeScreen() {
   const heroDateLabel = formatHeroDateLabel(activeTrip.startDate);
   const sheetDateLabel = formatSheetDateLabel(activeTrip.startDate);
   const dateRangeDescription = formatDateRangeDescription(activeTrip.startDate, activeTrip.endDate);
+  const recordedPhotoCount = HOME_TIMELINE_ITEMS.reduce(
+    (sum, item) => sum + item.photoCount,
+    0,
+  );
 
   if (!isTraveling) {
     return (
-      <HomeIdleState onPressStartTrip={handlePressStartTripFromIdle} />
+      <>
+        <HomeIdleState onPressStartTrip={handlePressStartTripFromIdle} />
+        <StartTripConfirmModal
+          visible={isStartTripConfirmVisible}
+          onCancel={handleCancelStartTripConfirm}
+          onConfirm={handleConfirmStartTrip}
+        />
+        <StartTripSetupModal
+          visible={isStartTripSetupVisible}
+          initialValue={DEFAULT_START_TRIP_SETUP}
+          onCancel={handleCancelStartTripSetup}
+          onSkip={handleSkipStartTripSetup}
+          onStart={startTripWithSetup}
+        />
+      </>
     );
   }
 
@@ -352,8 +431,21 @@ export default function HomeScreen() {
 
       <EndTripConfirmModal
         visible={isEndTripConfirmVisible}
+        photoCount={recordedPhotoCount}
+        placeCount={todaySummary.visitedPlacesCount}
+        momentCount={todaySummary.recordedMomentsCount}
         onCancel={handleCancelEndTripConfirm}
         onConfirm={handleConfirmEndTrip}
+      />
+
+      <EndTripCompleteModal
+        visible={isEndTripCompleteVisible}
+        destinationName={activeTrip.destination.displayName}
+        dateRangeDescription={dateRangeDescription}
+        photoCount={recordedPhotoCount}
+        placeCount={todaySummary.visitedPlacesCount}
+        momentCount={todaySummary.recordedMomentsCount}
+        onViewMyTrips={handleViewCompletedTrip}
       />
     </View>
   );

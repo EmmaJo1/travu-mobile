@@ -102,6 +102,11 @@ export default function TravelStatusSheet({
   const [shouldRender, setShouldRender] = React.useState(visible);
   const sheetTranslateY = React.useRef(new Animated.Value(SHEET_HEIGHT)).current;
   const backdropOpacity = React.useRef(new Animated.Value(0)).current;
+  const onDismissRef = React.useRef(onDismiss);
+
+  React.useEffect(() => {
+    onDismissRef.current = onDismiss;
+  }, [onDismiss]);
 
   React.useEffect(() => {
     if (visible) {
@@ -142,15 +147,13 @@ export default function TravelStatusSheet({
         easing: Easing.in(Easing.cubic),
         useNativeDriver: true,
       }),
-    ]).start(({ finished }) => {
-      if (finished) {
-        setShouldRender(false);
-        requestAnimationFrame(() => {
-          onDismiss?.();
-        });
-      }
+    ]).start(() => {
+      setShouldRender(false);
+      requestAnimationFrame(() => {
+        onDismissRef.current?.();
+      });
     });
-  }, [backdropOpacity, onDismiss, sheetTranslateY, shouldRender, visible]);
+  }, [backdropOpacity, sheetTranslateY, shouldRender, visible]);
 
   const handleClose = React.useCallback(() => {
     onClose();
