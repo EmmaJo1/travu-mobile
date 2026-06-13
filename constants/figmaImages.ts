@@ -17,6 +17,9 @@ export const FIGMA_IMAGES = {
     hero: require('../assets/images/home-hero-paris.png') as ImageSourcePropType,
     photoFrame: require('../assets/images/archive-frame-paris.jpg') as ImageSourcePropType,
   },
+  onboarding: {
+    firstFlight: require('../assets/images/onboarding-first-flight.jpg') as ImageSourcePropType,
+  },
   record: RECORD_TRIP_IMAGES,
   dayEntry: RECORD_DAY_ENTRY_IMAGES,
   /** Figma mypage-travel TripListCard img_spot (64×76) */

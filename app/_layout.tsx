@@ -11,6 +11,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { PhotoImportFlowProvider } from '@/providers/PhotoImportFlowProvider';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -46,20 +47,23 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-          <Stack>
-            <Stack.Screen name="index" options={{ headerShown: false }} />
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-            <Stack.Screen name="button-test" options={{ title: 'Button 테스트', headerBackTitle: '뒤로' }} />
-            <Stack.Screen name="components-showcase" options={{ headerShown: false }} />
-            <Stack.Screen name="component-test" options={{ title: 'Component Test', headerShown: false }} />
-            <Stack.Screen name="auth-start" options={{ headerShown: false }} />
-            <Stack.Screen name="settings" options={{ headerShown: false }} />
-            <Stack.Screen name="day-record-1207-2245" options={{ headerShown: false }} />
-            <Stack.Screen name="figma-node-1207-2245" options={{ headerShown: false }} />
-            <Stack.Screen name="record-day-detail" options={{ headerShown: false }} />
-            <Stack.Screen name="day-archive-detail" options={{ headerShown: false }} />
-          </Stack>
+          <PhotoImportFlowProvider>
+            <Stack>
+              <Stack.Screen name="index" options={{ headerShown: false }} />
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+              <Stack.Screen name="button-test" options={{ title: 'Button 테스트', headerBackTitle: '뒤로' }} />
+              <Stack.Screen name="components-showcase" options={{ headerShown: false }} />
+              <Stack.Screen name="component-test" options={{ title: 'Component Test', headerShown: false }} />
+              <Stack.Screen name="auth-start" options={{ headerShown: false }} />
+              <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+              <Stack.Screen name="settings" options={{ headerShown: false }} />
+              <Stack.Screen name="day-record-1207-2245" options={{ headerShown: false }} />
+              <Stack.Screen name="figma-node-1207-2245" options={{ headerShown: false }} />
+              <Stack.Screen name="record-day-detail" options={{ headerShown: false }} />
+              <Stack.Screen name="day-archive-detail" options={{ headerShown: false }} />
+            </Stack>
+          </PhotoImportFlowProvider>
           <StatusBar style="auto" />
         </ThemeProvider>
       </SafeAreaProvider>

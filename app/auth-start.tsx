@@ -17,7 +17,7 @@
  *   - Google 아이콘: 16×16 4색 G
  */
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { type Href, router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -274,7 +274,7 @@ export default function AuthStartScreen() {
   const handleAgree = () => {
     if (!canProceed) return;
     setSheet('none');
-    router.replace('/(tabs)');
+    router.replace('/onboarding' as Href);
   };
 
   return (
