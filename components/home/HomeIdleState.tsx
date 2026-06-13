@@ -6,6 +6,7 @@ import {
   Image,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   View,
@@ -14,7 +15,9 @@ import {
 import Text from '@/components/common/AppText';
 import DetectedTripSection from '@/components/home/DetectedTripSection';
 import PastMomentsSection from '@/components/home/PastMomentsSection';
+import PhotoImportResultsCard from '@/components/home/PhotoImportResultsCard';
 import RecentTripsSection from '@/components/home/RecentTripsSection';
+import PhotoImportCompleteModal from '@/components/onboarding/PhotoImportCompleteModal';
 import { FIGMA_IMAGES } from '@/constants/figmaImages';
 import {
   MOCK_DETECTED_TRIP,
@@ -23,13 +26,21 @@ import {
   type DetectedTrip,
   type IdleRecentTrip,
 } from '@/constants/mockIdleHomeData';
+import { addSavedIdleDetectedTrip } from '@/constants/savedMyPageTrips';
 import { Colors, FontFamily } from '@/constants/theme';
 
 const HERO_HEIGHT = 299;
-const WARM_WHITE = '#F9F5F3';
+const WARM_WHITE = Colors.warm.white;
 
 interface HomeIdleStateProps {
   onPressStartTrip?: () => void;
+  isFirstUserEmptyState?: boolean;
+  showPhotoImportResultsCard?: boolean;
+  photoImportTripCount?: number;
+  onPressViewPhotoImportResults?: () => void;
+  showImportCompleteModal?: boolean;
+  onCloseImportCompleteModal?: () => void;
+  onPressViewImportResults?: () => void;
 }
 
 function convertDetectedTrip(trip: DetectedTrip): IdleRecentTrip {
@@ -41,9 +52,19 @@ function convertDetectedTrip(trip: DetectedTrip): IdleRecentTrip {
   };
 }
 
-export default function HomeIdleState({ onPressStartTrip }: HomeIdleStateProps) {
-  const [detectedTrip] = React.useState<DetectedTrip | null>(MOCK_DETECTED_TRIP);
+export default function HomeIdleState({
+  onPressStartTrip,
+  isFirstUserEmptyState = false,
+  showPhotoImportResultsCard = false,
+  photoImportTripCount = 0,
+  onPressViewPhotoImportResults,
+  showImportCompleteModal = false,
+  onCloseImportCompleteModal,
+  onPressViewImportResults,
+}: HomeIdleStateProps) {
+  const [detectedTrip, setDetectedTrip] = React.useState<DetectedTrip | null>(MOCK_DETECTED_TRIP);
   const [isDetectedTripSaved, setDetectedTripSaved] = React.useState(false);
+  const [isRefreshing, setRefreshing] = React.useState(false);
   const [recentTrips, setRecentTrips] = React.useState(MOCK_RECENT_TRIPS);
 
   const handleSaveDetectedTrip = React.useCallback((trip: DetectedTrip) => {
@@ -57,6 +78,20 @@ export default function HomeIdleState({ onPressStartTrip }: HomeIdleStateProps) 
     setDetectedTripSaved(true);
   }, []);
 
+  const handleRefresh = React.useCallback(() => {
+    setRefreshing(true);
+
+    if (detectedTrip && isDetectedTripSaved) {
+      addSavedIdleDetectedTrip(detectedTrip);
+      setDetectedTrip(null);
+      setDetectedTripSaved(false);
+    }
+
+    requestAnimationFrame(() => {
+      setRefreshing(false);
+    });
+  }, [detectedTrip, isDetectedTripSaved]);
+
   return (
     <View style={styles.root}>
       <StatusBar style="light" translucent backgroundColor="transparent" />
@@ -64,6 +99,14 @@ export default function HomeIdleState({ onPressStartTrip }: HomeIdleStateProps) 
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            tintColor={Colors.foundation.grey600}
+            colors={[Colors.foundation.grey600]}
+            onRefresh={handleRefresh}
+          />
+        }
       >
         <View style={styles.hero}>
           <Image
@@ -142,7 +185,7 @@ export default function HomeIdleState({ onPressStartTrip }: HomeIdleStateProps) 
                 style={styles.startButtonDispersionLayer}
               />
               <View style={styles.startButtonFrostLayer} />
-              <Text style={styles.startButtonText}>{'여행\u00A0시작'}</Text>
+              <Text style={styles.startButtonText}>여행 시작</Text>
             </Pressable>
           </View>
 
@@ -153,7 +196,16 @@ export default function HomeIdleState({ onPressStartTrip }: HomeIdleStateProps) 
         </View>
 
         <View style={styles.content}>
-          {detectedTrip ? (
+          {showPhotoImportResultsCard ? (
+            <View style={styles.photoImportResultsCardOffset}>
+              <PhotoImportResultsCard
+                tripCount={photoImportTripCount}
+                onPressViewResults={onPressViewPhotoImportResults ?? noop}
+              />
+            </View>
+          ) : null}
+
+          {!isFirstUserEmptyState && !showPhotoImportResultsCard && detectedTrip ? (
             <DetectedTripSection
               trip={detectedTrip}
               saved={isDetectedTripSaved}
@@ -161,13 +213,34 @@ export default function HomeIdleState({ onPressStartTrip }: HomeIdleStateProps) 
             />
           ) : null}
 
-          <RecentTripsSection trips={recentTrips} />
-          <PastMomentsSection moments={MOCK_PAST_MOMENTS} />
+          {!isFirstUserEmptyState ? (
+            <>
+              <View
+                style={
+                  !detectedTrip && !showPhotoImportResultsCard
+                    ? styles.recentTripsWithoutDetected
+                    : null
+                }
+              >
+                <RecentTripsSection trips={recentTrips} />
+              </View>
+              <PastMomentsSection moments={MOCK_PAST_MOMENTS} />
+            </>
+          ) : null}
         </View>
       </ScrollView>
+
+      <PhotoImportCompleteModal
+        visible={showImportCompleteModal}
+        tripCount={photoImportTripCount}
+        onClose={onCloseImportCompleteModal ?? noop}
+        onPressViewResults={onPressViewImportResults ?? noop}
+      />
     </View>
   );
 }
+
+function noop() {}
 
 const styles = StyleSheet.create({
   root: {
@@ -313,5 +386,11 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 20,
     gap: 44,
+  },
+  photoImportResultsCardOffset: {
+    marginTop: 8,
+  },
+  recentTripsWithoutDetected: {
+    marginTop: 16,
   },
 });

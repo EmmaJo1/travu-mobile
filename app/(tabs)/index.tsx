@@ -1,8 +1,9 @@
 /**
- * Home — based on Figma Home_Component / node 1941:2308.
+ * Home based on Figma Home_Component / node 1941:2308.
  */
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
@@ -19,6 +20,7 @@ import DestinationSearchModal from '@/components/home/DestinationSearchModal';
 import EndTripCompleteModal from '@/components/home/EndTripCompleteModal';
 import EndTripConfirmModal from '@/components/home/EndTripConfirmModal';
 import HomeIdleState from '@/components/home/HomeIdleState';
+import PhotoImportSavedModal from '@/components/home/PhotoImportSavedModal';
 import StartTripConfirmModal from '@/components/home/StartTripConfirmModal';
 import StartTripSetupModal, {
   type StartTripSetupValue,
@@ -32,6 +34,7 @@ import { HOME_MOCK_DATA } from '@/constants/mockHome';
 import { HOME_TIMELINE_ITEMS } from '@/constants/mockHomeTimeline';
 import type { DestinationOption } from '@/constants/mockTripDestinations';
 import { Colors, Typography } from '@/constants/theme';
+import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
 
 const HERO_HEIGHT = 336;
 const HERO_IMAGE_FRAME_TOP = -139;
@@ -43,7 +46,7 @@ const HEADER_DIM_HEIGHT = 129;
 const HERO_MASK_TOP = 180;
 const HERO_MASK_HEIGHT = HERO_HEIGHT - HERO_MASK_TOP;
 const SUMMARY_HEIGHT = 104;
-const WARM_WHITE = '#F9F5F3';
+const WARM_WHITE = Colors.warm.white;
 const FIGMA_POINT_EN = 'Sansita Swashed';
 
 const HEADER_DIM_COLORS = [
@@ -64,8 +67,30 @@ const HERO_MASK_COLORS = [
 ] as const;
 
 const HERO_MASK_LOCATIONS = [0, 0.34, 0.58, 0.82, 1] as const;
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+const ENGLISH_DESTINATION_LABELS: Record<string, string> = {
+  'city-paris-fr': 'Paris',
+  'country-france': 'France',
+  'city-kyoto-jp': 'Kyoto',
+  'country-japan': 'Japan',
+  paris: 'Paris',
+  프랑스: 'France',
+  france: 'France',
+  교토: 'Kyoto',
+  kyoto: 'Kyoto',
+  일본: 'Japan',
+  japan: 'Japan',
+  시드니: 'Sydney',
+  sydney: 'Sydney',
+  호주: 'Australia',
+  australia: 'Australia',
+  뉴욕: 'New York',
+  'new york': 'New York',
+  미국: 'United States',
+};
 
 type PendingTravelStatusAction = 'date' | 'destination' | 'endTrip' | null;
+type PhotoImportHomeFlowStatus = 'idle' | 'analyzing' | 'completed';
 
 interface ActiveTripState {
   destination: DestinationOption;
@@ -97,8 +122,6 @@ const DEFAULT_START_TRIP_SETUP: StartTripSetupValue = {
   endDate: '2020-03-14',
 };
 
-const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
-
 function parseDateKey(dateKey: string): Date {
   const [year, month, day] = dateKey.split('-').map(Number);
   return new Date(year, (month ?? 1) - 1, day ?? 1);
@@ -127,6 +150,7 @@ function formatDateRangeDescription(
   isEndDateUndecided = false,
 ): string {
   const start = parseDateKey(startDate);
+
   if (isEndDateUndecided) {
     return `${start.getMonth() + 1}월 ${start.getDate()}일 시작 · 종료일 미정`;
   }
@@ -137,9 +161,52 @@ function formatDateRangeDescription(
   return `${start.getMonth() + 1}월 ${start.getDate()}일~${end.getMonth() + 1}월 ${end.getDate()}일 (${days}일)`;
 }
 
+function getEnglishLocationLabel(destination: DestinationOption): string {
+  const candidates = [
+    destination.id,
+    destination.displayName,
+    destination.countryName,
+  ];
+
+  for (const value of candidates) {
+    const normalized = value.trim().toLowerCase();
+    const label = ENGLISH_DESTINATION_LABELS[normalized] ?? ENGLISH_DESTINATION_LABELS[value];
+
+    if (label) {
+      return label;
+    }
+  }
+
+  if (/^[\x00-\x7F]+$/.test(destination.displayName)) {
+    return destination.displayName;
+  }
+
+  if (/^[\x00-\x7F]+$/.test(destination.countryName)) {
+    return destination.countryName;
+  }
+
+  return 'Travel';
+}
+
 export default function HomeScreen() {
+  const router = useRouter();
+  const params = useLocalSearchParams<{
+    photoImportPreview?: string;
+  }>();
   const { currentTrip, todaySummary } = HOME_MOCK_DATA;
-  const [isTraveling, setIsTraveling] = React.useState(true);
+  const {
+    candidates: photoImportCandidates,
+    hasOpenedPhotoImportResults,
+    hasDeferredPhotoImportResults,
+    hasSavedPhotoImportResults,
+    lastSavedTripCount,
+    openPhotoImportResults,
+    deferPhotoImportResults,
+    closePhotoImportCompleteModal,
+    dismissPhotoImportSavedModal,
+  } = usePhotoImportFlow();
+
+  const [isTraveling, setIsTraveling] = React.useState(false);
   const [activeTrip, setActiveTrip] = React.useState(INITIAL_ACTIVE_TRIP);
   const [isTravelStatusSheetVisible, setTravelStatusSheetVisible] = React.useState(false);
   const [isDatePickerVisible, setDatePickerVisible] = React.useState(false);
@@ -148,8 +215,39 @@ export default function HomeScreen() {
   const [isEndTripCompleteVisible, setEndTripCompleteVisible] = React.useState(false);
   const [isStartTripConfirmVisible, setStartTripConfirmVisible] = React.useState(false);
   const [isStartTripSetupVisible, setStartTripSetupVisible] = React.useState(false);
+  const [isFirstUserEmptyState, setIsFirstUserEmptyState] = React.useState(false);
+  const [photoImportHomeFlowStatus, setPhotoImportHomeFlowStatus] =
+    React.useState<PhotoImportHomeFlowStatus>('idle');
+  const [showPhotoImportCompleteModal, setShowPhotoImportCompleteModal] =
+    React.useState(false);
+  const [hasDismissedPhotoImportCompleteModal, setHasDismissedPhotoImportCompleteModal] =
+    React.useState(false);
   const [pendingTravelStatusAction, setPendingTravelStatusAction] =
     React.useState<PendingTravelStatusAction>(null);
+
+  React.useEffect(() => {
+    if (params.photoImportPreview !== 'analyzing') {
+      return;
+    }
+
+    setIsFirstUserEmptyState(true);
+    setPhotoImportHomeFlowStatus('analyzing');
+    setShowPhotoImportCompleteModal(false);
+    setHasDismissedPhotoImportCompleteModal(false);
+  }, [params.photoImportPreview]);
+
+  React.useEffect(() => {
+    if (photoImportHomeFlowStatus !== 'analyzing') {
+      return undefined;
+    }
+
+    const timer = setTimeout(() => {
+      setPhotoImportHomeFlowStatus('completed');
+      setShowPhotoImportCompleteModal(true);
+    }, 1600);
+
+    return () => clearTimeout(timer);
+  }, [photoImportHomeFlowStatus]);
 
   const closeSheetThenOpen = React.useCallback((action: Exclude<PendingTravelStatusAction, null>) => {
     setPendingTravelStatusAction(action);
@@ -180,6 +278,25 @@ export default function HomeScreen() {
       });
     });
   }, [pendingTravelStatusAction]);
+
+  const handleOpenPhotoImportResults = React.useCallback(() => {
+    setShowPhotoImportCompleteModal(false);
+    openPhotoImportResults();
+    // TODO: Replace onboarding results route with the final imported-trip
+    // review route when the real media-library analysis flow is connected.
+    router.push('/onboarding/results' as Href);
+  }, [openPhotoImportResults, router]);
+
+  const handleClosePhotoImportCompleteModal = React.useCallback(() => {
+    setShowPhotoImportCompleteModal(false);
+    setHasDismissedPhotoImportCompleteModal(true);
+    closePhotoImportCompleteModal();
+    deferPhotoImportResults();
+  }, [closePhotoImportCompleteModal, deferPhotoImportResults]);
+
+  const handlePressViewCompletedImportResults = React.useCallback(() => {
+    handleOpenPhotoImportResults();
+  }, [handleOpenPhotoImportResults]);
 
   const handlePressTravelStatus = React.useCallback(() => {
     setTravelStatusSheetVisible(true);
@@ -285,7 +402,7 @@ export default function HomeScreen() {
     setActiveTrip((prev) => ({
       ...prev,
       destination: {
-        id: `manual-${setup.destinationName.toLowerCase().replaceAll(' ', '-')}`,
+        id: `manual-${setup.destinationName.toLowerCase().replace(/\s+/g, '-')}`,
         displayName: setup.destinationName,
         countryName: setup.countryName,
         type: 'city',
@@ -321,11 +438,36 @@ export default function HomeScreen() {
     (sum, item) => sum + item.photoCount,
     0,
   );
+  const headerLocationLabel = getEnglishLocationLabel(activeTrip.destination);
+  const photoImportResultCount = photoImportCandidates.length;
+  const shouldShowPhotoImportResultsCard =
+    !hasSavedPhotoImportResults &&
+    (photoImportHomeFlowStatus === 'completed' ||
+      hasDeferredPhotoImportResults ||
+      hasOpenedPhotoImportResults) &&
+    (showPhotoImportCompleteModal ||
+      hasDismissedPhotoImportCompleteModal ||
+      hasDeferredPhotoImportResults ||
+      hasOpenedPhotoImportResults);
 
   if (!isTraveling) {
     return (
       <>
-        <HomeIdleState onPressStartTrip={handlePressStartTripFromIdle} />
+        <HomeIdleState
+          onPressStartTrip={handlePressStartTripFromIdle}
+          isFirstUserEmptyState={isFirstUserEmptyState}
+          showPhotoImportResultsCard={shouldShowPhotoImportResultsCard}
+          photoImportTripCount={photoImportResultCount}
+          onPressViewPhotoImportResults={handleOpenPhotoImportResults}
+          showImportCompleteModal={showPhotoImportCompleteModal && !hasSavedPhotoImportResults}
+          onCloseImportCompleteModal={handleClosePhotoImportCompleteModal}
+          onPressViewImportResults={handlePressViewCompletedImportResults}
+        />
+        <PhotoImportSavedModal
+          visible={lastSavedTripCount > 0}
+          savedTripCount={lastSavedTripCount}
+          onClose={dismissPhotoImportSavedModal}
+        />
         <StartTripConfirmModal
           visible={isStartTripConfirmVisible}
           onCancel={handleCancelStartTripConfirm}
@@ -382,7 +524,7 @@ export default function HomeScreen() {
               <View style={styles.heroHeader}>
                 <View style={styles.locationRow}>
                   <Ionicons name="location-outline" size={16} color={Colors.foundation.white} />
-                  <Text style={styles.locationLabel}>{activeTrip.destination.displayName}</Text>
+                  <Text style={styles.locationLabel}>{headerLocationLabel}</Text>
                 </View>
 
                 <View style={styles.headerCenter}>
