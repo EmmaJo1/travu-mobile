@@ -312,8 +312,8 @@
 |------|------|
 | **파일** | `components/home/HomeIdleState.tsx` |
 | **사용 화면** | Home 일상 모드 |
-| **역할** | 여행 종료 후 표시되는 일상 모드 홈. Idle hero, 자동 감지 여행, 최근 여행, 지난 여행의 순간 섹션을 렌더링 |
-| **주요 Props** | `onPressStartTrip` |
+| **역할** | 여행 종료 후 표시되는 일상 모드 홈. Idle hero, 자동 감지 여행, 최근 여행, 지난 여행의 순간 섹션을 렌더링. 신규 사용자 온보딩 후 empty 상태에서는 mock 섹션을 숨기고 분석 완료 모달을 overlay로 표시 |
+| **주요 Props** | `onPressStartTrip`, `isFirstUserEmptyState`, `photoImportResultCount`, `onPressPhotoImportResults`, `showImportCompleteModal`, `onCloseImportCompleteModal`, `onPressViewImportResults` |
 | **재사용성** | Home 전용 상태 화면. 기존 여행 중 홈 UI를 대체하지 않고 상태 분기로만 사용 |
 
 #### StartTripConfirmModal
@@ -598,3 +598,77 @@ app/(tabs)/_layout.tsx
 ```
 
 `BottomTabBar.tsx`는 Figma/테스트 화면(`component-test`, `components-showcase`, `figma-node-1207-2245`)에서만 import된다.
+
+---
+
+## 6. Onboarding Photo Import Flow
+
+### Onboarding Routes
+| 항목 | 내용 |
+|------|------|
+| **파일** | `app/onboarding/_layout.tsx`, `app/onboarding/index.tsx`, `app/onboarding/photo-library.tsx`, `app/onboarding/analyzing.tsx`, `app/onboarding/results.tsx` |
+| **라우트** | `/onboarding`, `/onboarding/photo-library`, `/onboarding/analyzing`, `/onboarding/results` |
+| **역할** | 신규 사용자를 위한 전체 페이지 방식 사진첩 연결 온보딩. 핵심 가치 소개, mock 사진첩 연결 안내, 분석 중 안내, 결과 선택 저장을 제공한다. |
+| **주의** | 실제 사진 권한 요청, MediaLibrary 접근, EXIF/GPS 분석, 백그라운드 작업, Supabase 저장을 하지 않는다. |
+
+### PhotoImportFlowProvider
+| 항목 | 내용 |
+|------|------|
+| **파일** | `providers/PhotoImportFlowProvider.tsx` |
+| **Hook** | `hooks/usePhotoImportFlow.ts` |
+| **역할** | 온보딩 사진첩 분석 상태(`not_started`, `analyzing`, `results_ready`, `reviewed`, `skipped`), 후보 목록, 선택 후보, 결과 열람/보류/저장 상태를 전역 mock state로 관리한다. 홈으로 이동해도 mock 분석 타이머와 결과 카드 상태가 유지된다. |
+| **주요 API** | `requestAccessAndStartAnalysis`, `toggleCandidate`, `openPhotoImportResults`, `deferPhotoImportResults`, `closePhotoImportCompleteModal`, `dismissPhotoImportSavedModal`, `saveSelectedPhotoImportResults`, `saveSelectedCandidates`, `skipOnboarding` |
+| **데이터 공급** | `services/photoImport/mockPhotoImportProvider.ts` |
+
+### PhotoImport Provider Types
+| 항목 | 내용 |
+|------|------|
+| **파일** | `services/photoImport/types.ts` |
+| **역할** | 향후 실제 사진첩 권한/분석 provider로 교체할 수 있도록 `PhotoImportProvider`, `PhotoImportStatus`, `PhotoImportTripCandidate` 타입을 정의한다. |
+
+### OnboardingResultsScreen
+| 항목 | 내용 |
+|------|------|
+| **파일** | `app/onboarding/results.tsx` |
+| **라우트** | `/onboarding/results` |
+| **역할** | 사진첩 분석 결과로 발견된 과거 여행 후보를 선택/해제하고, 선택한 후보를 mock 마이페이지 여행 리스트에 저장한다. 저장 중에는 CTA spinner와 `저장하는 중...` 상태를 보여준 뒤 홈 저장 완료 모달로 이동한다. |
+| **주요 상태** | `candidates`, `selectedCandidateIds`, `isSaving`, `toggleCandidate`, `deferPhotoImportResults`, `saveSelectedPhotoImportResults` |
+| **주의** | 후보 카드 컴포넌트는 화면 내부 로컬 컴포넌트로 유지한다. `나중에 할게요`는 결과를 삭제하지 않고 홈 카드로 다시 확인할 수 있게 보류 상태로 전환한다. |
+
+### PhotoImportCompleteModal
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/onboarding/PhotoImportCompleteModal.tsx` |
+| **사용 화면** | Home 일상 모드 위 overlay |
+| **역할** | 신규 사용자 온보딩 분석을 홈에서 기다린 뒤 mock 완료 시 표시되는 중앙 완료 모달. dim overlay, 닫기, 결과 확인 CTA 제공 |
+| **주요 Props** | `visible`, `tripCount`, `onClose`, `onPressViewResults` |
+| **주의** | 실제 사진 분석 결과 저장/권한 연결을 수행하지 않는다. 결과 확인 CTA는 `/onboarding/results` 연결 지점으로만 사용한다. |
+
+### PhotoImportSavedModal
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/PhotoImportSavedModal.tsx` |
+| **사용 화면** | Home 일상 모드 위 overlay |
+| **역할** | 온보딩 결과 화면에서 선택한 여행 저장이 완료된 직후 홈 진입 시 표시되는 중앙 저장 완료 모달. 저장 개수, 설명, 확인 CTA를 제공한다. |
+| **주요 Props** | `visible`, `savedTripCount`, `onClose` |
+| **주의** | 바깥 dim 영역 탭으로 닫히지 않으며, 확인 버튼으로만 닫는다. 자동 dismiss를 하지 않는다. |
+
+### HomeIdleState update
+
+> 2026-06 update: photo import completion now uses a persistent Home entry card after the completion modal is dismissed.
+
+#### PhotoImportResultsCard
+| Item | Detail |
+|------|--------|
+| **File** | `components/home/PhotoImportResultsCard.tsx` |
+| **Screen** | Home idle state |
+| **Role** | Shows the persistent results entry after onboarding photo import analysis completes and the completion modal is dismissed. |
+| **Props** | `tripCount: number`, `onPressViewResults: () => void` |
+| **Reuse** | Home-only for now. Uses `Typography`, `Colors`, `Spacing`, and `Radius` tokens. The whole card is pressable; the inner 확인하기 pill is a non-interactive visual element. |
+
+#### HomeIdleState photo import completion props
+| Item | Detail |
+|------|--------|
+| **File** | `components/home/HomeIdleState.tsx` |
+| **Props** | `showPhotoImportResultsCard`, `photoImportTripCount`, `onPressViewPhotoImportResults`, `showImportCompleteModal`, `onCloseImportCompleteModal`, `onPressViewImportResults` |
+| **Behavior** | In first-user empty mode, regular mock sections remain hidden. After completion, defer, or result-page open without save, `PhotoImportResultsCard` remains available until selected candidates are saved. After selected candidates are saved, Home renders `PhotoImportSavedModal` from provider `lastSavedTripCount`. |
