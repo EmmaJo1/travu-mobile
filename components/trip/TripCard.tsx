@@ -145,7 +145,9 @@ export default function TripCard({
           hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
         >
           <BookmarkIcon filled={isSaved} />
-          <Text style={[styles.saveText, isSaved && styles.saveTextActive]}>저장</Text>
+          <Text style={[styles.saveText, isSaved && styles.saveTextActive]}>
+            {isSaved ? '저장됨' : '저장'}
+          </Text>
         </TouchableOpacity>
 
         <View style={styles.mainRow}>

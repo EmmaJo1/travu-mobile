@@ -153,18 +153,30 @@ export const TRAVEL_SORT_LABELS: Record<TravelSortOption, string> = {
   photos: '사진 많은 순',
 };
 
+function getTripStartTime(dateRangeLabel: string): number {
+  const normalized = dateRangeLabel.replace(/\s+/g, '');
+  const match = normalized.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})/);
+
+  if (!match) {
+    return 0;
+  }
+
+  const [, year, month, day] = match;
+  return new Date(Number(year), Number(month) - 1, Number(day)).getTime();
+}
+
 export function sortMyPageTrips(trips: MyPageTrip[], sort: TravelSortOption): MyPageTrip[] {
   const copy = [...trips];
   switch (sort) {
     case 'oldest':
-      return copy.sort((a, b) => a.dateRangeLabel.localeCompare(b.dateRangeLabel));
+      return copy.sort((a, b) => getTripStartTime(a.dateRangeLabel) - getTripStartTime(b.dateRangeLabel));
     case 'duration':
       return copy.sort((a, b) => b.daysCount - a.daysCount);
     case 'photos':
       return copy.sort((a, b) => b.photoCount - a.photoCount);
     case 'latest':
     default:
-      return copy.sort((a, b) => b.dateRangeLabel.localeCompare(a.dateRangeLabel));
+      return copy.sort((a, b) => getTripStartTime(b.dateRangeLabel) - getTripStartTime(a.dateRangeLabel));
   }
 }
 

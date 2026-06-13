@@ -27,6 +27,7 @@ import {
     MOCK_QUESTION_CARDS,
     MOCK_REFLECTION_CARDS,
 } from '@/constants/mockReflections';
+import { useSavedMyPageTrips } from '@/constants/savedMyPageTrips';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 
 const CONTENT_FADE_DURATION_MS = 500;
@@ -38,10 +39,15 @@ export default function ProfileScreen() {
   const [sortSheetVisible, setSortSheetVisible] = useState(false);
   const contentOpacity = useRef(new Animated.Value(1)).current;
   const isFirstTabRender = useRef(true);
+  const savedTrips = useSavedMyPageTrips();
 
+  const myPageTrips = useMemo(
+    () => [...savedTrips, ...MOCK_MY_PAGE_TRIPS],
+    [savedTrips],
+  );
   const sortedTrips = useMemo(
-    () => sortMyPageTrips(MOCK_MY_PAGE_TRIPS, sortOption),
-    [sortOption],
+    () => sortMyPageTrips(myPageTrips, sortOption),
+    [myPageTrips, sortOption],
   );
   const groupedTrips = useMemo(() => groupTripsByYear(sortedTrips), [sortedTrips]);
 
@@ -63,6 +69,7 @@ export default function ProfileScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader
         style={styles.header}
+        leftSlot={<Text style={styles.headerTitle}>나의 여정</Text>}
         onSettingsPress={() => router.push('/settings' as Href)}
       />
 
@@ -98,30 +105,30 @@ export default function ProfileScreen() {
               </View>
 
               <View style={styles.tripListSection}>
-                <Text style={styles.sectionTitle}>여행 리스트</Text>
+                <View style={styles.tripListHeader}>
+                  <Text style={styles.tripListTitle}>여행 리스트</Text>
+                  <Pressable
+                    onPress={() => setSortSheetVisible(true)}
+                    style={({ pressed }) => [styles.sortTrigger, pressed && styles.sortTriggerPressed]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`정렬, ${TRAVEL_SORT_LABELS[sortOption]}`}
+                  >
+                    <Text style={styles.sortTriggerLabel} numberOfLines={1}>
+                      {TRAVEL_SORT_LABELS[sortOption]}
+                    </Text>
+                    <Image
+                      source={require('@/assets/images/daycard-triangle.png')}
+                      style={styles.sortTriggerIcon}
+                      resizeMode="contain"
+                    />
+                  </Pressable>
+                </View>
 
                 <View style={styles.tripList}>
                   {groupedTrips.map(({ year, trips: yearTrips }) => (
                     <View key={year} style={styles.yearSection}>
                       <View style={styles.yearHeader}>
                         <Text style={styles.yearLabel}>{year}</Text>
-                        {year === groupedTrips[0]?.year ? (
-                          <Pressable
-                            onPress={() => setSortSheetVisible(true)}
-                            style={({ pressed }) => [styles.sortTrigger, pressed && styles.sortTriggerPressed]}
-                            accessibilityRole="button"
-                            accessibilityLabel={`정렬, ${TRAVEL_SORT_LABELS[sortOption]}`}
-                          >
-                            <Text style={styles.sortTriggerLabel} numberOfLines={1}>
-                              {TRAVEL_SORT_LABELS[sortOption]}
-                            </Text>
-                            <Image
-                              source={require('@/assets/images/daycard-triangle.png')}
-                              style={styles.sortTriggerIcon}
-                              resizeMode="contain"
-                            />
-                          </Pressable>
-                        ) : null}
                       </View>
 
                       <TripListCardList
@@ -183,6 +190,7 @@ const styles = StyleSheet.create({
   },
   header: {
     width: '100%',
+    paddingLeft: Spacing.xl,
   },
   scroll: {
     flex: 1,
@@ -211,6 +219,17 @@ const styles = StyleSheet.create({
   tripListSection: {
     gap: Spacing.lg,
   },
+  tripListHeader: {
+    height: 24,
+    paddingHorizontal: Spacing.xl,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  tripListTitle: {
+    ...Typography.title2,
+    color: Colors.foundation.black,
+  },
   reflectionContent: {
     marginTop: Spacing['2xl'],
   },
@@ -232,6 +251,10 @@ const styles = StyleSheet.create({
     ...Typography.title2,
     color: Colors.foundation.black,
     paddingHorizontal: Spacing.xl,
+  },
+  headerTitle: {
+    ...Typography.title2,
+    color: Colors.foundation.black,
   },
   reflectionSectionTitle: {
     ...Typography.title2,

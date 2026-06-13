@@ -1,6 +1,6 @@
 import { type Href, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import PrimaryButton from '@/components/common/PrimaryButton';
@@ -13,11 +13,13 @@ import {
   toTripCardData,
   type DetectedTrip,
 } from '@/constants/mockDetectedTrips';
+import { addSavedDetectedTrips } from '@/constants/savedMyPageTrips';
 import { Colors, Spacing } from '@/constants/theme';
 
 export default function RecordScreen() {
   const router = useRouter();
   const [trips, setTrips] = useState<DetectedTrip[]>(MOCK_DETECTED_TRIPS);
+  const [isRefreshing, setRefreshing] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [createdModalVisible, setCreatedModalVisible] = useState(false);
 
@@ -28,6 +30,21 @@ export default function RecordScreen() {
       prev.map((trip) => (trip.id === tripId ? { ...trip, isSaved: saved } : trip)),
     );
   }, []);
+
+  const handleRefresh = useCallback(() => {
+    const savedTrips = trips.filter((trip) => trip.isSaved);
+
+    setRefreshing(true);
+
+    if (savedTrips.length > 0) {
+      addSavedDetectedTrips(savedTrips);
+      setTrips((prev) => prev.filter((trip) => !trip.isSaved));
+    }
+
+    requestAnimationFrame(() => {
+      setRefreshing(false);
+    });
+  }, [trips]);
 
   const navigateToDayDetail = useCallback(
     (tripId: string, dayId: string) => {
@@ -58,6 +75,14 @@ export default function RecordScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         nestedScrollEnabled
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            tintColor={Colors.foundation.grey600}
+            colors={[Colors.foundation.grey600]}
+            onRefresh={handleRefresh}
+          />
+        }
       >
         <View style={styles.list}>
           {tripCards.map((trip) => (
@@ -74,7 +99,7 @@ export default function RecordScreen() {
                 router.push('/record-day-detail' as Href);
               }}
               onDayPress={(dayId) => navigateToDayDetail(trip.id, dayId)}
-              onSavedChange={(saved) => handleSavedChange(trip.id, saved)}
+              onSavedChange={() => handleSavedChange(trip.id, true)}
             />
           ))}
         </View>
@@ -123,4 +148,3 @@ const styles = StyleSheet.create({
     gap: Spacing['3xl'],
   },
 });
-

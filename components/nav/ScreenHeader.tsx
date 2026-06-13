@@ -10,6 +10,7 @@ const BALANCED_SIDE_SLOT_WIDTH = 24;
 
 interface ScreenHeaderProps {
   title?: string;
+  leftSlot?: React.ReactNode;
   centerSlot?: React.ReactNode;
   onBackPress?: () => void;
   onSettingsPress?: () => void;
@@ -21,6 +22,7 @@ interface ScreenHeaderProps {
 
 export default function ScreenHeader({
   title,
+  leftSlot,
   centerSlot,
   onBackPress,
   onSettingsPress,
@@ -56,7 +58,9 @@ export default function ScreenHeader({
 
   return (
     <View style={[styles.header, style]}>
-      {onBackPress ? (
+      {leftSlot ? (
+        <View style={styles.leftCustom}>{leftSlot}</View>
+      ) : onBackPress ? (
         <TouchableOpacity onPress={onBackPress} activeOpacity={0.75} style={styles.sideBtn}>
           <Image
             source={require('../../assets/images/screenheader-back.png')}
@@ -131,6 +135,11 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  leftCustom: {
+    minWidth: 24,
+    alignItems: 'flex-start',
     justifyContent: 'center',
   },
   backIcon: {
