@@ -99,7 +99,7 @@ export default function RecordScreen() {
                 router.push('/record-day-detail' as Href);
               }}
               onDayPress={(dayId) => navigateToDayDetail(trip.id, dayId)}
-              onSavedChange={() => handleSavedChange(trip.id, true)}
+              onSavedChange={(saved) => handleSavedChange(trip.id, saved)}
             />
           ))}
         </View>
@@ -144,7 +144,7 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing['3xl'],
   },
   list: {
-    alignItems: 'center',
+    alignItems: 'stretch',
     gap: Spacing['3xl'],
   },
 });

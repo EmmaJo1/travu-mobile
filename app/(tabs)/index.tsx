@@ -33,6 +33,7 @@ import TodaySummary from '@/components/trip/TodaySummary';
 import { HOME_MOCK_DATA } from '@/constants/mockHome';
 import { HOME_TIMELINE_ITEMS } from '@/constants/mockHomeTimeline';
 import type { DestinationOption } from '@/constants/mockTripDestinations';
+import { addSavedCompletedTrip } from '@/constants/savedMyPageTrips';
 import { Colors, Typography } from '@/constants/theme';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
 
@@ -352,7 +353,24 @@ export default function HomeScreen() {
     reopenTravelStatusSheet();
   }, [reopenTravelStatusSheet]);
 
+  const recordedPhotoCount = HOME_TIMELINE_ITEMS.reduce(
+    (sum, item) => sum + item.photoCount,
+    0,
+  );
+
   const handleConfirmEndTrip = React.useCallback(() => {
+    const destinationName = getEnglishLocationLabel(activeTrip.destination);
+
+    addSavedCompletedTrip({
+      id: `${activeTrip.destination.id}-${activeTrip.startDate}-${activeTrip.endDate}`,
+      destinationName,
+      countryName: activeTrip.destination.countryName,
+      startDate: activeTrip.startDate,
+      endDate: activeTrip.endDate,
+      coverImage: currentTrip.heroImage,
+      daysCount: getInclusiveDayCount(activeTrip.startDate, activeTrip.endDate),
+      photoCount: recordedPhotoCount,
+    });
     setActiveTrip((prev) => ({
       ...prev,
       isRecording: false,
@@ -360,12 +378,13 @@ export default function HomeScreen() {
     setEndTripConfirmVisible(false);
     setTravelStatusSheetVisible(false);
     setEndTripCompleteVisible(true);
-  }, []);
+  }, [activeTrip, currentTrip.heroImage, recordedPhotoCount]);
 
   const handleViewCompletedTrip = React.useCallback(() => {
     setEndTripCompleteVisible(false);
     setIsTraveling(false);
-  }, []);
+    router.push('/day-archive-detail' as Href);
+  }, [router]);
 
   const handleCancelDatePicker = React.useCallback(() => {
     setDatePickerVisible(false);
@@ -433,10 +452,6 @@ export default function HomeScreen() {
     activeTrip.startDate,
     activeTrip.endDate,
     activeTrip.isEndDateUndecided,
-  );
-  const recordedPhotoCount = HOME_TIMELINE_ITEMS.reduce(
-    (sum, item) => sum + item.photoCount,
-    0,
   );
   const headerLocationLabel = getEnglishLocationLabel(activeTrip.destination);
   const photoImportResultCount = photoImportCandidates.length;

@@ -4,6 +4,7 @@ import type { DetectedTrip } from '@/constants/mockDetectedTrips';
 import type { DetectedTrip as IdleDetectedTrip } from '@/constants/mockIdleHomeData';
 import type { MyPageTrip } from '@/constants/mockMyPageTrips';
 import type { PhotoImportTripCandidate } from '@/services/photoImport/types';
+import type { ImageSourcePropType } from 'react-native';
 
 let savedTrips: MyPageTrip[] = [];
 const listeners = new Set<() => void>();
@@ -22,6 +23,17 @@ const PHOTO_IMPORT_ENGLISH_NAMES: Record<string, { city: string; title: string }
   'busan-2024': { city: 'Busan', title: 'BUSAN' },
 };
 
+export interface CompletedTripInput {
+  id: string;
+  destinationName: string;
+  countryName: string;
+  startDate: string;
+  endDate: string;
+  coverImage: ImageSourcePropType;
+  daysCount: number;
+  photoCount: number;
+}
+
 function emitChange() {
   listeners.forEach((listener) => listener());
 }
@@ -39,6 +51,22 @@ function getSnapshot() {
 
 function formatMyPageDateRange(dateRangeLabel: string) {
   return dateRangeLabel.replace(/\s+/g, '');
+}
+
+function formatDateKeyForMyPage(dateKey: string) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return `${year}.${month}.${day}`;
+}
+
+function formatCompletedTripDateRange(startDate: string, endDate: string) {
+  const [startYear, startMonth, startDay] = startDate.split('-').map(Number);
+  const [endYear, endMonth, endDay] = endDate.split('-').map(Number);
+
+  if (startYear === endYear) {
+    return `${startYear}.${startMonth}.${startDay}-${endMonth}.${endDay}`;
+  }
+
+  return `${formatDateKeyForMyPage(startDate)}-${formatDateKeyForMyPage(endDate)}`;
 }
 
 function getInclusiveDaysFromDateRange(dateRangeLabel: string): number {
@@ -115,6 +143,21 @@ function toMyPageTripFromPhotoImportCandidate(candidate: PhotoImportTripCandidat
   };
 }
 
+function toMyPageTripFromCompletedTrip(trip: CompletedTripInput): MyPageTrip {
+  const city = trip.destinationName;
+
+  return {
+    id: `completed-${trip.id}`,
+    title: city.toUpperCase(),
+    city,
+    country: trip.countryName,
+    dateRangeLabel: formatCompletedTripDateRange(trip.startDate, trip.endDate),
+    coverImage: trip.coverImage,
+    daysCount: trip.daysCount,
+    photoCount: trip.photoCount,
+  };
+}
+
 export function addSavedDetectedTrips(trips: DetectedTrip[]) {
   const nextTrips = trips
     .map(toMyPageTripFromDetectedTrip)
@@ -149,6 +192,17 @@ export function addSavedPhotoImportCandidates(candidates: PhotoImportTripCandida
   }
 
   savedTrips = [...nextTrips, ...savedTrips];
+  emitChange();
+}
+
+export function addSavedCompletedTrip(trip: CompletedTripInput) {
+  const nextTrip = toMyPageTripFromCompletedTrip(trip);
+
+  if (savedTrips.some((savedTrip) => savedTrip.id === nextTrip.id)) {
+    return;
+  }
+
+  savedTrips = [nextTrip, ...savedTrips];
   emitChange();
 }
 

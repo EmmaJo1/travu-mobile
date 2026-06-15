@@ -210,7 +210,6 @@ const tripTokens = ComponentTokens.TripCard;
 const styles = StyleSheet.create({
   card: {
     width: '100%',
-    maxWidth: 350,
     position: 'relative',
     gap: tripTokens.infoGap,
   },
