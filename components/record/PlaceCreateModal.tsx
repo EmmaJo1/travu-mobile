@@ -1,7 +1,7 @@
-import { Ionicons } from '@expo/vector-icons';
+﻿import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -19,11 +19,10 @@ import {
 import AuthActionButton from '@/components/common/AuthActionButton';
 import Text from '@/components/common/AppText';
 import AppTextInput from '@/components/common/AppTextInput';
+import { PlaceSearchContent, type PlaceOption } from '@/components/common/PlaceSearchModal';
 import ManualPlaceEntryView from '@/components/record/ManualPlaceEntryView';
-import PlaceSearchView from '@/components/record/PlaceSearchView';
 import TimeWheelPickerModal from '@/components/record/TimeWheelPickerModal';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
-import { mockPlaceSearchProvider } from '@/services/placeSearch/mockPlaceSearchProvider';
 import type { SelectedPlace } from '@/services/placeSearch/types';
 import {
   convertDateToPlaceEntryTime,
@@ -60,6 +59,12 @@ interface PlaceCreateModalProps {
   onDelete?: (entryId: string) => void;
   initialValue?: Partial<PlaceCreateInput> & { id?: string };
   mode?: PlaceEntryFormMode;
+  tripId?: string;
+  dayId?: string;
+  tripDestinationName?: string;
+  tripDestinationCountry?: string;
+  tripLatitude?: number;
+  tripLongitude?: number;
 }
 
 interface FormFieldProps extends TextInputProps {
@@ -214,6 +219,37 @@ function getPlaceSubtitle(place?: SelectedPlace) {
   );
 }
 
+function toPlaceOption(place?: SelectedPlace): PlaceOption | null {
+  if (!place?.placeName) {
+    return null;
+  }
+
+  return {
+    id: place.googlePlaceId ?? place.placeName,
+    name: place.placeName,
+    address: place.formattedAddress,
+    city: place.cityName,
+    country: place.countryName,
+    placeId: place.googlePlaceId,
+    latitude: place.latitude,
+    longitude: place.longitude,
+    source: place.source,
+  };
+}
+
+function toSelectedPlace(place: PlaceOption): SelectedPlace {
+  return {
+    source: place.source === 'manual' ? 'manual' : 'mock',
+    googlePlaceId: place.placeId,
+    placeName: place.name,
+    formattedAddress: place.address,
+    cityName: place.city,
+    countryName: place.country,
+    latitude: place.latitude,
+    longitude: place.longitude,
+  };
+}
+
 export default function PlaceCreateModal({
   visible,
   onClose,
@@ -221,6 +257,12 @@ export default function PlaceCreateModal({
   onDelete,
   initialValue,
   mode = 'create',
+  tripId = 'mock-trip',
+  dayId = 'mock-day',
+  tripDestinationName,
+  tripDestinationCountry,
+  tripLatitude,
+  tripLongitude,
 }: PlaceCreateModalProps) {
   const [place, setPlace] = useState('');
   const [time, setTime] = useState('');
@@ -231,14 +273,9 @@ export default function PlaceCreateModal({
   const [photoSources, setPhotoSources] = useState<ImageSourcePropType[]>([]);
   const [pickerPage, setPickerPage] = useState<PickerPage>('form');
   const [selectedPlace, setSelectedPlace] = useState<SelectedPlace>();
-  const [placeSearchQuery, setPlaceSearchQuery] = useState('');
   const [timeWheelVisible, setTimeWheelVisible] = useState(false);
   const [hasUserEditedTime, setHasUserEditedTime] = useState(false);
   const [deleteConfirmationVisible, setDeleteConfirmationVisible] = useState(false);
-  const placeSearchResults = useMemo(
-    () => mockPlaceSearchProvider.search(placeSearchQuery),
-    [placeSearchQuery],
-  );
 
   const resetFields = () => {
     const nextPlace = getInitialSelectedPlace(initialValue);
@@ -250,7 +287,6 @@ export default function PlaceCreateModal({
     setText(initialValue?.text ?? '');
     setPhotoUris(initialValue?.photoUris ?? []);
     setPhotoSources(initialValue?.photoSources ?? []);
-    setPlaceSearchQuery('');
     setTimeWheelVisible(false);
     setHasUserEditedTime(false);
     setDeleteConfirmationVisible(false);
@@ -268,7 +304,6 @@ export default function PlaceCreateModal({
       setText(initialValue?.text ?? '');
       setPhotoUris(initialValue?.photoUris ?? []);
       setPhotoSources(initialValue?.photoSources ?? []);
-      setPlaceSearchQuery('');
       setTimeWheelVisible(false);
       setHasUserEditedTime(false);
       setDeleteConfirmationVisible(false);
@@ -313,12 +348,15 @@ export default function PlaceCreateModal({
     setSelectedPlace(nextPlace);
     setPlace(nextPlace.placeName);
     setCity(nextPlace.cityName ?? '');
-    setPlaceSearchQuery('');
     setPickerPage('form');
   };
 
+  const applyPlaceOption = (nextPlace: PlaceOption) => {
+    applySelectedPlace(toSelectedPlace(nextPlace));
+  };
+
   const handleBack = () => {
-    setPickerPage(pickerPage === 'manual-place-entry' ? 'place-search' : 'form');
+    setPickerPage('form');
   };
 
   const openTimePicker = () => {
@@ -497,20 +535,26 @@ export default function PlaceCreateModal({
           )}
 
           {pickerPage === 'place-search' && (
-            <PlaceSearchView
-              onManualPress={() => setPickerPage('manual-place-entry')}
-              onQueryChange={setPlaceSearchQuery}
-              onSelect={applySelectedPlace}
-              query={placeSearchQuery}
-              results={placeSearchResults}
-            />
+            <View style={styles.searchStep}>
+              <PlaceSearchContent
+                tripId={tripId}
+                dayId={dayId}
+                tripDestinationName={tripDestinationName ?? selectedPlace?.cityName ?? city}
+                tripDestinationCountry={tripDestinationCountry ?? selectedPlace?.countryName}
+                tripLatitude={tripLatitude}
+                tripLongitude={tripLongitude}
+                selectedPlace={toPlaceOption(selectedPlace)}
+                onSelectPlace={applyPlaceOption}
+                autoFocus
+              />
+            </View>
           )}
 
           {pickerPage === 'manual-place-entry' && (
             <ManualPlaceEntryView
-              countryName={placeSearchQuery ? undefined : selectedPlace?.countryName}
-              initialCityName={placeSearchQuery ? undefined : selectedPlace?.cityName ?? city}
-              initialPlaceName={placeSearchQuery || selectedPlace?.placeName}
+              countryName={selectedPlace?.countryName}
+              initialCityName={selectedPlace?.cityName ?? city}
+              initialPlaceName={selectedPlace?.placeName}
               onApply={applySelectedPlace}
             />
           )}
@@ -547,6 +591,7 @@ export default function PlaceCreateModal({
         value={parsePlaceEntryTime(time)}
         visible={timeWheelVisible}
       />
+
 
       {deleteConfirmationVisible ? (
         <View style={[StyleSheet.absoluteFill, styles.deleteConfirmationOverlay]}>
@@ -610,6 +655,10 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.foundation.white,
     borderRadius: Radius.lg,
     ...Shadows.modal,
+  },
+  searchStep: {
+    height: 430,
+    marginHorizontal: -Spacing.xl,
   },
   header: {
     alignItems: 'center',

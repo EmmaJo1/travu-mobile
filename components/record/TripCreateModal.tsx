@@ -14,8 +14,8 @@ import {
 import Text from '@/components/common/AppText';
 
 import AuthActionButton from '@/components/common/AuthActionButton';
+import DestinationSelectModal from '@/components/common/DestinationSelectModal';
 import DestinationSelectField from '@/components/record/DestinationSelectField';
-import DestinationSelectView from '@/components/record/DestinationSelectView';
 import TripDateRangeField from '@/components/record/TripDateRangeField';
 import TripDateRangePickerModal, {
   dateKeyToDate,
@@ -25,12 +25,12 @@ import TripDateRangePickerModal, {
 } from '@/components/record/TripDateRangePickerModal';
 import {
   formatDestinationLabel,
-  type DestinationContinent,
   type MockDestination,
 } from '@/constants/mockDestinations';
+import type { DestinationOption } from '@/constants/mockTripDestinations';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 
-export type TripCreateStep = 'create' | 'destination' | 'date';
+export type TripCreateStep = 'create' | 'date';
 
 export interface SelectedDateRange {
   start: string;
@@ -112,8 +112,7 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
   const [selectedDestination, setSelectedDestination] = useState<MockDestination | null>(null);
   const [selectedDateRange, setSelectedDateRange] = useState<SelectedDateRange | null>(null);
   const [datePickerVisible, setDatePickerVisible] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedContinent, setSelectedContinent] = useState<'all' | DestinationContinent>('all');
+  const [destinationSelectVisible, setDestinationSelectVisible] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(createCurrentCalendarMonth);
   const [calendarView, setCalendarView] = useState<CalendarView>('days');
   const yearSelectorRef = useRef<ScrollView>(null);
@@ -229,8 +228,7 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
     setSelectedDestination(null);
     setSelectedDateRange(null);
     setDatePickerVisible(false);
-    setSearchQuery('');
-    setSelectedContinent('all');
+    setDestinationSelectVisible(false);
     setCalendarMonth(createCurrentCalendarMonth());
     setCalendarView('days');
     setDraftDateRange({
@@ -255,16 +253,31 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
       return;
     }
 
-    if (step === 'destination' || step === 'date') {
+    if (step === 'date') {
       setStep('create');
     }
   };
 
-  const handleSelectDestination = (destination: MockDestination) => {
-    setSelectedDestination(destination);
-    setStep('create');
-    setSearchQuery('');
-    setSelectedContinent('all');
+  const handleSelectDestination = (destination: DestinationOption) => {
+    const country = destination.country ?? destination.countryName;
+
+    setSelectedDestination({
+      id: destination.id,
+      type: destination.type === 'country' ? 'country' : 'city',
+      city: destination.name,
+      country: country || destination.name,
+      countryCode: '',
+      continent: destination.scope === 'domestic' ? 'asia' : 'asia',
+      displayName: country ? `${destination.name}, ${country}` : destination.name,
+      searchKeywords: [
+        destination.name,
+        country ?? '',
+        destination.displayName,
+        destination.countryName,
+        ...(destination.searchKeywords ?? []),
+      ].filter(Boolean),
+    });
+    setDestinationSelectVisible(false);
   };
 
   const handleApplyDate = () => {
@@ -332,8 +345,6 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
   };
 
   const renderHeader = () => {
-    if (step === 'destination') return null;
-
     if (step === 'create') {
       return (
         <View style={styles.createHeader}>
@@ -345,7 +356,7 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
       );
     }
 
-    const titles: Record<Exclude<TripCreateStep, 'create' | 'destination'>, string> = {
+    const titles: Record<Exclude<TripCreateStep, 'create'>, string> = {
       date: '여행 기간 선택',
     };
 
@@ -372,7 +383,7 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
         label="여행지"
         placeholder="여행지를 선택하세요"
         value={destinationLabel}
-        onPress={() => setStep('destination')}
+        onPress={() => setDestinationSelectVisible(true)}
         style={styles.destinationField}
       />
       <TripDateRangeField
@@ -391,18 +402,6 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
         style={styles.createActionButton}
       />
     </View>
-  );
-
-  const renderDestinationStep = () => (
-    <DestinationSelectView
-      query={searchQuery}
-      selectedContinent={selectedContinent}
-      onBack={handleBack}
-      onClose={handleClose}
-      onQueryChange={setSearchQuery}
-      onContinentChange={setSelectedContinent}
-      onSelect={handleSelectDestination}
-    />
   );
 
   const renderDateStep = () => (
@@ -587,11 +586,16 @@ export default function TripCreateModal({ visible, onClose, onCreate }: TripCrea
           >
             {renderHeader()}
             {step === 'create' && renderCreateStep()}
-            {step === 'destination' && renderDestinationStep()}
             {step === 'date' && renderDateStep()}
           </Pressable>
         </Pressable>
       </Modal>
+
+      <DestinationSelectModal
+        visible={visible && destinationSelectVisible}
+        onClose={() => setDestinationSelectVisible(false)}
+        onSelectDestination={handleSelectDestination}
+      />
 
       <TripDateRangePickerModal
         visible={visible && datePickerVisible}

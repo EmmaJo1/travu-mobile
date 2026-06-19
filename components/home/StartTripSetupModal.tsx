@@ -7,12 +7,14 @@ import {
   View,
 } from 'react-native';
 
+import DestinationSelectModal from '@/components/common/DestinationSelectModal';
 import Text from '@/components/common/AppText';
 import TripDateRangePickerModal, {
   dateToDateKey,
   formatCompactTripDateRangeLabel,
   type TripDateRangePickerValue,
 } from '@/components/record/TripDateRangePickerModal';
+import type { DestinationOption } from '@/constants/mockTripDestinations';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 
 const SECTION_GAP = Spacing['2xl'] + Spacing.xs;
@@ -30,6 +32,7 @@ interface StartTripSetupModalProps {
   initialValue: StartTripSetupValue;
   onCancel: () => void;
   onSkip: () => void;
+  isQuickStarting?: boolean;
   onStart: (value: StartTripSetupValue) => void;
 }
 
@@ -38,9 +41,13 @@ export default function StartTripSetupModal({
   initialValue,
   onCancel,
   onSkip,
+  isQuickStarting = false,
   onStart,
 }: StartTripSetupModalProps) {
   const [isDatePickerVisible, setDatePickerVisible] = React.useState(false);
+  const [isDestinationSelectVisible, setDestinationSelectVisible] = React.useState(false);
+  const [selectedDestination, setSelectedDestination] =
+    React.useState<DestinationOption | null>(null);
   const [tripDateRange, setTripDateRange] = React.useState<TripDateRangePickerValue>({
     startDate: null,
     endDate: null,
@@ -55,7 +62,9 @@ export default function StartTripSetupModal({
       endDate: null,
       isEndDateUndecided: false,
     });
+    setSelectedDestination(null);
     setDatePickerVisible(false);
+    setDestinationSelectVisible(false);
   }, [visible]);
 
   const handleStart = () => {
@@ -68,16 +77,26 @@ export default function StartTripSetupModal({
 
     onStart({
       ...initialValue,
+      destinationName: selectedDestination?.name ?? selectedDestination?.displayName ?? initialValue.destinationName,
+      countryName: selectedDestination?.country ?? selectedDestination?.countryName ?? initialValue.countryName,
       startDate,
       endDate,
       isEndDateUndecided: tripDateRange.isEndDateUndecided,
     });
   };
 
+  const selectedDestinationCountry =
+    selectedDestination?.country ?? selectedDestination?.countryName ?? '';
+  const destinationLabel = selectedDestination
+    ? selectedDestinationCountry
+      ? `${selectedDestination.name}, ${selectedDestinationCountry}`
+      : selectedDestination.name
+    : '도시나 국가를 검색해주세요';
+
   return (
     <>
       <Modal
-        visible={visible && !isDatePickerVisible}
+        visible={visible && !isDatePickerVisible && !isDestinationSelectVisible}
         transparent
         animationType="fade"
         onRequestClose={onCancel}
@@ -107,8 +126,10 @@ export default function StartTripSetupModal({
               <Text style={styles.fieldLabel}>여행지</Text>
               <SetupRow
                 iconName="map-pin"
-                label="도시나 국가를 검색해주세요"
+                label={destinationLabel}
                 accessibilityLabel="여행지 선택"
+                selected={Boolean(selectedDestination)}
+                onPress={() => setDestinationSelectVisible(true)}
               />
             </View>
 
@@ -126,8 +147,15 @@ export default function StartTripSetupModal({
               <Text style={styles.primaryLabel}>여행 시작하기</Text>
             </Pressable>
 
-            <Pressable accessibilityRole="button" hitSlop={10} onPress={onSkip}>
-              <Text style={styles.skipLabel}>건너뛰고 바로 시작하기</Text>
+            <Pressable
+              accessibilityRole="button"
+              disabled={isQuickStarting}
+              hitSlop={10}
+              onPress={onSkip}
+            >
+              <Text style={[styles.skipLabel, isQuickStarting && styles.skipLabelDisabled]}>
+                {isQuickStarting ? '현재 위치 확인 중...' : '현재 위치로 바로 시작하기'}
+              </Text>
             </Pressable>
           </Pressable>
         </Pressable>
@@ -145,6 +173,16 @@ export default function StartTripSetupModal({
           setDatePickerVisible(false);
         }}
       />
+
+      <DestinationSelectModal
+        visible={visible && isDestinationSelectVisible}
+        selectedDestination={selectedDestination}
+        onClose={() => setDestinationSelectVisible(false)}
+        onSelectDestination={(destination) => {
+          setSelectedDestination(destination);
+          setDestinationSelectVisible(false);
+        }}
+      />
     </>
   );
 }
@@ -154,11 +192,13 @@ function SetupRow({
   label,
   accessibilityLabel,
   onPress,
+  selected = false,
 }: {
   iconName: 'map-pin' | 'calendar';
   label: string;
   accessibilityLabel: string;
   onPress?: () => void;
+  selected?: boolean;
 }) {
   return (
     <Pressable
@@ -168,7 +208,9 @@ function SetupRow({
       onPress={onPress}
     >
       <Feather name={iconName} size={20} color={Colors.foundation.grey600} />
-      <Text style={styles.setupRowLabel}>{label}</Text>
+      <Text style={[styles.setupRowLabel, selected && styles.setupRowLabelSelected]}>
+        {label}
+      </Text>
       <Feather name="chevron-right" size={22} color={Colors.foundation.grey600} />
     </Pressable>
   );
@@ -252,6 +294,9 @@ const styles = StyleSheet.create({
     ...Typography.body1Regular,
     color: Colors.foundation.grey500,
   },
+  setupRowLabelSelected: {
+    color: Colors.foundation.black,
+  },
   primaryButton: {
     height: Spacing['4xl'],
     borderRadius: Radius.sm,
@@ -272,5 +317,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     textDecorationLine: 'underline',
     transform: [{ translateY: -2 }],
+  },
+  skipLabelDisabled: {
+    color: Colors.foundation.grey400,
   },
 });

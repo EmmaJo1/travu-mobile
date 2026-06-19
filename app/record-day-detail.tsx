@@ -202,6 +202,8 @@ export default function RecordDayDetailScreen() {
       <PlaceCreateModal
         visible={placeEntryModalVisible}
         mode={placeEntryFormMode}
+        tripId={tripId ?? 'record-trip'}
+        dayId={selectedDay.id}
         initialValue={
           placeEntryFormMode === 'edit' ? editingEntry ?? undefined : undefined
         }
