@@ -41,6 +41,8 @@ const SWIPE_WIDTH_RATIO = 0.28;
 const VELOCITY_THRESHOLD = 700;
 const EDGE_RESISTANCE = 0.32;
 const PAGE_MAX_WIDTH = 430;
+const DESIGN_WIDTH = 390;
+const DESIGN_HEIGHT = 844;
 const MOCK_ANALYSIS_PREVIEW_MS = 1800;
 const MOCK_SAVE_DELAY_MS = 650;
 const BACKGROUND = Colors.warm.white;
@@ -394,16 +396,42 @@ function PhotoLibraryPage({
   onConnect: () => void;
   onSkip: () => void;
 }) {
-  const helperBottom = Math.max(bottomInset + 2, 22);
-  const skipBottom = helperBottom + 28;
-  const primaryBottom = skipBottom + 42;
+  const { width: windowWidth, height: pageHeight } = useWindowDimensions();
+  const pageWidth = Math.min(windowWidth, PAGE_MAX_WIDTH);
+  const layoutScale = Math.min(pageWidth / DESIGN_WIDTH, pageHeight / DESIGN_HEIGHT, 1);
+  const bottomOffset = Math.max(bottomInset + 28, 36 * layoutScale);
+  const helperBottom = bottomOffset;
+  const skipBottom = bottomOffset + 24 * layoutScale;
+  const primaryBottom = bottomOffset + 60 * layoutScale;
+  const mainCardTop = ((DESIGN_HEIGHT - 314) / 2 + 70) * layoutScale;
 
   return (
     <View style={styles.page}>
       <View style={styles.contentLayer}>
-        <View style={styles.photoCopyBlock}>
-          <Text style={styles.photoTitle}>지난 여행도{'\n'}다시 꺼내 볼까요?</Text>
-          <Text style={styles.photoDescription}>
+        <View
+          style={[
+            styles.photoCopyBlock,
+            {
+              top: 145 * layoutScale,
+              left: 20 * layoutScale,
+              right: 20 * layoutScale,
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.photoTitle,
+              { width: Math.min(260 * layoutScale, pageWidth - 40 * layoutScale) },
+            ]}
+          >
+            지난 여행도{'\n'}다시 꺼내 볼까요?
+          </Text>
+          <Text
+            style={[
+              styles.photoDescription,
+              { maxWidth: Math.min(301 * layoutScale, pageWidth - 40 * layoutScale) },
+            ]}
+          >
             사진첩을 연결하면 촬영 시간과 위치를 기준으로{'\n'}지난 여행의 순간을 찾아드려요
           </Text>
         </View>
@@ -412,19 +440,41 @@ function PhotoLibraryPage({
           <BackgroundPolaroidCard
             coverImage={FIGMA_IMAGES.archive.photoFrame}
             thumbnails={FIGMA_IMAGES.record.portugal.dayThumbnails}
-            style={styles.leftBackCard}
+            scale={layoutScale}
+            style={[
+              styles.leftBackCard,
+              {
+                left: -86 * layoutScale,
+                top: 352 * layoutScale,
+              },
+            ]}
             variant="left"
           />
           <BackgroundPolaroidCard
             coverImage={FIGMA_IMAGES.home.heroParis}
             thumbnails={FIGMA_IMAGES.record.kyoto.dayThumbnails}
-            style={styles.rightBackCard}
+            scale={layoutScale}
+            style={[
+              styles.rightBackCard,
+              {
+                left: 245.55 * layoutScale,
+                top: 355 * layoutScale,
+              },
+            ]}
             variant="right"
           />
           <PhotoMemoryCard
             coverImage={FIGMA_IMAGES.record.sydney.cover}
             thumbnails={FIGMA_IMAGES.record.sydney.dayThumbnails}
-            style={styles.mainCard}
+            scale={layoutScale}
+            style={[
+              styles.mainCard,
+              {
+                left: (pageWidth - 227 * layoutScale) / 2,
+                top: mainCardTop,
+                marginLeft: 0,
+              },
+            ]}
           />
         </View>
 
@@ -434,7 +484,11 @@ function PhotoLibraryPage({
           onPress={onConnect}
           style={({ pressed }) => [
             styles.connectButton,
-            { bottom: primaryBottom },
+            {
+              left: 35 * layoutScale,
+              right: 35 * layoutScale,
+              bottom: primaryBottom,
+            },
             pressed && styles.buttonPressed,
           ]}
         >
@@ -517,6 +571,7 @@ function ResultsPage({
   const helperBottom = Math.max(bottomInset + 2, 22);
   const skipBottom = helperBottom + 28;
   const primaryBottom = skipBottom + 42;
+  const listBottom = primaryBottom + 48 + Spacing.lg;
 
   return (
     <View style={styles.page}>
@@ -524,10 +579,12 @@ function ResultsPage({
       <Text style={styles.resultsDescription}>
         사진첩에서 발견한 여행을 확인하고{'\n'}내 여행에 저장해보세요
       </Text>
-      <Text style={styles.countLabel}>총 {candidates.length}개의 여행 후보</Text>
+      <Text style={styles.countLabel}>
+        총 <Text style={styles.countLabelNumber}>{candidates.length}</Text>개의 여행 후보
+      </Text>
 
       <ScrollView
-        style={styles.listViewport}
+        style={[styles.listViewport, { bottom: listBottom }]}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
       >
@@ -643,15 +700,27 @@ function GlassNextButton({ bottom, onPress }: { bottom: number; onPress: () => v
 function PhotoMemoryCard({
   coverImage,
   thumbnails,
+  scale = 1,
   style,
 }: {
   coverImage: ImageSourcePropType;
   thumbnails: ImageSourcePropType[];
+  scale?: number;
   style?: StyleProp<ViewStyle>;
 }) {
   return (
-    <View style={[styles.polaroidCard, style]}>
-      <View style={styles.mainImageWrap}>
+    <View style={[styles.polaroidCard, { width: 227 * scale, height: 314 * scale }, style]}>
+      <View
+        style={[
+          styles.mainImageWrap,
+          {
+            left: 14 * scale,
+            right: 13 * scale,
+            top: 17 * scale,
+            height: 230 * scale,
+          },
+        ]}
+      >
         <Image source={coverImage} style={styles.cardImage} resizeMode="cover" />
         <LinearGradient
           pointerEvents="none"
@@ -659,15 +728,29 @@ function PhotoMemoryCard({
           locations={[0.68, 0.84, 1]}
           style={StyleSheet.absoluteFillObject}
         />
-        <View style={styles.mainCardCopy}>
+        <View style={[styles.mainCardCopy, { left: 11 * scale, bottom: 12 * scale }]}>
           <Text style={styles.mainCardCity}>시드니</Text>
           <Text style={styles.mainCardMeta}>2025.3.5-3.15</Text>
           <Text style={styles.mainCardPhotoCount}>743 photos</Text>
         </View>
       </View>
-      <View style={styles.thumbnailRow}>
+      <View
+        style={[
+          styles.thumbnailRow,
+          {
+            left: 17 * scale,
+            right: 17 * scale,
+            bottom: 20 * scale,
+          },
+        ]}
+      >
         {thumbnails.slice(0, 5).map((thumbnail, index) => (
-          <Image key={index} source={thumbnail} style={styles.thumbnail} resizeMode="cover" />
+          <Image
+            key={index}
+            source={thumbnail}
+            style={[styles.thumbnail, { width: 34 * scale, height: 36 * scale }]}
+            resizeMode="cover"
+          />
         ))}
       </View>
     </View>
@@ -678,11 +761,13 @@ function BackgroundPolaroidCard({
   variant,
   coverImage,
   thumbnails,
+  scale = 1,
   style,
 }: {
   variant: 'left' | 'right';
   coverImage: ImageSourcePropType;
   thumbnails: ImageSourcePropType[];
+  scale?: number;
   style?: StyleProp<ViewStyle>;
 }) {
   const cardImageStyle =
@@ -691,13 +776,40 @@ function BackgroundPolaroidCard({
     variant === 'right' ? RIGHT_BACKGROUND_THUMBNAIL_STYLES : LEFT_BACKGROUND_THUMBNAIL_STYLES;
 
   return (
-    <View style={[styles.backgroundCard, style]}>
-      <Image source={coverImage} style={cardImageStyle} resizeMode="cover" />
+    <View style={[styles.backgroundCard, { width: 203 * scale, height: 282 * scale }, style]}>
+      <Image
+        source={coverImage}
+        style={[
+          cardImageStyle,
+          variant === 'right'
+            ? {
+                left: 17 * scale,
+                top: 14 * scale,
+                width: 178 * scale,
+                height: 212 * scale,
+              }
+            : {
+                left: 14 * scale,
+                top: 14 * scale,
+                width: 178 * scale,
+                height: 212 * scale,
+              },
+        ]}
+        resizeMode="cover"
+      />
       {thumbnails.slice(0, 5).map((thumbnail, index) => (
         <Image
           key={index}
           source={thumbnail}
-          style={[styles.backgroundThumbnail, thumbnailStyles[index]]}
+          style={[
+            styles.backgroundThumbnail,
+            {
+              left: thumbnailStyles[index].left * scale,
+              top: thumbnailStyles[index].top * scale,
+              width: 31.5 * scale,
+              height: 32.9 * scale,
+            },
+          ]}
           resizeMode="cover"
         />
       ))}
@@ -989,16 +1101,12 @@ const styles = StyleSheet.create({
   },
   leftBackCard: {
     position: 'absolute',
-    left: -102,
-    top: 352,
     opacity: 0.8,
     transform: [{ rotate: '-5.13deg' }],
     zIndex: 1,
   },
   rightBackCard: {
     position: 'absolute',
-    right: -43,
-    top: 355,
     opacity: 0.8,
     transform: [{ rotate: '4.35deg' }],
     zIndex: 1,
@@ -1319,12 +1427,16 @@ const styles = StyleSheet.create({
     color: GREY_700,
     letterSpacing: 0,
   },
+  countLabelNumber: {
+    ...Typography.body2Emphasized,
+    color: GREY_700,
+    letterSpacing: 0,
+  },
   listViewport: {
     position: 'absolute',
     top: 305,
     left: Spacing.xl,
     right: Spacing.xl,
-    height: 313,
   },
   listContent: {
     gap: Spacing.sm,
@@ -1391,8 +1503,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
   },
   dateText: {
-    width: 110,
     height: 20,
+    alignSelf: 'stretch',
     ...Typography.body2Regular,
     color: Colors.foundation.grey600,
     letterSpacing: 0,

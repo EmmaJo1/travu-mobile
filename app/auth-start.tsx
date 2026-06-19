@@ -295,7 +295,7 @@ export default function AuthStartScreen() {
             activeOpacity={0.85}
             onPress={() => setSheet('consent')}
           >
-            <Ionicons name="logo-apple" size={22} color="#FFFFFF" style={styles.socialIcon} />
+            <Ionicons name="logo-apple" size={24} color="#FFFFFF" style={styles.appleIcon} />
             <Text style={[styles.socialLabel, styles.appleBtnLabel]}>Apple로 시작하기</Text>
           </TouchableOpacity>
 
@@ -304,7 +304,7 @@ export default function AuthStartScreen() {
             activeOpacity={0.85}
             onPress={() => setSheet('consent')}
           >
-            <View style={styles.socialIcon}>
+            <View style={styles.googleIcon}>
               <GoogleLogo />
             </View>
             <Text style={[styles.socialLabel, styles.googleBtnLabel]}>Google로 시작하기</Text>
@@ -510,24 +510,28 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
-  // ── 버튼 영역 ── (Figma: w:320 h:48 r:8, gap 8, Google 버튼 하단 64px)
+  // ── 버튼 영역 ── (Figma: L+R, h:48 r:8, gap 8, Google 버튼 하단 64px)
   buttonArea: {
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 20,
+    paddingHorizontal: 35,
     paddingBottom: 64,
   },
   socialBtn: {
-    width: 320,
+    alignSelf: 'stretch',
     height: 48,
     borderRadius: 8,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  socialIcon: {
+  appleIcon: {
     position: 'absolute',
-    left: 16,
+    left: 79,
+  },
+  googleIcon: {
+    position: 'absolute',
+    left: 82,
   },
   appleBtn: {
     backgroundColor: Colors.foundation.black,
