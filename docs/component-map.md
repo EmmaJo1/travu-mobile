@@ -95,6 +95,15 @@
 | **역할** | 여행 사진 썸네일 선택 시 전체화면 이미지 탐색 Modal |
 | **확장 방식** | `images`, `initialIndex`, `visible`, `onClose` prop |
 
+#### DestinationSelectModal
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/common/DestinationSelectModal.tsx` |
+| **사용 화면** | Home 여행 시작 설정, Home 여행지 변경, Record 직접 추가 |
+| **역할** | 여행 도시/국가 선택 공통 모달. 국내/해외 탭, 카테고리 chip, 인기 3열 grid, 카테고리/검색 list, 검색어 직접 추가를 제공 |
+| **주요 Props** | `visible`, `initialScope`, `initialCategoryId`, `selectedDestination`, `onSelectDestination`, `onClose`, `onBack`, `title`, `autoFocus` |
+| **재사용성** | 여행 도시/국가 선택 전용 공통 컴포넌트. 특정 장소/스팟 검색은 `PlaceSearchModal`/`PlaceCreateModal` 계열과 역할을 분리 |
+
 #### ScreenContainer
 | 항목 | 내용 |
 |------|------|
@@ -258,9 +267,9 @@
 |------|------|
 | **파일** | `components/home/DestinationSearchModal.tsx` |
 | **사용 화면** | Home |
-| **역할** | 여행 상태 바텀시트의 `여행지 변경`에서 열리는 mock 검색/선택 모달. 도시/국가 타입 결과, 현재 여행지, 취소/저장 처리 |
+| **역할** | 여행 상태 바텀시트의 `여행지 변경`에서 열리는 `DestinationSelectModal` 호환 래퍼 |
 | **주요 Props** | `visible`, `currentDestination`, `onCancel`, `onSave` |
-| **재사용성** | Home 여행 상태 편집 전용. 검색 데이터는 `constants/mockTripDestinations.ts` provider로 분리 |
+| **재사용성** | Home 여행 상태 편집 연결점. 실제 UI와 검색 데이터는 공통 `DestinationSelectModal`과 `constants/mockTripDestinations.ts` provider를 사용 |
 
 #### EndTripConfirmModal
 | 항목 | 내용 |
@@ -295,8 +304,8 @@
 | **파일** | `components/home/TimeLineCard.tsx` |
 | **사용 화면** | Home |
 | **역할** | 오늘의 타임라인 장소별 기록 카드. 시간, timeline line, 장소명, 카테고리·도시, 메모/사진 수, 대표 이미지 표시 |
-| **주요 Props** | `timeLabel`, `placeName`, `categoryLabel`, `cityLabel`, `memoCount`, `photoCount`, `imageSource`, `isLast`, `onPressMore` |
-| **재사용성** | Home 타임라인 전용. record/archive의 `PlaceEntryCard`와 역할이 달라 별도 유지 |
+| **주요 Props** | `timeLabel`, `placeName`, `categoryLabel`, `cityLabel`, `memoCount`, `photoCount`, `imageSource`, `isLast`, `onPress` |
+| **재사용성** | Home 타임라인 전용. 카드 전체 탭으로 PlaceDetailScreen에 진입하는 장소 요약 카드 |
 
 #### TodayTimelineSection
 | 항목 | 내용 |
@@ -304,15 +313,42 @@
 | **파일** | `components/home/TodayTimelineSection.tsx` |
 | **사용 화면** | Home |
 | **역할** | `오늘의 타임라인` 섹션 제목/설명과 `TimeLineCard` 세로 목록 렌더링 |
-| **주요 Props** | `items`, `onPressMore` |
+| **주요 Props** | `items`, `onPressItem` |
 | **재사용성** | Home 전용 섹션 컴포넌트 |
+
+#### TimelinePlaceActionSheet
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/TimelinePlaceActionSheet.tsx` |
+| **사용 화면** | Home 여행 중 모드 |
+| **역할** | `TimeLineCard`의 더보기 버튼에서 열리는 장소 단위 액션 바텀시트. 사진 추가, 기록 남기기, 장소 수정, 타임라인 숨김 메뉴 제공 |
+| **주요 Props** | `visible`, `place`, `dayLabel`, `onClose`, `onPressAddPhoto`, `onPressCreateRecord`, `onPressEditPlace`, `onPressHide` |
+| **재사용성** | 현재 Home 타임라인에서는 직접 호출하지 않음. PlaceDetail 중심 플로우로 전환되어 향후 메뉴형 액션이 필요할 때 재연결 가능 |
+
+#### TimelineRecordModal
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/TimelineRecordModal.tsx` |
+| **사용 화면** | Home 여행 중 모드 |
+| **역할** | 타임라인 장소에 사진과 메모를 함께 남기는 기록 작성 모달. 메모만, 사진만, 사진+메모 기록 모두 지원 |
+| **주요 Props** | `visible`, `place`, `dayLabel`, `onCancel`, `onSave` |
+| **재사용성** | 현재 Home 타임라인에서는 직접 호출하지 않음. 기록 작성은 PlaceDetail/PhotoViewer 흐름에서 연결 예정 |
+
+#### TimelineHideConfirmModal
+| 항목 | 내용 |
+|------|------|
+| **파일** | `components/home/TimelineHideConfirmModal.tsx` |
+| **사용 화면** | Home 여행 중 모드 |
+| **역할** | 장소를 삭제하지 않고 타임라인에서 숨기기 전 확인하는 중앙 모달 |
+| **주요 Props** | `visible`, `onCancel`, `onConfirm` |
+| **재사용성** | 현재 Home 타임라인에서는 직접 호출하지 않음. 장소 숨김 액션이 재도입될 때 재연결 가능 |
 
 #### HomeIdleState
 | 항목 | 내용 |
 |------|------|
 | **파일** | `components/home/HomeIdleState.tsx` |
 | **사용 화면** | Home 일상 모드 |
-| **역할** | 여행 종료 후 표시되는 일상 모드 홈. Idle hero, 자동 감지 여행, 최근 여행, 지난 여행의 순간 섹션을 렌더링. 신규 사용자 온보딩 후 empty 상태에서는 mock 섹션을 숨기고 분석 완료 모달을 overlay로 표시 |
+| **역할** | 여행 종료 후 표시되는 일상 모드 홈. Idle hero, pending 자동 감지 여행, 저장된 최근 여행, 지난 여행의 순간 섹션을 렌더링. 신규 사용자 온보딩 후 empty 상태에서는 mock 섹션을 숨기고 분석 완료 모달을 overlay로 표시 |
 | **주요 Props** | `onPressStartTrip`, `isFirstUserEmptyState`, `photoImportResultCount`, `onPressPhotoImportResults`, `showImportCompleteModal`, `onCloseImportCompleteModal`, `onPressViewImportResults` |
 | **재사용성** | Home 전용 상태 화면. 기존 여행 중 홈 UI를 대체하지 않고 상태 분기로만 사용 |
 
@@ -330,7 +366,7 @@
 |------|------|
 | **파일** | `components/home/StartTripSetupModal.tsx` |
 | **사용 화면** | Home 일상 모드 |
-| **역할** | `여행을 시작할까요?` 확인 이후 여행지와 여행 기간을 간단히 설정하고 여행 시작을 확정하는 중앙 모달 |
+| **역할** | `여행을 시작할까요?` 확인 이후 여행지와 여행 기간을 간단히 설정하고 여행 시작을 확정하는 중앙 모달. 여행지 field는 공통 `DestinationSelectModal`을 연다 |
 | **주요 Props** | `visible`, `initialValue`, `onCancel`, `onSkip`, `onStart` |
 | **재사용성** | Home 시작 플로우 전용. 여행 기간 선택은 Record 직접 추가와 같은 `TripDateRangePickerModal`을 재사용 |
 
@@ -348,8 +384,8 @@
 |------|------|
 | **파일** | `components/home/RecentTripsSection.tsx` |
 | **사용 화면** | Home 일상 모드 |
-| **역할** | 최근 여행 가로 스크롤 카드 목록 |
-| **주요 Props** | `trips` |
+| **역할** | 저장된 최근 여행 가로 스크롤 카드 목록. HomeIdleState에서 여행 종료일 기준 최신순 최대 3개로 제한 |
+| **주요 Props** | `trips`, `onPressTrip` |
 | **재사용성** | Home 일상 모드 전용 |
 
 #### PastMomentsSection
@@ -357,8 +393,16 @@
 |------|------|
 | **파일** | `components/home/PastMomentsSection.tsx` |
 | **사용 화면** | Home 일상 모드 |
-| **역할** | 지난 여행의 순간 가로 스크롤 카드 목록 |
-| **주요 Props** | `moments` |
+| **역할** | 지난 여행의 순간 가로 스크롤 카드 목록. 메모/사진 수/날짜 매칭 점수와 여행별 다양성 제한이 적용된 후보를 표시 |
+| **주요 Props** | `moments`, `onPressMoment` |
+
+#### idleHomeTravelSelectors
+| 항목 | 내용 |
+|------|------|
+| **파일** | `constants/idleHomeTravelSelectors.ts` |
+| **사용 화면** | Home 일상 모드 |
+| **역할** | 자동 감지 여행 pending 선택, 저장된 최근 여행 최신순 정렬/최대 3개 제한, 지난 여행의 순간 후보 정렬/중복 제거/여행별 다양성 제한 |
+| **주요 함수** | `getPendingDetectedTrip`, `getRecentTrips`, `getTravelMoments`, `getMomentDateMatchScore`, `sortMomentCandidates`, `applyMomentDiversityLimit`, `toIdleRecentTripFromSavedTrip` |
 | **재사용성** | Home 일상 모드 전용 |
 
 ---
@@ -414,8 +458,8 @@
 |------|--------|
 | **File** | `components/record/PlaceCreateModal.tsx` |
 | **Screen** | record-day-detail |
-| **Role** | Add a place entry to the currently selected day |
-| **Props** | `visible`, `onClose`, `onSubmit`, `initialValue` (time/category/photoUris included) |
+| **Role** | Add or edit a place entry in the currently selected day. The place field switches to `PlaceSearchContent` inside the same modal instead of opening a separate route or nested modal. |
+| **Props** | `visible`, `onClose`, `onSubmit`, `onDelete`, `initialValue`, `mode`, `tripId`, `dayId`, `tripDestinationName`, `tripDestinationCountry`, `tripLatitude`, `tripLongitude` |
 
 #### TimeWheelPickerModal
 | Item | Detail |
@@ -438,7 +482,7 @@
 |------|------|
 | **파일** | `components/record/DestinationSelectField.tsx` |
 | **사용 화면** | `TripCreateModal` |
-| **역할** | 여행지 선택 필드 |
+| **역할** | 여행지 선택 필드. 탭하면 공통 `DestinationSelectModal`을 연다 |
 | **통합 후보** | `TripDateRangeField`와 동일 구조 → 향후 `FormSelectField` |
 
 #### TripDateRangeField
@@ -672,3 +716,35 @@ app/(tabs)/_layout.tsx
 | **File** | `components/home/HomeIdleState.tsx` |
 | **Props** | `showPhotoImportResultsCard`, `photoImportTripCount`, `onPressViewPhotoImportResults`, `showImportCompleteModal`, `onCloseImportCompleteModal`, `onPressViewImportResults` |
 | **Behavior** | In first-user empty mode, regular mock sections remain hidden. After completion, defer, or result-page open without save, `PhotoImportResultsCard` remains available until selected candidates are saved. After selected candidates are saved, Home renders `PhotoImportSavedModal` from provider `lastSavedTripCount`. |
+### Place Detail
+
+#### PlaceDetailScreen
+| 항목 | 내용 |
+|------|------|
+| **파일** | `app/place-detail.tsx` |
+| **사용 화면** | Home 일상 `PastMomentsSection`, Home 여행 중 `TodayTimelineSection` |
+| **역할** | 장소 단위 상세 화면. Hero 사진 캐러셀, 장소 정보, 사진 섹션, 기록 섹션, 연결된 날짜/여행 이동, 더보기 메뉴를 제공 |
+| **주요 route params** | `tripId`, `dayId`, `placeId`, `entryPoint` |
+| **연결 데이터** | `constants/mockPlaceDetails.ts`의 `getMockPlaceDetail()` |
+| **재사용성** | Home/Record/Archive에서 place 단위 진입이 필요할 때 공통 상세 route로 재사용 가능 |
+| **주요 액션** | 사진 추가, 기록 추가, 장소 정보 수정, 대표사진 변경, 해당 날짜 보기, 해당 여행 보기, 삭제 확인 |
+
+#### mockPlaceDetails
+| 항목 | 내용 |
+|------|------|
+| **파일** | `constants/mockPlaceDetails.ts` |
+| **역할** | `PlaceDetailScreen`용 임시 장소 상세 mock data와 loader 제공 |
+| **주요 타입** | `PlaceDetailData`, `PlaceDetailPhoto`, `PlaceDetailRecord` |
+| **교체 예정** | Supabase place/photos/records 데이터 연결 시 loader 내부를 실제 repository로 교체 |
+
+### Common Place Search
+
+#### PlaceSearchModal
+| Item | Detail |
+|------|--------|
+| **File** | `components/common/PlaceSearchModal.tsx` |
+| **Screen** | Place add/edit flows, record-day-detail place input, future timeline place edit |
+| **Role** | Trip-context place search wrapper. The reusable `PlaceSearchContent` renders inside existing add/edit modals as an internal step, while `PlaceSearchModal` remains as a compatibility wrapper for future full-screen/modal use. |
+| **Main Props** | `visible`, `tripId`, `dayId`, `tripDestinationName`, `tripDestinationCountry`, `tripLatitude`, `tripLongitude`, `selectedPlace`, `onSelectPlace`, `onClose`, `onBack` |
+| **Data Contract** | Emits `PlaceOption` with `name`, `category`, `address`, `city`, `country`, `placeId`, optional coordinates, and `source: 'mock' | 'google' | 'manual'`. Provider helpers are split as `getRecommendedPlacesByTripContext()`, `searchPlacesByTripContext()`, and `createManualPlaceFromSearchText()` so Google Places can replace the mock source later. |
+| **Reuse** | Common component for place/spot selection only. Keep separate from `DestinationSelectModal`, which chooses a trip city/country. |
