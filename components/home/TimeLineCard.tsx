@@ -20,7 +20,7 @@ export interface TimeLineCardProps {
   photoCount: number;
   imageSource: ImageSourcePropType;
   isLast?: boolean;
-  onPressMore?: () => void;
+  onPress?: () => void;
 }
 
 export default function TimeLineCard({
@@ -32,7 +32,7 @@ export default function TimeLineCard({
   photoCount,
   imageSource,
   isLast = false,
-  onPressMore,
+  onPress,
 }: TimeLineCardProps) {
   const normalizedTimeLabel = timeLabel.trim();
   const timeMatch = normalizedTimeLabel.match(/^(.+?)\s*(AM|PM)$/i);
@@ -41,7 +41,13 @@ export default function TimeLineCard({
   const shouldStackTime = normalizedTimeText.length > 1;
 
   return (
-    <View style={styles.card}>
+    <Pressable
+      accessibilityRole={onPress ? 'button' : undefined}
+      accessibilityLabel={`${placeName} 상세 보기`}
+      disabled={!onPress}
+      onPress={onPress}
+      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+    >
       <View style={styles.leftContent}>
         <View style={styles.timeColumn}>
           <View style={styles.timeArea}>
@@ -59,17 +65,7 @@ export default function TimeLineCard({
               <Text style={styles.placeName} numberOfLines={1}>
                 {placeName}
               </Text>
-              <Pressable
-                style={styles.moreButton}
-                accessibilityRole="button"
-                accessibilityLabel={`${placeName} 더보기`}
-                hitSlop={10}
-                onPress={onPressMore}
-              >
-                <View style={styles.moreCircle}>
-                  <Feather name="more-horizontal" size={14} color="#353535" />
-                </View>
-              </Pressable>
+              <Feather name="chevron-right" size={16} color={Colors.foundation.grey400} />
             </View>
 
             <View style={styles.categoryRow}>
@@ -82,7 +78,7 @@ export default function TimeLineCard({
           <View style={styles.countRow}>
             <View style={styles.countItem}>
               <Feather name="edit-3" size={16} color={Colors.foundation.black} />
-              <Text style={styles.countLabel}>메모</Text>
+              <Text style={styles.countLabel}>기록</Text>
               <Text style={styles.countValue}>{memoCount}</Text>
               <Text style={styles.countLabel}>개</Text>
             </View>
@@ -102,7 +98,7 @@ export default function TimeLineCard({
         resizeMode="cover"
         accessibilityLabel={`${placeName} 대표 이미지`}
       />
-    </View>
+    </Pressable>
   );
 }
 
@@ -113,6 +109,9 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 12,
+  },
+  cardPressed: {
+    opacity: 0.86,
   },
   leftContent: {
     flex: 1,
@@ -164,15 +163,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.foundation.grey100,
   },
-  timelineLineLast: {
-  },
+  timelineLineLast: {},
   detailColumn: {
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     gap: 8,
     minHeight: 74,
     minWidth: 0,
-    paddingTop: 2,
+    paddingTop: 0,
   },
   titleBlock: {
     gap: 4,
@@ -181,29 +179,12 @@ const styles = StyleSheet.create({
     minHeight: 22,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 4,
   },
   placeName: {
     ...Typography.body1Emphasized,
     flexShrink: 1,
     color: Colors.foundation.black,
-  },
-  moreButton: {
-    width: 44,
-    height: 44,
-    marginVertical: -14,
-    marginLeft: -6,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  moreCircle: {
-    width: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: Radius.full,
-    backgroundColor: 'rgba(255, 255, 255, 0.4)',
-    overflow: 'hidden',
   },
   categoryRow: {
     flexDirection: 'row',

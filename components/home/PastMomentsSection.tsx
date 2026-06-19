@@ -1,5 +1,5 @@
 import React from 'react';
-import { Image, ScrollView, StyleSheet, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import Text from '@/components/common/AppText';
 import type { IdlePastMoment } from '@/constants/mockIdleHomeData';
@@ -7,9 +7,10 @@ import { Colors, FontFamily } from '@/constants/theme';
 
 interface PastMomentsSectionProps {
   moments: IdlePastMoment[];
+  onPressMoment?: (moment: IdlePastMoment) => void;
 }
 
-export default function PastMomentsSection({ moments }: PastMomentsSectionProps) {
+export default function PastMomentsSection({ moments, onPressMoment }: PastMomentsSectionProps) {
   return (
     <View style={styles.section}>
       <Text style={styles.title}>지난 여행의 순간</Text>
@@ -20,14 +21,20 @@ export default function PastMomentsSection({ moments }: PastMomentsSectionProps)
         contentContainerStyle={styles.listContent}
       >
         {moments.map((moment) => (
-          <View key={moment.id} style={styles.card}>
+          <Pressable
+            key={moment.id}
+            accessibilityRole="button"
+            disabled={!onPressMoment}
+            onPress={() => onPressMoment?.(moment)}
+            style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+          >
             <Image source={moment.image} style={styles.image} resizeMode="cover" />
             <View style={styles.textBlock}>
               <Text style={styles.placeName} numberOfLines={1}>{moment.placeName}</Text>
               <Text style={styles.cityName} numberOfLines={1}>{moment.cityName}</Text>
               <Text style={styles.date} numberOfLines={1}>{moment.date}</Text>
             </View>
-          </View>
+          </Pressable>
         ))}
       </ScrollView>
     </View>
@@ -52,6 +59,9 @@ const styles = StyleSheet.create({
     width: 120,
     height: 216,
     gap: 10,
+  },
+  cardPressed: {
+    opacity: 0.88,
   },
   image: {
     width: 120,

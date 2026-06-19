@@ -7,13 +7,15 @@ import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
+  Alert,
   Image,
   InteractionManager,
+  Platform,
   ScrollView,
   StyleSheet,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
 import DestinationSearchModal from '@/components/home/DestinationSearchModal';
@@ -25,7 +27,9 @@ import StartTripConfirmModal from '@/components/home/StartTripConfirmModal';
 import StartTripSetupModal, {
   type StartTripSetupValue,
 } from '@/components/home/StartTripSetupModal';
-import TodayTimelineSection from '@/components/home/TodayTimelineSection';
+import TodayTimelineSection, {
+  type TodayTimelineItem,
+} from '@/components/home/TodayTimelineSection';
 import TripDatePickerModal from '@/components/home/TripDatePickerModal';
 import TravelStatusButton from '@/components/home/TravelStatusButton';
 import TravelStatusSheet from '@/components/home/TravelStatusSheet';
@@ -68,6 +72,10 @@ const HERO_MASK_COLORS = [
 ] as const;
 
 const HERO_MASK_LOCATIONS = [0, 0.34, 0.58, 0.82, 1] as const;
+
+function getHomeHeaderTop(safeAreaTop: number) {
+  return Platform.OS === 'web' ? 0 : safeAreaTop;
+}
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 const ENGLISH_DESTINATION_LABELS: Record<string, string> = {
   'city-paris-fr': 'Paris',
@@ -87,30 +95,70 @@ const ENGLISH_DESTINATION_LABELS: Record<string, string> = {
   australia: 'Australia',
   뉴욕: 'New York',
   'new york': 'New York',
+  대한민국: 'Korea',
+  한국: 'Korea',
+  서울: 'Seoul',
+  광주: 'Gwangju',
+  부산: 'Busan',
+  대구: 'Daegu',
+  인천: 'Incheon',
+  대전: 'Daejeon',
+  울산: 'Ulsan',
+  제주: 'Jeju',
+  '위치 미정': 'Set location',
   미국: 'United States',
 };
 
 type PendingTravelStatusAction = 'date' | 'destination' | 'endTrip' | null;
 type PhotoImportHomeFlowStatus = 'idle' | 'analyzing' | 'completed';
+type DestinationSource = 'currentLocation' | 'manual' | 'unknown';
 
 interface ActiveTripState {
   destination: DestinationOption;
   startDate: string;
-  endDate: string;
+  endDate: string | null;
+  openEnded: boolean;
+  destinationSource: DestinationSource;
+  latitude?: number;
+  longitude?: number;
+  createdAt?: string;
+  updatedAt?: string;
   isEndDateUndecided: boolean;
   dayNumber: number;
   isRecording: boolean;
 }
 
+type EditableTimelineItem = TodayTimelineItem & {
+  hidden?: boolean;
+  records?: PlaceRecord[];
+  memoEntries?: string[];
+  addedPhotoUris?: string[];
+};
+
+type PlaceRecord = {
+  id: string;
+  tripId: string;
+  dayId: string;
+  placeId: string;
+  text?: string;
+  photoIds?: string[];
+  createdAt: string;
+  updatedAt?: string;
+};
+
 const INITIAL_ACTIVE_TRIP: ActiveTripState = {
   destination: {
     id: 'city-paris-fr',
+    name: 'Paris',
+    country: 'France',
     displayName: 'Paris',
     countryName: 'France',
     type: 'city',
   },
   startDate: '2025-11-02',
   endDate: '2025-11-12',
+  openEnded: false,
+  destinationSource: 'manual',
   isEndDateUndecided: false,
   dayNumber: 1,
   isRecording: true,
@@ -122,6 +170,123 @@ const DEFAULT_START_TRIP_SETUP: StartTripSetupValue = {
   startDate: '2020-03-02',
   endDate: '2020-03-14',
 };
+
+type CurrentLocationDestination = {
+  destination: DestinationOption;
+  latitude: number;
+  longitude: number;
+};
+
+type ReverseGeocodeAddress = {
+  city?: string;
+  town?: string;
+  village?: string;
+  county?: string;
+  state?: string;
+  country?: string;
+};
+
+type ReverseGeocodeResponse = {
+  address?: ReverseGeocodeAddress;
+};
+
+function getTodayDateKey(): string {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = `${today.getMonth() + 1}`.padStart(2, '0');
+  const day = `${today.getDate()}`.padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
+function createDestinationId(prefix: string, displayName: string): string {
+  const normalizedName = displayName
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^\w-]/g, '');
+
+  return `${prefix}-${normalizedName || 'unknown'}`;
+}
+
+function createUnknownDestination(): DestinationOption {
+  return {
+    id: 'unknown-location',
+    name: '위치 미정',
+    country: '',
+    displayName: '위치 미정',
+    countryName: '',
+    type: 'city',
+  };
+}
+
+function requestBrowserCoordinates(): Promise<GeolocationCoordinates> {
+  return new Promise((resolve, reject) => {
+    const geolocation = globalThis.navigator?.geolocation;
+
+    if (!geolocation) {
+      reject(new Error('Geolocation is unavailable.'));
+      return;
+    }
+
+    geolocation.getCurrentPosition(
+      (position) => resolve(position.coords),
+      reject,
+      {
+        enableHighAccuracy: false,
+        maximumAge: 5 * 60 * 1000,
+        timeout: 8000,
+      },
+    );
+  });
+}
+
+async function reverseGeocodeCurrentLocation(
+  latitude: number,
+  longitude: number,
+): Promise<DestinationOption> {
+  const response = await fetch(
+    `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=10&accept-language=ko`,
+    {
+      headers: {
+        Accept: 'application/json',
+      },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error('Reverse geocoding failed.');
+  }
+
+  const result = (await response.json()) as ReverseGeocodeResponse;
+  const address = result.address ?? {};
+  const displayName =
+    address.city ?? address.town ?? address.village ?? address.county ?? address.state;
+
+  if (!displayName) {
+    throw new Error('City-level location is unavailable.');
+  }
+
+  return {
+    id: createDestinationId('current-location', displayName),
+    name: displayName,
+    country: address.country ?? '',
+    displayName,
+    countryName: address.country ?? '',
+    type: 'city',
+  };
+}
+
+async function resolveCurrentLocationDestination(): Promise<CurrentLocationDestination> {
+  const coords = await requestBrowserCoordinates();
+  const destination = await reverseGeocodeCurrentLocation(coords.latitude, coords.longitude);
+
+  return {
+    destination,
+    latitude: coords.latitude,
+    longitude: coords.longitude,
+  };
+}
 
 function parseDateKey(dateKey: string): Date {
   const [year, month, day] = dateKey.split('-').map(Number);
@@ -138,16 +303,16 @@ function formatSheetDateLabel(dateKey: string): string {
   return `${date.getMonth() + 1}월 ${date.getDate()}일`;
 }
 
-function getInclusiveDayCount(startDate: string, endDate: string): number {
+function getInclusiveDayCount(startDate: string, endDate: string | null): number {
   const start = parseDateKey(startDate).getTime();
-  const end = parseDateKey(endDate).getTime();
+  const end = parseDateKey(endDate ?? startDate).getTime();
   const dayMs = 24 * 60 * 60 * 1000;
   return Math.max(1, Math.round((end - start) / dayMs) + 1);
 }
 
 function formatDateRangeDescription(
   startDate: string,
-  endDate: string,
+  endDate: string | null,
   isEndDateUndecided = false,
 ): string {
   const start = parseDateKey(startDate);
@@ -156,7 +321,7 @@ function formatDateRangeDescription(
     return `${start.getMonth() + 1}월 ${start.getDate()}일 시작 · 종료일 미정`;
   }
 
-  const end = parseDateKey(endDate);
+  const end = parseDateKey(endDate ?? startDate);
   const days = getInclusiveDayCount(startDate, endDate);
 
   return `${start.getMonth() + 1}월 ${start.getDate()}일~${end.getMonth() + 1}월 ${end.getDate()}일 (${days}일)`;
@@ -182,6 +347,24 @@ function getEnglishLocationLabel(destination: DestinationOption): string {
     return destination.displayName;
   }
 
+  const koreanCityLabels: Array<[string, string]> = [
+    ['서울', 'Seoul'],
+    ['광주', 'Gwangju'],
+    ['부산', 'Busan'],
+    ['대구', 'Daegu'],
+    ['인천', 'Incheon'],
+    ['대전', 'Daejeon'],
+    ['울산', 'Ulsan'],
+    ['제주', 'Jeju'],
+  ];
+  const matchedKoreanCity = koreanCityLabels.find(([cityName]) =>
+    destination.displayName.includes(cityName),
+  );
+
+  if (matchedKoreanCity) {
+    return matchedKoreanCity[1];
+  }
+
   if (/^[\x00-\x7F]+$/.test(destination.countryName)) {
     return destination.countryName;
   }
@@ -191,6 +374,7 @@ function getEnglishLocationLabel(destination: DestinationOption): string {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     photoImportPreview?: string;
   }>();
@@ -216,6 +400,7 @@ export default function HomeScreen() {
   const [isEndTripCompleteVisible, setEndTripCompleteVisible] = React.useState(false);
   const [isStartTripConfirmVisible, setStartTripConfirmVisible] = React.useState(false);
   const [isStartTripSetupVisible, setStartTripSetupVisible] = React.useState(false);
+  const [isQuickStartingTrip, setQuickStartingTrip] = React.useState(false);
   const [isFirstUserEmptyState, setIsFirstUserEmptyState] = React.useState(false);
   const [photoImportHomeFlowStatus, setPhotoImportHomeFlowStatus] =
     React.useState<PhotoImportHomeFlowStatus>('idle');
@@ -225,6 +410,8 @@ export default function HomeScreen() {
     React.useState(false);
   const [pendingTravelStatusAction, setPendingTravelStatusAction] =
     React.useState<PendingTravelStatusAction>(null);
+  const [timelineItems] =
+    React.useState<EditableTimelineItem[]>(HOME_TIMELINE_ITEMS);
 
   React.useEffect(() => {
     if (params.photoImportPreview !== 'analyzing') {
@@ -313,9 +500,17 @@ export default function HomeScreen() {
     });
   }, []);
 
-  const handlePressTimelineMore = React.useCallback(() => {
-    // TODO: Connect timeline item action bottom sheet.
-  }, []);
+  const handlePressTimelinePlace = React.useCallback((item: TodayTimelineItem) => {
+    router.push({
+      pathname: '/place-detail',
+      params: {
+        tripId: 'active-paris-trip',
+        dayId: `active-paris-day-${activeTrip.dayNumber}`,
+        placeId: item.id,
+        entryPoint: 'activeTripTimeline',
+      },
+    });
+  }, [activeTrip.dayNumber, router]);
 
   const handlePressEditPeriod = React.useCallback(() => {
     closeSheetThenOpen('date');
@@ -338,7 +533,9 @@ export default function HomeScreen() {
       ...prev,
       startDate: range.startDate,
       endDate: range.endDate,
+      openEnded: range.isEndDateUndecided ?? false,
       isEndDateUndecided: range.isEndDateUndecided ?? false,
+      updatedAt: new Date().toISOString(),
     }));
     setDatePickerVisible(false);
     reopenTravelStatusSheet();
@@ -348,27 +545,41 @@ export default function HomeScreen() {
     setActiveTrip((prev) => ({
       ...prev,
       destination,
+      destinationSource: 'manual',
+      latitude: undefined,
+      longitude: undefined,
+      updatedAt: new Date().toISOString(),
     }));
     setDestinationSearchVisible(false);
     reopenTravelStatusSheet();
   }, [reopenTravelStatusSheet]);
 
-  const recordedPhotoCount = HOME_TIMELINE_ITEMS.reduce(
+  const visibleTimelineItems = React.useMemo(
+    () => timelineItems.filter((item) => !item.hidden),
+    [timelineItems],
+  );
+
+  const recordedPhotoCount = visibleTimelineItems.reduce(
     (sum, item) => sum + item.photoCount,
+    0,
+  );
+  const visibleTimelineRecordCount = visibleTimelineItems.reduce(
+    (sum, item) => sum + item.memoCount,
     0,
   );
 
   const handleConfirmEndTrip = React.useCallback(() => {
     const destinationName = getEnglishLocationLabel(activeTrip.destination);
+    const completedEndDate = activeTrip.endDate ?? getTodayDateKey();
 
     addSavedCompletedTrip({
-      id: `${activeTrip.destination.id}-${activeTrip.startDate}-${activeTrip.endDate}`,
+      id: `${activeTrip.destination.id}-${activeTrip.startDate}-${completedEndDate}`,
       destinationName,
       countryName: activeTrip.destination.countryName,
       startDate: activeTrip.startDate,
-      endDate: activeTrip.endDate,
+      endDate: completedEndDate,
       coverImage: currentTrip.heroImage,
-      daysCount: getInclusiveDayCount(activeTrip.startDate, activeTrip.endDate),
+      daysCount: getInclusiveDayCount(activeTrip.startDate, completedEndDate),
       photoCount: recordedPhotoCount,
     });
     setActiveTrip((prev) => ({
@@ -416,21 +627,59 @@ export default function HomeScreen() {
     });
   }, []);
 
+  const startOpenEndedTrip = React.useCallback((params: {
+    destination: DestinationOption;
+    destinationSource: DestinationSource;
+    latitude?: number;
+    longitude?: number;
+  }) => {
+    const now = new Date().toISOString();
+    const today = getTodayDateKey();
+
+    setActiveTrip((prev) => ({
+      ...prev,
+      destination: params.destination,
+      destinationSource: params.destinationSource,
+      latitude: params.latitude,
+      longitude: params.longitude,
+      startDate: today,
+      endDate: null,
+      openEnded: true,
+      isEndDateUndecided: true,
+      dayNumber: 1,
+      isRecording: true,
+      createdAt: now,
+      updatedAt: now,
+    }));
+    setStartTripSetupVisible(false);
+    setIsTraveling(true);
+  }, []);
+
   const startTripWithSetup = React.useCallback((setup: StartTripSetupValue) => {
+    const now = new Date().toISOString();
+
     setStartTripSetupVisible(false);
     setActiveTrip((prev) => ({
       ...prev,
       destination: {
         id: `manual-${setup.destinationName.toLowerCase().replace(/\s+/g, '-')}`,
+        name: setup.destinationName,
+        country: setup.countryName,
         displayName: setup.destinationName,
         countryName: setup.countryName,
         type: 'city',
       },
       startDate: setup.startDate,
       endDate: setup.endDate,
+      openEnded: setup.isEndDateUndecided ?? false,
+      destinationSource: 'manual',
+      latitude: undefined,
+      longitude: undefined,
       isEndDateUndecided: setup.isEndDateUndecided ?? false,
       dayNumber: 1,
       isRecording: true,
+      createdAt: now,
+      updatedAt: now,
     }));
     setIsTraveling(true);
   }, []);
@@ -439,9 +688,63 @@ export default function HomeScreen() {
     setStartTripSetupVisible(false);
   }, []);
 
-  const handleSkipStartTripSetup = React.useCallback(() => {
-    startTripWithSetup(DEFAULT_START_TRIP_SETUP);
-  }, [startTripWithSetup]);
+  const startTripWithoutLocation = React.useCallback(() => {
+    startOpenEndedTrip({
+      destination: createUnknownDestination(),
+      destinationSource: 'unknown',
+    });
+  }, [startOpenEndedTrip]);
+
+  const startTripThenSelectDestination = React.useCallback(() => {
+    startTripWithoutLocation();
+    requestAnimationFrame(() => {
+      setDestinationSearchVisible(true);
+    });
+  }, [startTripWithoutLocation]);
+
+  const showQuickStartLocationFallback = React.useCallback(() => {
+    Alert.alert(
+      '위치를 확인할 수 없어요',
+      '여행지를 직접 선택하거나, 위치 없이 시작할 수 있어요.',
+      [
+        {
+          text: '취소',
+          style: 'cancel',
+        },
+        {
+          text: '위치 없이 시작',
+          onPress: startTripWithoutLocation,
+        },
+        {
+          text: '여행지 선택하기',
+          onPress: startTripThenSelectDestination,
+        },
+      ],
+    );
+  }, [startTripThenSelectDestination, startTripWithoutLocation]);
+
+  const handleQuickStartWithCurrentLocation = React.useCallback(async () => {
+    if (isQuickStartingTrip) {
+      return;
+    }
+
+    setQuickStartingTrip(true);
+
+    try {
+      const currentLocation = await resolveCurrentLocationDestination();
+
+      startOpenEndedTrip({
+        destination: currentLocation.destination,
+        destinationSource: 'currentLocation',
+        latitude: currentLocation.latitude,
+        longitude: currentLocation.longitude,
+      });
+    } catch {
+      showQuickStartLocationFallback();
+    } finally {
+      setQuickStartingTrip(false);
+    }
+  }, [isQuickStartingTrip, showQuickStartLocationFallback, startOpenEndedTrip]);
 
   const statusButtonLabel = activeTrip.isRecording ? '여행 중' : '종료됨';
   const statusBadgeLabel = activeTrip.isRecording ? '여행 기록 중' : '여행 종료됨';
@@ -454,6 +757,7 @@ export default function HomeScreen() {
     activeTrip.isEndDateUndecided,
   );
   const headerLocationLabel = getEnglishLocationLabel(activeTrip.destination);
+  const homeHeaderTop = getHomeHeaderTop(insets.top);
   const photoImportResultCount = photoImportCandidates.length;
   const shouldShowPhotoImportResultsCard =
     !hasSavedPhotoImportResults &&
@@ -470,6 +774,7 @@ export default function HomeScreen() {
       <>
         <HomeIdleState
           onPressStartTrip={handlePressStartTripFromIdle}
+          headerTop={homeHeaderTop}
           isFirstUserEmptyState={isFirstUserEmptyState}
           showPhotoImportResultsCard={shouldShowPhotoImportResultsCard}
           photoImportTripCount={photoImportResultCount}
@@ -492,7 +797,8 @@ export default function HomeScreen() {
           visible={isStartTripSetupVisible}
           initialValue={DEFAULT_START_TRIP_SETUP}
           onCancel={handleCancelStartTripSetup}
-          onSkip={handleSkipStartTripSetup}
+          onSkip={handleQuickStartWithCurrentLocation}
+          isQuickStarting={isQuickStartingTrip}
           onStart={startTripWithSetup}
         />
       </>
@@ -535,26 +841,24 @@ export default function HomeScreen() {
               style={styles.heroHeaderDim}
             />
 
-            <SafeAreaView edges={['top']} style={styles.heroHeaderSafe}>
-              <View style={styles.heroHeader}>
-                <View style={styles.locationRow}>
-                  <Ionicons name="location-outline" size={16} color={Colors.foundation.white} />
-                  <Text style={styles.locationLabel}>{headerLocationLabel}</Text>
-                </View>
-
-                <View style={styles.headerCenter}>
-                  <Text style={styles.dayLabel}>Day {activeTrip.dayNumber}</Text>
-                  <Text style={styles.dateLabel}>{heroDateLabel}</Text>
-                </View>
-
-                <TravelStatusButton
-                  backdropImage={currentTrip.heroImage}
-                  label={statusButtonLabel}
-                  dotColor={statusDotColor}
-                  onPress={handlePressTravelStatus}
-                />
+            <View style={[styles.heroHeader, { top: homeHeaderTop }]}>
+              <View style={styles.locationRow}>
+                <Ionicons name="location-outline" size={16} color={Colors.foundation.white} />
+                <Text style={styles.locationLabel}>{headerLocationLabel}</Text>
               </View>
-            </SafeAreaView>
+
+              <View style={styles.headerCenter}>
+                <Text style={styles.dayLabel}>Day {activeTrip.dayNumber}</Text>
+                <Text style={styles.dateLabel}>{heroDateLabel}</Text>
+              </View>
+
+              <TravelStatusButton
+                backdropImage={currentTrip.heroImage}
+                label={statusButtonLabel}
+                dotColor={statusDotColor}
+                onPress={handlePressTravelStatus}
+              />
+            </View>
           </View>
         </View>
 
@@ -562,13 +866,13 @@ export default function HomeScreen() {
           <TodaySummary
             distanceKm={todaySummary.distanceKm}
             placeCount={todaySummary.visitedPlacesCount}
-            momentCount={todaySummary.recordedMomentsCount}
+            momentCount={visibleTimelineRecordCount}
           />
         </View>
 
         <TodayTimelineSection
-          items={HOME_TIMELINE_ITEMS}
-          onPressMore={handlePressTimelineMore}
+          items={visibleTimelineItems}
+          onPressItem={handlePressTimelinePlace}
         />
       </ScrollView>
 
@@ -591,7 +895,7 @@ export default function HomeScreen() {
       <TripDatePickerModal
         visible={isDatePickerVisible}
         startDate={activeTrip.startDate}
-        endDate={activeTrip.endDate}
+        endDate={activeTrip.endDate ?? activeTrip.startDate}
         isEndDateUndecided={activeTrip.isEndDateUndecided}
         onCancel={handleCancelDatePicker}
         onSave={handleSaveDateRange}
@@ -678,13 +982,11 @@ const styles = StyleSheet.create({
   heroHeaderDim: {
     ...StyleSheet.absoluteFillObject,
   },
-  heroHeaderSafe: {
-    width: '100%',
-  },
   heroHeader: {
-    width: '100%',
+    position: 'absolute',
+    left: 0,
+    right: 0,
     height: HEADER_HEIGHT,
-    marginTop: -4,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',

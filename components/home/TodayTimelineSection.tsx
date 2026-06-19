@@ -5,18 +5,18 @@ import TimeLineCard, { type TimeLineCardProps } from '@/components/home/TimeLine
 import Text from '@/components/common/AppText';
 import { Colors, Typography } from '@/constants/theme';
 
-export type TodayTimelineItem = Omit<TimeLineCardProps, 'isLast' | 'onPressMore'> & {
+export type TodayTimelineItem = Omit<TimeLineCardProps, 'isLast' | 'onPress'> & {
   id: string;
 };
 
 interface TodayTimelineSectionProps {
   items: TodayTimelineItem[];
-  onPressMore?: (item: TodayTimelineItem) => void;
+  onPressItem?: (item: TodayTimelineItem) => void;
 }
 
 export default function TodayTimelineSection({
   items,
-  onPressMore,
+  onPressItem,
 }: TodayTimelineSectionProps) {
   return (
     <View style={styles.section}>
@@ -31,7 +31,7 @@ export default function TodayTimelineSection({
             key={item.id}
             {...item}
             isLast={index === items.length - 1}
-            onPressMore={onPressMore ? () => onPressMore(item) : undefined}
+            onPress={onPressItem ? () => onPressItem(item) : undefined}
           />
         ))}
       </View>

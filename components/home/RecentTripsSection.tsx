@@ -1,16 +1,17 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import React from 'react';
-import { Image, ScrollView, StyleSheet, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import Text from '@/components/common/AppText';
 import type { IdleRecentTrip } from '@/constants/mockIdleHomeData';
-import { Colors, FontFamily } from '@/constants/theme';
+import { Colors, FontFamily, Typography } from '@/constants/theme';
 
 interface RecentTripsSectionProps {
   trips: IdleRecentTrip[];
+  onPressTrip?: (trip: IdleRecentTrip) => void;
 }
 
-export default function RecentTripsSection({ trips }: RecentTripsSectionProps) {
+export default function RecentTripsSection({ trips, onPressTrip }: RecentTripsSectionProps) {
   return (
     <View style={styles.section}>
       <Text style={styles.title}>최근 여행을 살펴보세요</Text>
@@ -21,7 +22,13 @@ export default function RecentTripsSection({ trips }: RecentTripsSectionProps) {
         contentContainerStyle={styles.listContent}
       >
         {trips.map((trip) => (
-          <View key={trip.id} style={styles.card}>
+          <Pressable
+            key={trip.id}
+            accessibilityRole="button"
+            disabled={!onPressTrip}
+            onPress={() => onPressTrip?.(trip)}
+            style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+          >
             <Image source={trip.image} style={styles.image} resizeMode="cover" />
             <LinearGradient
               colors={[
@@ -39,7 +46,18 @@ export default function RecentTripsSection({ trips }: RecentTripsSectionProps) {
             />
             <Text style={styles.city}>{trip.city}</Text>
             <Text style={styles.date}>{trip.dateRange}</Text>
-          </View>
+            <View style={styles.metaRow}>
+              <View style={styles.metaGroup}>
+                <Text style={styles.metaLabel}>장소</Text>
+                <Text style={styles.metaValue}>{trip.placeCount ?? 11}</Text>
+              </View>
+              <Text style={styles.metaSeparator}>·</Text>
+              <View style={styles.metaGroup}>
+                <Text style={styles.metaLabel}>사진</Text>
+                <Text style={styles.metaValue}>{trip.photoCount ?? 32}</Text>
+              </View>
+            </View>
+          </Pressable>
         ))}
       </ScrollView>
     </View>
@@ -67,6 +85,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: Colors.foundation.grey100,
   },
+  cardPressed: {
+    opacity: 0.88,
+  },
   image: {
     ...StyleSheet.absoluteFillObject,
     width: '100%',
@@ -82,19 +103,45 @@ const styles = StyleSheet.create({
   city: {
     position: 'absolute',
     left: 12,
-    bottom: 38,
-    fontFamily: FontFamily.pretendardSemiBold,
-    fontSize: 16,
-    lineHeight: 22,
+    top: 180  ,
+    ...Typography.body1Emphasized,
     color: Colors.foundation.white,
   },
   date: {
     position: 'absolute',
     left: 12,
-    bottom: 18,
+    top: 202,
+    ...Typography.body2Regular,
+    color: Colors.foundation.white,
+  },
+  metaRow: {
+    position: 'absolute',
+    left: 12,
+    top: 222,
+    height: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  metaGroup: {
+    height: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  metaLabel: {
+    ...Typography.captionRegular,
+    color: Colors.foundation.white,
+  },
+  metaValue: {
+    ...Typography.captionEmphasized,
+    color: Colors.foundation.white,
+  },
+  metaSeparator: {
+    width: 12,
     fontFamily: FontFamily.pretendard,
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 16,
+    lineHeight: 19,
+    textAlign: 'center',
     color: Colors.foundation.white,
   },
 });

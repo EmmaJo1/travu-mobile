@@ -21,6 +21,17 @@ export default function PhotoImportSavedModal({
   savedTripCount,
   onClose,
 }: PhotoImportSavedModalProps) {
+  const [lastNonZeroSavedTripCount, setLastNonZeroSavedTripCount] =
+    React.useState(savedTripCount);
+  const displaySavedTripCount =
+    savedTripCount > 0 ? savedTripCount : lastNonZeroSavedTripCount;
+
+  React.useEffect(() => {
+    if (savedTripCount > 0) {
+      setLastNonZeroSavedTripCount(savedTripCount);
+    }
+  }, [savedTripCount]);
+
   return (
     <Modal
       visible={visible}
@@ -36,7 +47,7 @@ export default function PhotoImportSavedModal({
           </View>
 
           <View style={styles.copyBlock}>
-            <Text style={styles.title}>여행 {savedTripCount}개를 저장했어요</Text>
+            <Text style={styles.title}>여행 {displaySavedTripCount}개를 저장했어요</Text>
             <Text style={styles.description}>
               선택한 여행을 ‘내 여행’에서{'\n'}
               언제든 다시 확인할 수 있어요

@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
@@ -20,13 +21,19 @@ import RecentTripsSection from '@/components/home/RecentTripsSection';
 import PhotoImportCompleteModal from '@/components/onboarding/PhotoImportCompleteModal';
 import { FIGMA_IMAGES } from '@/constants/figmaImages';
 import {
+  getPendingDetectedTrip,
+  getRecentTrips,
+  getTravelMoments,
+  toIdleRecentTripFromSavedTrip,
+} from '@/constants/idleHomeTravelSelectors';
+import {
   MOCK_DETECTED_TRIP,
   MOCK_PAST_MOMENTS,
   MOCK_RECENT_TRIPS,
   type DetectedTrip,
-  type IdleRecentTrip,
+  type IdlePastMoment,
 } from '@/constants/mockIdleHomeData';
-import { addSavedIdleDetectedTrip } from '@/constants/savedMyPageTrips';
+import { addSavedIdleDetectedTrip, useSavedMyPageTrips } from '@/constants/savedMyPageTrips';
 import { Colors, FontFamily } from '@/constants/theme';
 
 const HERO_HEIGHT = 299;
@@ -34,6 +41,7 @@ const WARM_WHITE = Colors.warm.white;
 
 interface HomeIdleStateProps {
   onPressStartTrip?: () => void;
+  headerTop?: number;
   isFirstUserEmptyState?: boolean;
   showPhotoImportResultsCard?: boolean;
   photoImportTripCount?: number;
@@ -43,17 +51,9 @@ interface HomeIdleStateProps {
   onPressViewImportResults?: () => void;
 }
 
-function convertDetectedTrip(trip: DetectedTrip): IdleRecentTrip {
-  return {
-    id: `recent-${trip.id}`,
-    city: trip.city,
-    dateRange: trip.dateRange,
-    image: trip.image,
-  };
-}
-
 export default function HomeIdleState({
   onPressStartTrip,
+  headerTop = 0,
   isFirstUserEmptyState = false,
   showPhotoImportResultsCard = false,
   photoImportTripCount = 0,
@@ -62,35 +62,67 @@ export default function HomeIdleState({
   onCloseImportCompleteModal,
   onPressViewImportResults,
 }: HomeIdleStateProps) {
-  const [detectedTrip, setDetectedTrip] = React.useState<DetectedTrip | null>(MOCK_DETECTED_TRIP);
-  const [isDetectedTripSaved, setDetectedTripSaved] = React.useState(false);
+  const router = useRouter();
+  const savedMyPageTrips = useSavedMyPageTrips();
+  const [detectedTrips, setDetectedTrips] = React.useState<DetectedTrip[]>([MOCK_DETECTED_TRIP]);
   const [isRefreshing, setRefreshing] = React.useState(false);
-  const [recentTrips, setRecentTrips] = React.useState(MOCK_RECENT_TRIPS);
+
+  const pendingDetectedTrip = React.useMemo(
+    () => getPendingDetectedTrip(detectedTrips),
+    [detectedTrips],
+  );
+
+  const recentTrips = React.useMemo(
+    () => getRecentTrips([
+      ...MOCK_RECENT_TRIPS,
+      ...savedMyPageTrips.map(toIdleRecentTripFromSavedTrip),
+    ]),
+    [savedMyPageTrips],
+  );
+
+  const recentTripIds = React.useMemo(
+    () => recentTrips.map((trip) => trip.tripId ?? trip.id),
+    [recentTrips],
+  );
+
+  const pastMoments = React.useMemo(
+    () => getTravelMoments(MOCK_PAST_MOMENTS, recentTripIds),
+    [recentTripIds],
+  );
 
   const handleSaveDetectedTrip = React.useCallback((trip: DetectedTrip) => {
-    setRecentTrips((current) => {
-      if (current.some((item) => item.id === `recent-${trip.id}`)) {
-        return current;
-      }
-
-      return [convertDetectedTrip(trip), ...current];
-    });
-    setDetectedTripSaved(true);
+    addSavedIdleDetectedTrip(trip);
+    setDetectedTrips((current) =>
+      current.map((item) => (item.id === trip.id ? { ...item, status: 'saved' } : item)),
+    );
   }, []);
 
   const handleRefresh = React.useCallback(() => {
     setRefreshing(true);
 
-    if (detectedTrip && isDetectedTripSaved) {
-      addSavedIdleDetectedTrip(detectedTrip);
-      setDetectedTrip(null);
-      setDetectedTripSaved(false);
-    }
-
     requestAnimationFrame(() => {
       setRefreshing(false);
     });
-  }, [detectedTrip, isDetectedTripSaved]);
+  }, []);
+
+  const handlePressRecentTrip = React.useCallback((tripId: string) => {
+    router.push({
+      pathname: '/day-archive-detail',
+      params: { tripId },
+    });
+  }, [router]);
+
+  const handlePressMoment = React.useCallback((moment: IdlePastMoment) => {
+    router.push({
+      pathname: '/place-detail',
+      params: {
+        tripId: moment.tripId ?? '',
+        dayId: moment.dayId ?? '',
+        placeId: moment.placeId ?? '',
+        entryPoint: 'dailyMoment',
+      },
+    });
+  }, [router]);
 
   return (
     <View style={styles.root}>
@@ -127,7 +159,7 @@ export default function HomeIdleState({
             style={styles.heroFade}
           />
 
-          <View style={styles.heroHeader}>
+          <View style={[styles.heroHeader, { top: headerTop }]}>
             <View style={styles.locationRow}>
               <Ionicons name="location-outline" size={16} color={Colors.foundation.white} />
               <Text style={styles.locationLabel}>Seoul</Text>
@@ -205,26 +237,32 @@ export default function HomeIdleState({
             </View>
           ) : null}
 
-          {!isFirstUserEmptyState && !showPhotoImportResultsCard && detectedTrip ? (
+          {!isFirstUserEmptyState && !showPhotoImportResultsCard && pendingDetectedTrip ? (
             <DetectedTripSection
-              trip={detectedTrip}
-              saved={isDetectedTripSaved}
+              trip={pendingDetectedTrip}
               onSave={handleSaveDetectedTrip}
             />
           ) : null}
 
-          {!isFirstUserEmptyState ? (
+          {!isFirstUserEmptyState && (recentTrips.length > 0 || pastMoments.length > 0) ? (
             <>
-              <View
-                style={
-                  !detectedTrip && !showPhotoImportResultsCard
-                    ? styles.recentTripsWithoutDetected
-                    : null
-                }
-              >
-                <RecentTripsSection trips={recentTrips} />
-              </View>
-              <PastMomentsSection moments={MOCK_PAST_MOMENTS} />
+              {recentTrips.length > 0 ? (
+                <View
+                  style={
+                    !pendingDetectedTrip && !showPhotoImportResultsCard
+                      ? styles.recentTripsWithoutDetected
+                      : null
+                  }
+                >
+                  <RecentTripsSection
+                    trips={recentTrips}
+                    onPressTrip={(trip) => handlePressRecentTrip(trip.tripId ?? trip.id)}
+                  />
+                </View>
+              ) : null}
+              {pastMoments.length > 0 ? (
+                <PastMomentsSection moments={pastMoments} onPressMoment={handlePressMoment} />
+              ) : null}
             </>
           ) : null}
         </View>
@@ -266,13 +304,14 @@ const styles = StyleSheet.create({
   },
   heroHeader: {
     position: 'absolute',
-    top: 52,
-    left: 20,
-    right: 20,
-    height: 28,
+    left: 0,
+    right: 0,
+    height: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
   },
   locationRow: {
     width: 67,
@@ -295,7 +334,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    top: 3,
+    top: 10,
     fontFamily: FontFamily.pretendardSemiBold,
     fontSize: 18,
     lineHeight: 24,
