@@ -63,6 +63,14 @@ export default function RootLayout() {
               <Stack.Screen name="place-detail" options={{ headerShown: false }} />
               <Stack.Screen name="record-day-detail" options={{ headerShown: false }} />
               <Stack.Screen name="day-archive-detail" options={{ headerShown: false }} />
+              <Stack.Screen name="find-trips-loading" options={{ headerShown: false }} />
+              <Stack.Screen name="detected-trips" options={{ headerShown: false }} />
+              <Stack.Screen name="no-detected-trips" options={{ headerShown: false }} />
+              <Stack.Screen name="photo-permission-required" options={{ headerShown: false }} />
+              <Stack.Screen name="create-trip" options={{ headerShown: false }} />
+              <Stack.Screen name="select-trip-destination" options={{ headerShown: false }} />
+              <Stack.Screen name="select-trip-date" options={{ headerShown: false }} />
+              <Stack.Screen name="trip-created" options={{ headerShown: false }} />
             </Stack>
           </PhotoImportFlowProvider>
           <StatusBar style="auto" />

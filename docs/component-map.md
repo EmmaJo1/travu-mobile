@@ -748,3 +748,22 @@ app/(tabs)/_layout.tsx
 | **Main Props** | `visible`, `tripId`, `dayId`, `tripDestinationName`, `tripDestinationCountry`, `tripLatitude`, `tripLongitude`, `selectedPlace`, `onSelectPlace`, `onClose`, `onBack` |
 | **Data Contract** | Emits `PlaceOption` with `name`, `category`, `address`, `city`, `country`, `placeId`, optional coordinates, and `source: 'mock' | 'google' | 'manual'`. Provider helpers are split as `getRecommendedPlacesByTripContext()`, `searchPlacesByTripContext()`, and `createManualPlaceFromSearchText()` so Google Places can replace the mock source later. |
 | **Reuse** | Common component for place/spot selection only. Keep separate from `DestinationSelectModal`, which chooses a trip city/country. |
+
+### Place Detail Photo Record Flow
+
+#### FullScreenImageViewer photo actions
+| Item | Detail |
+|------|--------|
+| **File** | `components/common/FullScreenImageViewer.tsx` |
+| **Role** | Optional photo action surface for PlaceDetail. Existing simple image viewing remains unchanged when optional props are omitted. |
+| **Main Props** | `actionLabel`, `onPressAction`, `actions` |
+| **Behavior** | PlaceDetail uses the bottom CTA for `이 순간 기록하기` and the top-right menu for share, cover photo, info, and delete actions. |
+
+#### PlaceDetail photo-based records
+| Item | Detail |
+|------|--------|
+| **File** | `app/place-detail.tsx` |
+| **Role** | Creates `PlaceDetailRecord` entries from selected photo IDs instead of starting from an empty memo first. |
+| **Single Photo Flow** | Photo thumbnail or hero photo > `FullScreenImageViewer` > `이 순간 기록하기` > bottom sheet record composer. |
+| **Multi Photo Flow** | `전체보기` > `선택` > select photos > `선택한 사진 n장에 기록 남기기` > full-screen record composer. |
+| **Data Contract** | Saved records include `photoIds`, `text`, `time`, `tripId`, `dayId`, and `placeId`; record thumbnails show the first linked photo and `+N` for additional linked photos. |
