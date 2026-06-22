@@ -415,6 +415,7 @@ export function PlaceSearchContent({
       </View>
 
       <ScrollView
+        style={styles.resultsScroll}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
@@ -545,10 +546,11 @@ const styles = StyleSheet.create({
   contentWrap: {
     flex: 1,
     paddingHorizontal: Spacing.xl,
-    paddingTop: Spacing.lg,
+    paddingTop: 0,
+    overflow: 'hidden',
   },
   searchBox: {
-    minHeight: 56,
+    height: 48,
     borderRadius: Radius.sm,
     paddingHorizontal: Spacing.lg,
     flexDirection: 'row',
@@ -562,6 +564,9 @@ const styles = StyleSheet.create({
     minWidth: 0,
     paddingVertical: 0,
     color: Colors.foundation.black,
+  },
+  resultsScroll: {
+    flex: 1,
   },
   scrollContent: {
     paddingTop: Spacing['2xl'],

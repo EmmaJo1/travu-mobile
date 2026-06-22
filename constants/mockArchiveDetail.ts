@@ -23,6 +23,7 @@ export interface ArchiveDetailPlace {
   category?: string;
   city?: string;
   memo?: string;
+  records?: string[];
   rating?: number;
   images: ImageSourcePropType[];
 }
@@ -119,13 +120,17 @@ export const MOCK_ARCHIVE_DETAIL: ArchiveDetailData = {
 export function toPlaceEntries(places: ArchiveDetailPlace[]): PlaceEntry[] {
   return places.map((place) => ({
     id: place.id,
+    placeName: place.name,
+    cityName: place.city,
+    countryName: MOCK_ARCHIVE_DETAIL.country,
     time: place.timeLabel,
     place: place.name,
     category: place.category,
     city: place.city,
-    text: place.memo,
+    text: place.records?.[0] ?? place.memo,
     rating: place.rating,
     photoSources: place.images,
-    onEdit: () => {},
+    photoCount: place.images.length,
+    recordCount: place.records?.length ?? (place.memo ? 1 : 0),
   }));
 }

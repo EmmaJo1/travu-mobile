@@ -377,6 +377,8 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     photoImportPreview?: string;
+    action?: string;
+    actionId?: string;
   }>();
   const { currentTrip, todaySummary } = HOME_MOCK_DATA;
   const {
@@ -412,6 +414,7 @@ export default function HomeScreen() {
     React.useState<PendingTravelStatusAction>(null);
   const [timelineItems] =
     React.useState<EditableTimelineItem[]>(HOME_TIMELINE_ITEMS);
+  const handledTabActionIdRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
     if (params.photoImportPreview !== 'analyzing') {
@@ -423,6 +426,20 @@ export default function HomeScreen() {
     setShowPhotoImportCompleteModal(false);
     setHasDismissedPhotoImportCompleteModal(false);
   }, [params.photoImportPreview]);
+
+  React.useEffect(() => {
+    if (params.action !== 'startTrip') {
+      return;
+    }
+
+    const actionKey = params.actionId ?? 'startTrip';
+    if (handledTabActionIdRef.current === actionKey) {
+      return;
+    }
+
+    handledTabActionIdRef.current = actionKey;
+    setStartTripConfirmVisible(true);
+  }, [params.action, params.actionId]);
 
   React.useEffect(() => {
     if (photoImportHomeFlowStatus !== 'analyzing') {

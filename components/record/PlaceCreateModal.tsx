@@ -13,12 +13,10 @@ import {
   TouchableOpacity,
   View,
   type ImageSourcePropType,
-  type TextInputProps,
 } from 'react-native';
 
 import AuthActionButton from '@/components/common/AuthActionButton';
 import Text from '@/components/common/AppText';
-import AppTextInput from '@/components/common/AppTextInput';
 import { PlaceSearchContent, type PlaceOption } from '@/components/common/PlaceSearchModal';
 import ManualPlaceEntryView from '@/components/record/ManualPlaceEntryView';
 import TimeWheelPickerModal from '@/components/record/TimeWheelPickerModal';
@@ -67,24 +65,6 @@ interface PlaceCreateModalProps {
   tripLongitude?: number;
 }
 
-interface FormFieldProps extends TextInputProps {
-  label: string;
-}
-
-function FormField({ label, multiline, style, ...props }: FormFieldProps) {
-  return (
-    <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
-      <AppTextInput
-        multiline={multiline}
-        placeholderTextColor={Colors.foundation.grey500}
-        style={[styles.input, multiline && styles.memoInput, style]}
-        {...props}
-      />
-    </View>
-  );
-}
-
 interface SelectFieldProps {
   label: string;
   placeholder: string;
@@ -109,7 +89,7 @@ function SelectField({ label, placeholder, value, subtitle, onPress }: SelectFie
           </Text>
           {subtitle ? <Text style={styles.selectSubtitle}>{subtitle}</Text> : null}
         </View>
-        <Ionicons color={Colors.foundation.black} name="chevron-down" size={18} />
+        <Ionicons color={Colors.foundation.black} name="chevron-forward" size={18} />
       </TouchableOpacity>
     </View>
   );
@@ -417,7 +397,8 @@ export default function PlaceCreateModal({
       onRequestClose={handleClose}
     >
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={pickerPage === 'place-search' ? undefined : Platform.OS === 'ios' ? 'padding' : undefined}
+        enabled={pickerPage !== 'place-search'}
         style={styles.overlay}
       >
         <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
@@ -493,14 +474,6 @@ export default function PlaceCreateModal({
                   onPress={() => setPickerPage('category')}
                   placeholder="카테고리를 선택하세요"
                   value={category}
-                />
-                <FormField
-                  label="메모"
-                  multiline
-                  onChangeText={setText}
-                  placeholder="장소에서의 기억을 남겨보세요"
-                  textAlignVertical="top"
-                  value={text}
                 />
               </ScrollView>
 
@@ -654,11 +627,13 @@ const styles = StyleSheet.create({
     gap: Spacing.xl,
     backgroundColor: Colors.foundation.white,
     borderRadius: Radius.lg,
+    overflow: 'hidden',
     ...Shadows.modal,
   },
   searchStep: {
     height: 430,
     marginHorizontal: -Spacing.xl,
+    overflow: 'hidden',
   },
   header: {
     alignItems: 'center',
@@ -694,22 +669,6 @@ const styles = StyleSheet.create({
   label: {
     ...Typography.body1Emphasized,
     color: Colors.foundation.black,
-  },
-  input: {
-    height: 44,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 0,
-    textAlignVertical: 'center',
-    borderWidth: 1,
-    borderColor: Colors.foundation.grey500,
-    borderRadius: Radius.sm,
-    color: Colors.foundation.black,
-    ...Typography.body2Regular,
-  },
-  memoInput: {
-    height: 88,
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.md,
   },
   photoList: {
     gap: Spacing.sm,

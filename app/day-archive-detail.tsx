@@ -4,9 +4,10 @@
  */
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import {
+  Alert,
   Image as RNImage,
   Platform,
   ScrollView,
@@ -24,7 +25,7 @@ import MapPlaceholderCard from '@/components/common/MapPlaceholderCard';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import DaySelectorSheet, { type DaySelectorItem } from '@/components/record/DaySelectorSheet';
 import DayCard from '@/components/trip/DayCard';
-import PlaceEntryCard from '@/components/trip/PlaceEntryCard';
+import PlaceEntryCard, { type PlaceEntry } from '@/components/trip/PlaceEntryCard';
 import TravelStatsCard from '@/components/trip/TravelStatsCard';
 import {
   ARCHIVE_DAY_OPTIONS,
@@ -171,7 +172,24 @@ function ArchiveBlurBackground({
   );
 }
 
-function resolveInitialArchiveDay(): DaySelectorItem {
+function resolveDayNumberFromId(dayId?: string): number | undefined {
+  const matchedNumber = dayId?.match(/day-(\d+)/i)?.[1];
+  return matchedNumber ? Number(matchedNumber) : undefined;
+}
+
+function resolveInitialArchiveDay(dayId?: string, dayNumberParam?: string): DaySelectorItem {
+  const parsedDayNumber = dayNumberParam ? Number(dayNumberParam) : undefined;
+  const targetDayNumber = Number.isFinite(parsedDayNumber)
+    ? parsedDayNumber
+    : resolveDayNumberFromId(dayId);
+  const matchedByParam = ARCHIVE_DAY_OPTIONS.find(
+    (day) => day.id === dayId || day.dayNumber === targetDayNumber,
+  );
+
+  if (matchedByParam) {
+    return matchedByParam;
+  }
+
   const matched = ARCHIVE_DAY_OPTIONS.find(
     (day) => day.dayNumber === MOCK_ARCHIVE_DETAIL.selectedDay.dayNumber,
   );
@@ -184,16 +202,72 @@ function resolveInitialArchiveDay(): DaySelectorItem {
   };
 }
 
+function getEntryPlaceId(entry: PlaceEntry): string {
+  return entry.googlePlaceId ?? entry.id;
+}
+
 export default function DayArchiveDetailScreen() {
   const router = useRouter();
+  const { dayId, dayNumber } = useLocalSearchParams<{
+    tripId?: string;
+    dayId?: string;
+    dayNumber?: string;
+    placeId?: string;
+  }>();
   const { width: screenWidth } = useWindowDimensions();
   const detail = MOCK_ARCHIVE_DETAIL;
   const entries = useMemo(() => toPlaceEntries(detail.places), [detail.places]);
-  const [selectedDay, setSelectedDay] = useState<DaySelectorItem>(resolveInitialArchiveDay);
+  const [selectedDay, setSelectedDay] = useState<DaySelectorItem>(() =>
+    resolveInitialArchiveDay(dayId, dayNumber),
+  );
   const [sheetVisible, setSheetVisible] = useState(false);
 
   const photoFrameLeft = (screenWidth - PHOTO_FRAME_WIDTH) / 2;
   const parisLeft = (screenWidth - PARIS_WIDTH) / 2 + PARIS_OFFSET_X;
+
+  const handleOpenPlaceDetail = (entry: PlaceEntry) => {
+    router.push({
+      pathname: '/place-detail',
+      params: {
+        tripId: detail.id,
+        dayId: selectedDay.id,
+        placeId: getEntryPlaceId(entry),
+        entryPoint: 'archiveDayDetail',
+        placeName: entry.placeName ?? entry.place,
+        cityName: entry.cityName ?? entry.city,
+        countryName: entry.countryName,
+        categoryLabel: entry.category,
+        dateLabel: formatArchiveDayLabel(selectedDay),
+        timeLabel: entry.time,
+        recordText: entry.text,
+      },
+    });
+  };
+
+  const handleOpenPlacePhotoGrid = (entry: PlaceEntry) => {
+    router.push({
+      pathname: '/place-detail',
+      params: {
+        tripId: detail.id,
+        dayId: selectedDay.id,
+        placeId: getEntryPlaceId(entry),
+        entryPoint: 'archiveDayDetail',
+        openPhotoGrid: '1',
+        photoGridMode: 'viewOnly',
+        placeName: entry.placeName ?? entry.place,
+        cityName: entry.cityName ?? entry.city,
+        countryName: entry.countryName,
+        categoryLabel: entry.category,
+        dateLabel: formatArchiveDayLabel(selectedDay),
+        timeLabel: entry.time,
+        recordText: entry.text,
+      },
+    });
+  };
+
+  const showArchiveQuickAction = (label: string) => {
+    Alert.alert(label, '저장된 여행 편집 기능으로 연결될 예정입니다.');
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -256,7 +330,17 @@ export default function DayArchiveDetailScreen() {
 
           <View style={styles.entries}>
             {entries.map((entry) => (
-              <PlaceEntryCard key={entry.id} entry={entry} showRating={false} />
+              <PlaceEntryCard
+                key={entry.id}
+                entry={entry}
+                showRating={false}
+                variant="archive"
+                onPress={() => handleOpenPlaceDetail(entry)}
+                onPhotoGridOpen={() => handleOpenPlacePhotoGrid(entry)}
+                onQuickEdit={() => showArchiveQuickAction('장소 정보 수정')}
+                onQuickAddPhoto={() => showArchiveQuickAction('사진 추가')}
+                onQuickDelete={() => showArchiveQuickAction('장소 삭제')}
+              />
             ))}
           </View>
         </View>

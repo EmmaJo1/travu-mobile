@@ -1,4 +1,4 @@
-import { type Href, useRouter } from 'expo-router';
+import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,12 +18,32 @@ import { Colors, Spacing } from '@/constants/theme';
 
 export default function RecordScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{
+    action?: string;
+    actionId?: string;
+  }>();
   const [trips, setTrips] = useState<DetectedTrip[]>(MOCK_DETECTED_TRIPS);
   const [isRefreshing, setRefreshing] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [createdModalVisible, setCreatedModalVisible] = useState(false);
+  const handledTabActionIdRef = React.useRef<string | null>(null);
 
   const tripCards = useMemo(() => trips.map(toTripCardData), [trips]);
+
+  React.useEffect(() => {
+    if (params.action !== 'createTrip') {
+      return;
+    }
+
+    // TODO: Legacy direct-trip creation entry. New flows should use /create-trip.
+    const actionKey = params.actionId ?? 'createTrip';
+    if (handledTabActionIdRef.current === actionKey) {
+      return;
+    }
+
+    handledTabActionIdRef.current = actionKey;
+    setCreateModalVisible(true);
+  }, [params.action, params.actionId]);
 
   const handleSavedChange = useCallback((tripId: string, saved: boolean) => {
     setTrips((prev) =>
