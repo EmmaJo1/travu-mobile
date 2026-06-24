@@ -17,6 +17,7 @@ import Text from '@/components/common/AppText';
 import DetectedTripSection from '@/components/home/DetectedTripSection';
 import PastMomentsSection from '@/components/home/PastMomentsSection';
 import PhotoImportResultsCard from '@/components/home/PhotoImportResultsCard';
+import PhotoTripDetectionProgressCard from '@/components/home/PhotoTripDetectionProgressCard';
 import RecentTripsSection from '@/components/home/RecentTripsSection';
 import PhotoImportCompleteModal from '@/components/onboarding/PhotoImportCompleteModal';
 import { FIGMA_IMAGES } from '@/constants/figmaImages';
@@ -44,8 +45,11 @@ interface HomeIdleStateProps {
   headerTop?: number;
   isFirstUserEmptyState?: boolean;
   showPhotoImportResultsCard?: boolean;
+  showPhotoTripDetectionProgressCard?: boolean;
+  photoTripDetectionProgress?: number;
   photoImportTripCount?: number;
   onPressViewPhotoImportResults?: () => void;
+  onPressPhotoTripDetectionProgress?: () => void;
   showImportCompleteModal?: boolean;
   onCloseImportCompleteModal?: () => void;
   onPressViewImportResults?: () => void;
@@ -56,8 +60,11 @@ export default function HomeIdleState({
   headerTop = 0,
   isFirstUserEmptyState = false,
   showPhotoImportResultsCard = false,
+  showPhotoTripDetectionProgressCard = false,
+  photoTripDetectionProgress = 0,
   photoImportTripCount = 0,
   onPressViewPhotoImportResults,
+  onPressPhotoTripDetectionProgress,
   showImportCompleteModal = false,
   onCloseImportCompleteModal,
   onPressViewImportResults,
@@ -228,7 +235,16 @@ export default function HomeIdleState({
         </View>
 
         <View style={styles.content}>
-          {showPhotoImportResultsCard ? (
+          {showPhotoTripDetectionProgressCard ? (
+            <View style={styles.photoImportResultsCardOffset}>
+              <PhotoTripDetectionProgressCard
+                progress={photoTripDetectionProgress}
+                onPress={onPressPhotoTripDetectionProgress ?? noop}
+              />
+            </View>
+          ) : null}
+
+          {!showPhotoTripDetectionProgressCard && showPhotoImportResultsCard ? (
             <View style={styles.photoImportResultsCardOffset}>
               <PhotoImportResultsCard
                 tripCount={photoImportTripCount}
@@ -237,7 +253,10 @@ export default function HomeIdleState({
             </View>
           ) : null}
 
-          {!isFirstUserEmptyState && !showPhotoImportResultsCard && pendingDetectedTrip ? (
+          {!isFirstUserEmptyState &&
+          !showPhotoTripDetectionProgressCard &&
+          !showPhotoImportResultsCard &&
+          pendingDetectedTrip ? (
             <DetectedTripSection
               trip={pendingDetectedTrip}
               onSave={handleSaveDetectedTrip}
@@ -249,7 +268,9 @@ export default function HomeIdleState({
               {recentTrips.length > 0 ? (
                 <View
                   style={
-                    !pendingDetectedTrip && !showPhotoImportResultsCard
+                    !pendingDetectedTrip &&
+                    !showPhotoTripDetectionProgressCard &&
+                    !showPhotoImportResultsCard
                       ? styles.recentTripsWithoutDetected
                       : null
                   }

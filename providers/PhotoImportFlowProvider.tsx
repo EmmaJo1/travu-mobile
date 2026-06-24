@@ -11,15 +11,18 @@ import type {
 } from '@/services/photoImport/types';
 
 const MOCK_ANALYSIS_DELAY_MS = 1600;
+const MOCK_ANALYSIS_PROGRESS = 62;
 
 interface PhotoImportFlowContextValue {
   status: PhotoImportStatus;
+  progress: number;
   candidates: PhotoImportTripCandidate[];
   selectedCandidateIds: string[];
   hasOpenedPhotoImportResults: boolean;
   hasDeferredPhotoImportResults: boolean;
   hasSavedPhotoImportResults: boolean;
   lastSavedTripCount: number;
+  startPhotoImportAnalysis: () => void;
   requestAccessAndStartAnalysis: () => Promise<void>;
   toggleCandidate: (candidateId: string) => void;
   openPhotoImportResults: () => void;
@@ -62,6 +65,14 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
     return () => clearTimeout(timer);
   }, [status]);
 
+  const startPhotoImportAnalysis = React.useCallback(() => {
+    setStatus('analyzing');
+    setHasOpenedPhotoImportResults(false);
+    setHasDeferredPhotoImportResults(false);
+    setHasSavedPhotoImportResults(false);
+    setLastSavedTripCount(0);
+  }, []);
+
   const requestAccessAndStartAnalysis = React.useCallback(async () => {
     const permission = await mockPhotoImportProvider.requestPhotoLibraryAccess();
 
@@ -70,12 +81,8 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
     }
 
     await mockPhotoImportProvider.startAnalysis();
-    setStatus('analyzing');
-    setHasOpenedPhotoImportResults(false);
-    setHasDeferredPhotoImportResults(false);
-    setHasSavedPhotoImportResults(false);
-    setLastSavedTripCount(0);
-  }, []);
+    startPhotoImportAnalysis();
+  }, [startPhotoImportAnalysis]);
 
   const toggleCandidate = React.useCallback((candidateId: string) => {
     setSelectedCandidateIds((current) => {
@@ -133,12 +140,15 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
   const value = React.useMemo(
     () => ({
       status,
+      progress:
+        status === 'analyzing' ? MOCK_ANALYSIS_PROGRESS : status === 'results_ready' ? 100 : 0,
       candidates,
       selectedCandidateIds,
       hasOpenedPhotoImportResults,
       hasDeferredPhotoImportResults,
       hasSavedPhotoImportResults,
       lastSavedTripCount,
+      startPhotoImportAnalysis,
       requestAccessAndStartAnalysis,
       toggleCandidate,
       openPhotoImportResults,
@@ -163,6 +173,7 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
       saveSelectedCandidates,
       saveSelectedPhotoImportResults,
       selectedCandidateIds,
+      startPhotoImportAnalysis,
       skipOnboarding,
       status,
       toggleCandidate,

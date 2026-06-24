@@ -25,11 +25,15 @@ export default function FindTripsLoading() {
       return;
     }
 
+    if (status === 'analyzing' || status === 'results_ready' || status === 'reviewed') {
+      return;
+    }
+
     hasStartedRef.current = true;
     requestAccessAndStartAnalysis().catch(() => {
       router.replace('/photo-permission-required' as Href);
     });
-  }, [requestAccessAndStartAnalysis, router]);
+  }, [requestAccessAndStartAnalysis, router, status]);
 
   React.useEffect(() => {
     if (status !== 'results_ready') {

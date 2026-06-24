@@ -13,6 +13,7 @@ import {
   useWindowDimensions,
   View,
   type DimensionValue,
+  type GestureResponderEvent,
   type ImageSourcePropType,
   type StyleProp,
   type ViewStyle,
@@ -70,6 +71,7 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
     toggleCandidate,
     openPhotoImportResults,
     deferPhotoImportResults,
+    startPhotoImportAnalysis,
     saveSelectedPhotoImportResults,
     skipOnboarding,
   } = usePhotoImportFlow();
@@ -135,11 +137,10 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
   }, [router, skipOnboarding]);
 
   const handleGoHome = React.useCallback(() => {
-    router.replace({
-      pathname: '/(tabs)',
-      params: { photoImportPreview: 'analyzing' },
-    } as Href);
-  }, [router]);
+    startPhotoImportAnalysis();
+    deferPhotoImportResults();
+    router.replace('/(tabs)' as Href);
+  }, [deferPhotoImportResults, router, startPhotoImportAnalysis]);
 
   const handleDeferResults = React.useCallback(() => {
     if (isSaving) {
@@ -566,12 +567,27 @@ function ResultsPage({
   onSave: () => void;
   onSkip: () => void;
 }) {
+  const router = useRouter();
   const selectedCount = selectedCandidateIds.length;
   const canSave = selectedCount > 0;
   const helperBottom = Math.max(bottomInset + 2, 22);
   const skipBottom = helperBottom + 28;
   const primaryBottom = skipBottom + 42;
   const listBottom = primaryBottom + 48 + Spacing.lg;
+
+  const handleOpenCandidate = React.useCallback(
+    (candidateId: string) => {
+      router.push({
+        pathname: '/record-day-detail',
+        params: {
+          tripId: candidateId,
+          dayId: `${candidateId}-day-1`,
+          entryPoint: 'onboarding',
+        },
+      } as Href);
+    },
+    [router],
+  );
 
   return (
     <View style={styles.page}>
@@ -598,6 +614,7 @@ function ResultsPage({
             image={candidate.image}
             selected={selectedCandidateIds.includes(candidate.id)}
             disabled={isSaving}
+            onPress={() => handleOpenCandidate(candidate.id)}
             onToggle={() => onToggleCandidate(candidate.id)}
           />
         ))}
@@ -871,6 +888,7 @@ function ResultTripCard({
   image,
   selected,
   disabled = false,
+  onPress,
   onToggle,
 }: {
   city: string;
@@ -880,15 +898,24 @@ function ResultTripCard({
   image: ImageSourcePropType;
   selected: boolean;
   disabled?: boolean;
+  onPress: () => void;
   onToggle: () => void;
 }) {
+  const handleToggle = React.useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      onToggle();
+    },
+    [onToggle],
+  );
+
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${city} 여행 ${selected ? '선택 해제' : '선택'}`}
+      accessibilityLabel={`${city} 여행 상세 확인`}
       disabled={disabled}
       hitSlop={4}
-      onPress={onToggle}
+      onPress={onPress}
       style={({ pressed }) => [
         styles.tripCard,
         selected && styles.tripCardSelected,
@@ -911,12 +938,20 @@ function ResultTripCard({
           </View>
         </View>
       </View>
-      <View
-        pointerEvents="none"
-        style={[styles.selectButton, selected ? styles.selectButtonSelected : styles.selectButtonUnselected]}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${city} 여행 ${selected ? '선택 해제' : '선택'}`}
+        disabled={disabled}
+        hitSlop={8}
+        onPress={handleToggle}
+        style={({ pressed }) => [
+          styles.selectButton,
+          selected ? styles.selectButtonSelected : styles.selectButtonUnselected,
+          pressed && styles.selectButtonPressed,
+        ]}
       >
         <Text style={styles.selectButtonLabel}>{selected ? '선택됨' : '선택'}</Text>
-      </View>
+      </Pressable>
     </Pressable>
   );
 }
@@ -1544,6 +1579,9 @@ const styles = StyleSheet.create({
   selectButtonUnselected: {
     width: 45,
     backgroundColor: BUTTON_UNSELECTED_BG,
+  },
+  selectButtonPressed: {
+    opacity: 0.82,
   },
   selectButtonLabel: {
     ...Typography.captionEmphasized,
