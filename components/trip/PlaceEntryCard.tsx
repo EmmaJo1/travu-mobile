@@ -76,6 +76,7 @@ const LABEL_EDIT_PLACE_INFO = '\uC7A5\uC18C \uC815\uBCF4 \uC218\uC815';
 const LABEL_ADD_PHOTO = '\uC0AC\uC9C4 \uCD94\uAC00';
 const LABEL_DELETE_PLACE = '\uC7A5\uC18C \uC0AD\uC81C';
 const LABEL_PHOTO_GRID_TITLE = '\uC0AC\uC9C4';
+const LABEL_PLACE_MORE = '\uC7A5\uC18C \uBA54\uB274';
 
 function getPhotoSources(entry: PlaceEntry): ImageSourcePropType[] {
   return [
@@ -185,7 +186,12 @@ export default function PlaceEntryCard({
         <View style={[styles.content, isPhotoReview && styles.contentPhotoReview]}>
           {isPhotoReview ? (
             <View style={styles.photoReviewHeader}>
-              <View style={styles.photoReviewInfo}>
+              <Pressable
+                accessibilityRole={onPress ? 'button' : undefined}
+                disabled={!onPress}
+                onPress={handlePressPlaceInfo}
+                style={styles.photoReviewInfo}
+              >
                 <View style={styles.placeTitlePressArea}>
                   <Text numberOfLines={1} ellipsizeMode="tail" style={styles.placeName}>
                     {entry.place}
@@ -200,15 +206,56 @@ export default function PlaceEntryCard({
                     {entry.city ? <Text style={styles.tag}>{entry.city}</Text> : null}
                   </View>
                 ) : null}
-              </View>
+              </Pressable>
 
               <Pressable
                 accessibilityRole="button"
-                onPress={openPhotoGrid}
-                style={styles.photoCountButton}
+                accessibilityLabel={LABEL_PLACE_MORE}
+                hitSlop={8}
+                onPress={() => setQuickMenuOpen((open) => !open)}
+                style={styles.moreButton}
               >
-                <Text style={styles.photoCountLink}>{LABEL_PHOTO} {photoCount}장 보기</Text>
+                <Feather name="more-horizontal" size={20} color={Colors.foundation.grey800} />
               </Pressable>
+
+              {hasQuickMenuActions && isQuickMenuOpen ? (
+                <>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={LABEL_CLOSE_PLACE_MENU}
+                    onPress={closeQuickMenu}
+                    style={styles.quickMenuDismiss}
+                  />
+                  <View style={styles.quickMenu}>
+                    <QuickMenuRow
+                      icon="image"
+                      label={LABEL_ADD_PHOTO}
+                      onPress={() => {
+                        closeQuickMenu();
+                        onQuickAddPhoto?.();
+                      }}
+                    />
+                    <View style={styles.quickMenuDivider} />
+                    <QuickMenuRow
+                      icon="edit-3"
+                      label={LABEL_EDIT_PLACE_INFO}
+                      onPress={() => {
+                        closeQuickMenu();
+                        onQuickEdit?.();
+                      }}
+                    />
+                    <QuickMenuRow
+                      destructive
+                      icon="trash-2"
+                      label={LABEL_DELETE_PLACE}
+                      onPress={() => {
+                        closeQuickMenu();
+                        onQuickDelete?.();
+                      }}
+                    />
+                  </View>
+                </>
+              ) : null}
             </View>
           ) : (
             <Pressable
@@ -279,19 +326,20 @@ export default function PlaceEntryCard({
                   />
                   <View style={styles.quickMenu}>
                     <QuickMenuRow
-                      icon="edit-3"
-                      label={LABEL_EDIT_PLACE_INFO}
-                      onPress={() => {
-                        closeQuickMenu();
-                        onQuickEdit?.();
-                      }}
-                    />
-                    <QuickMenuRow
                       icon="image"
                       label={LABEL_ADD_PHOTO}
                       onPress={() => {
                         closeQuickMenu();
                         onQuickAddPhoto?.();
+                      }}
+                    />
+                    <View style={styles.quickMenuDivider} />
+                    <QuickMenuRow
+                      icon="edit-3"
+                      label={LABEL_EDIT_PLACE_INFO}
+                      onPress={() => {
+                        closeQuickMenu();
+                        onQuickEdit?.();
                       }}
                     />
                     <QuickMenuRow
@@ -427,6 +475,7 @@ const styles = StyleSheet.create({
     minHeight: 28,
     alignItems: 'center',
     justifyContent: 'flex-start',
+    gap: 2,
   },
   time: {
     ...Typography.captionEmphasized,
@@ -503,12 +552,14 @@ const styles = StyleSheet.create({
     color: Colors.foundation.black,
   },
   moreButton: {
-    width: 16,
-    height: 16,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: Radius.full,
     flexShrink: 0,
+    marginTop: -Spacing.sm,
+    marginRight: -Spacing.md,
   },
   tagRow: {
     flexDirection: 'row',
@@ -547,6 +598,7 @@ const styles = StyleSheet.create({
   },
   photoReviewHeader: {
     height: 38,
+    position: 'relative',
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
@@ -607,14 +659,20 @@ const styles = StyleSheet.create({
   },
   quickMenu: {
     position: 'absolute',
-    top: 30,
-    right: Spacing.md,
+    top: 34,
+    right: 0,
     width: 174,
     paddingVertical: Spacing.sm,
     borderRadius: Radius.lg,
     backgroundColor: Colors.foundation.white,
     zIndex: 10,
     ...Shadows.modal,
+  },
+  quickMenuDivider: {
+    height: 1,
+    marginVertical: Spacing.xs,
+    marginHorizontal: Spacing.lg,
+    backgroundColor: Colors.light.borderStrong,
   },
   quickMenuRow: {
     minHeight: 46,

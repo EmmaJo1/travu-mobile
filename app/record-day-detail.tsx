@@ -3,25 +3,21 @@
  * Figma: day-recording-detail (1207:2245)
  */
 import { Feather } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
 import MapPlaceholderCard from '@/components/common/MapPlaceholderCard';
-import PrimaryButton from '@/components/common/PrimaryButton';
 import ScreenHeader from '@/components/nav/ScreenHeader';
-import DaySelectorSheet, {
-  type DaySelectorItem,
-  type SelectorOption,
-} from '@/components/record/DaySelectorSheet';
+import DaySelectorSheet, { type DaySelectorItem } from '@/components/record/DaySelectorSheet';
 import PlaceCreateModal, {
   type PlaceCreateInput,
   type PlaceEntryFormMode,
 } from '@/components/record/PlaceCreateModal';
-import RecordDateButton from '@/components/record/RecordDateButton';
 import PlaceEntryCard, { type PlaceEntry } from '@/components/trip/PlaceEntryCard';
 import { getDaySelectorItemsForTrip } from '@/constants/mockDetectedTrips';
 import {
@@ -29,13 +25,160 @@ import {
   RECORD_DAY_ENTRIES,
   RECORD_DAY_OPTIONS,
 } from '@/constants/mockRecordDayDetail';
-import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
+import { RECORD_DAY_ENTRY_IMAGES } from '@/constants/recordTripImages';
+import { addSavedCompletedTrip } from '@/constants/savedMyPageTrips';
+import { Colors, FontFamily, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 
 const ALL_DAYS_ID = 'all';
 const DAY_FILTER_BG = '#F2F2F2';
+const WEEKDAY_LABELS = ['\uC77C', '\uC6D4', '\uD654', '\uC218', '\uBAA9', '\uAE08', '\uD1A0'] as const;
+
+type PickedPhotoAsset = ImagePicker.ImagePickerAsset;
 
 function formatHeaderDate(day: DaySelectorItem): string {
   return `${day.dateLabel} ${day.weekdayLabel}`;
+}
+
+function toDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateLabel(date: Date): string {
+  return `${date.getFullYear()}.${date.getMonth() + 1}.${date.getDate()}`;
+}
+
+function parseDayDate(day: DaySelectorItem): Date | null {
+  const matched = day.dateLabel.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})$/);
+
+  if (!matched) {
+    return null;
+  }
+
+  return new Date(Number(matched[1]), Number(matched[2]) - 1, Number(matched[3]));
+}
+
+function getDayDateKey(day: DaySelectorItem): string | null {
+  const date = parseDayDate(day);
+  return date ? toDateKey(date) : null;
+}
+
+function parseExifDate(value: unknown): Date | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = value.trim();
+  const exifMatched = normalized.match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+
+  if (exifMatched) {
+    return new Date(
+      Number(exifMatched[1]),
+      Number(exifMatched[2]) - 1,
+      Number(exifMatched[3]),
+      Number(exifMatched[4]),
+      Number(exifMatched[5]),
+      Number(exifMatched[6] ?? 0),
+    );
+  }
+
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getAssetTakenDate(asset: PickedPhotoAsset, fallbackDate: Date): Date {
+  const exif = asset.exif ?? {};
+  const runtimeAsset = asset as PickedPhotoAsset & {
+    creationTime?: number | string;
+    modificationTime?: number | string;
+  };
+  const candidates = [
+    exif.DateTimeOriginal,
+    exif.DateTimeDigitized,
+    exif.DateTime,
+    exif.CreationDate,
+    exif.OffsetTimeOriginal,
+    runtimeAsset.creationTime,
+    runtimeAsset.modificationTime,
+  ];
+
+  for (const candidate of candidates) {
+    const date = parseExifDate(candidate);
+
+    if (date) {
+      return date;
+    }
+  }
+
+  return fallbackDate;
+}
+
+function groupAssetsByTakenDate(
+  assets: PickedPhotoAsset[],
+  fallbackDay: DaySelectorItem,
+): Array<{ date: Date; dateKey: string; assets: PickedPhotoAsset[] }> {
+  const fallbackDate = parseDayDate(fallbackDay) ?? new Date();
+  const grouped = new Map<string, { date: Date; dateKey: string; assets: PickedPhotoAsset[] }>();
+
+  for (const asset of assets) {
+    const takenDate = getAssetTakenDate(asset, fallbackDate);
+    const dateKey = toDateKey(takenDate);
+    const group = grouped.get(dateKey);
+
+    if (group) {
+      group.assets.push(asset);
+    } else {
+      grouped.set(dateKey, { date: takenDate, dateKey, assets: [asset] });
+    }
+  }
+
+  return [...grouped.values()].sort((left, right) => left.date.getTime() - right.date.getTime());
+}
+
+function mergeDayOptionsWithPhotoGroups(
+  currentDays: DaySelectorItem[],
+  photoGroups: Array<{ date: Date; dateKey: string; assets: PickedPhotoAsset[] }>,
+): DaySelectorItem[] {
+  const nextDaysByDate = new Map<string, DaySelectorItem>();
+
+  for (const day of currentDays) {
+    const dateKey = getDayDateKey(day);
+
+    if (dateKey) {
+      nextDaysByDate.set(dateKey, day);
+    }
+  }
+
+  for (const group of photoGroups) {
+    const currentDay = nextDaysByDate.get(group.dateKey);
+
+    nextDaysByDate.set(group.dateKey, {
+      id: currentDay?.id ?? `local-${group.dateKey}`,
+      dayNumber: currentDay?.dayNumber ?? 0,
+      dateLabel: currentDay?.dateLabel ?? formatDateLabel(group.date),
+      weekdayLabel: currentDay?.weekdayLabel ?? WEEKDAY_LABELS[group.date.getDay()],
+      photoCount: (currentDay?.photoCount ?? 0) + group.assets.length,
+    });
+  }
+
+  return [...nextDaysByDate.entries()]
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+    .map(([, day], index) => ({
+      ...day,
+      dayNumber: index + 1,
+    }));
 }
 
 function getTimeSortValue(time?: string): number {
@@ -52,8 +195,39 @@ function getTimeSortValue(time?: string): number {
   return periodOffset + hour * 60 + minute;
 }
 
+function formatEntryTime(date: Date): string {
+  const hour24 = date.getHours();
+  const hour12 = hour24 % 12 || 12;
+  const minute = date.getMinutes();
+  const period = hour24 >= 12 ? 'PM' : 'AM';
+
+  return minute === 0
+    ? `${hour12} ${period}`
+    : `${hour12}:${String(minute).padStart(2, '0')} ${period}`;
+}
+
 function getEntryPlaceId(entry: PlaceEntry): string {
   return entry.googlePlaceId ?? entry.id;
+}
+
+function createPhotoEntry(
+  dayId: string,
+  date: Date,
+  photoUris: string[],
+  sourceEntry?: PlaceEntry,
+): PlaceEntry {
+  return {
+    id: `photo-import-${dayId}-${date.getTime()}`,
+    time: formatEntryTime(date),
+    place: sourceEntry?.place ?? sourceEntry?.placeName ?? '\uCD94\uAC00\uD55C \uC0AC\uC9C4',
+    placeName: sourceEntry?.placeName,
+    category: sourceEntry?.category ?? '\uC0AC\uC9C4',
+    city: sourceEntry?.city,
+    cityName: sourceEntry?.cityName,
+    countryName: sourceEntry?.countryName,
+    googlePlaceId: sourceEntry?.googlePlaceId,
+    photoUris,
+  };
 }
 
 function getEntryPhotoUrisParam(entry: PlaceEntry): string | undefined {
@@ -130,16 +304,16 @@ function resolveInitialDay(
 interface DayFilterBarProps {
   days: DaySelectorItem[];
   selectedId: string;
-  onOpenAll: () => void;
+  onSelectAll: () => void;
   onSelectDay: (day: DaySelectorItem) => void;
 }
 
-function DayFilterBar({ days, selectedId, onOpenAll, onSelectDay }: DayFilterBarProps) {
+function DayFilterBar({ days, selectedId, onSelectAll, onSelectDay }: DayFilterBarProps) {
   const [hasScrolledDays, setHasScrolledDays] = useState(false);
 
   return (
     <View style={styles.dayFilterBar}>
-      <Pressable accessibilityRole="button" onPress={onOpenAll} style={styles.allChip}>
+      <Pressable accessibilityRole="button" onPress={onSelectAll} style={styles.allChip}>
         <Text style={styles.allChipText}>전체</Text>
         <Feather name="chevron-down" size={10} color={Colors.foundation.black} />
       </Pressable>
@@ -196,30 +370,34 @@ export default function RecordDayDetailScreen() {
     deletedSourceIndexes?: string;
   }>();
 
-  const dayOptions = useMemo(() => {
+  const baseDayOptions = useMemo(() => {
     if (tripId) {
       return getDaySelectorItemsForTrip(tripId) ?? RECORD_DAY_OPTIONS;
     }
     return RECORD_DAY_OPTIONS;
   }, [tripId]);
 
+  const [dayOptions, setDayOptions] = useState<DaySelectorItem[]>(() => baseDayOptions);
   const [selectedDay, setSelectedDay] = useState<DaySelectorItem>(() =>
-    resolveInitialDay(dayOptions, dayId),
+    resolveInitialDay(baseDayOptions, dayId),
   );
   const [selectedFilterId, setSelectedFilterId] = useState<string>(() =>
-    resolveInitialDay(dayOptions, dayId).id,
+    resolveInitialDay(baseDayOptions, dayId).id,
   );
-  const [sheetVisible, setSheetVisible] = useState(false);
+  const [daySheetVisible, setDaySheetVisible] = useState(false);
+  const [headerMenuVisible, setHeaderMenuVisible] = useState(false);
   const [placeEntryModalVisible, setPlaceEntryModalVisible] = useState(false);
   const [placeEntryFormMode, setPlaceEntryFormMode] =
     useState<PlaceEntryFormMode>('create');
+  const [editingEntry, setEditingEntry] = useState<PlaceEntry | null>(null);
   const [entriesByDay, setEntriesByDay] = useState<Record<string, PlaceEntry[]>>({});
 
   useEffect(() => {
-    const initialDay = resolveInitialDay(dayOptions, dayId);
+    setDayOptions(baseDayOptions);
+    const initialDay = resolveInitialDay(baseDayOptions, dayId);
     setSelectedDay(initialDay);
     setSelectedFilterId(initialDay.id);
-  }, [dayOptions, dayId]);
+  }, [baseDayOptions, dayId]);
 
   useEffect(() => {
     const nextPhotoUris = parseUpdatedPhotoUris(updatedPhotoUris);
@@ -265,13 +443,6 @@ export default function RecordDayDetailScreen() {
     });
   }, [dayId, deletedSourceIndexes, selectedDay.id, updatedPhotoUris, updatedPlaceId]);
 
-  const selectorOptions = useMemo<SelectorOption[]>(() => [
-    ...dayOptions.map((day) => ({
-      id: day.id,
-      label: `${day.dayNumber}일차 · ${formatHeaderDate(day)}`,
-    })),
-  ], [dayOptions]);
-
   const entries = useMemo(() => {
     const dayEntries = selectedFilterId === ALL_DAYS_ID
       ? dayOptions.flatMap((day) => entriesByDay[day.id] ?? RECORD_DAY_ENTRIES)
@@ -285,16 +456,113 @@ export default function RecordDayDetailScreen() {
   const handleClosePlaceEntryModal = () => {
     setPlaceEntryModalVisible(false);
     setPlaceEntryFormMode('create');
+    setEditingEntry(null);
   };
 
   const handleOpenCreate = () => {
+    setHeaderMenuVisible(false);
+    setEditingEntry(null);
     setPlaceEntryFormMode('create');
     setPlaceEntryModalVisible(true);
+  };
+
+  const handleOpenEditEntry = (entry: PlaceEntry) => {
+    setEditingEntry(entry);
+    setPlaceEntryFormMode('edit');
+    setPlaceEntryModalVisible(true);
+  };
+
+  const handleAddPhotosToEntry = async (entry: PlaceEntry) => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: true,
+        quality: 1,
+        exif: true,
+      });
+
+      if (result.canceled || result.assets.length === 0) {
+        return;
+      }
+
+      const photoGroups = groupAssetsByTakenDate(result.assets, selectedDay);
+      const nextDayOptions = mergeDayOptionsWithPhotoGroups(dayOptions, photoGroups);
+      const firstTargetDay = nextDayOptions.find((day) => getDayDateKey(day) === photoGroups[0]?.dateKey);
+      const targetPlaceId = getEntryPlaceId(entry);
+
+      setDayOptions(nextDayOptions);
+
+      if (firstTargetDay) {
+        setSelectedDay(firstTargetDay);
+        setSelectedFilterId(firstTargetDay.id);
+      }
+
+      setEntriesByDay((current) => {
+        const nextEntriesByDay = { ...current };
+
+        for (const group of photoGroups) {
+          const targetDay = nextDayOptions.find((day) => getDayDateKey(day) === group.dateKey);
+
+          if (!targetDay) {
+            continue;
+          }
+
+          const targetDayId = targetDay.id;
+          const dayEntries = nextEntriesByDay[targetDayId]
+            ?? (targetDayId === selectedDay.id ? RECORD_DAY_ENTRIES : []);
+          const nextUris = group.assets.map((asset) => asset.uri);
+          const hasTargetEntry = dayEntries.some((item) => getEntryPlaceId(item) === targetPlaceId);
+
+          nextEntriesByDay[targetDayId] = hasTargetEntry
+            ? dayEntries.map((item) => {
+              if (getEntryPlaceId(item) !== targetPlaceId) {
+                return item;
+              }
+
+              return {
+                ...item,
+                photoUris: [...new Set([...(item.photoUris ?? []), ...nextUris])],
+              };
+            })
+            : [
+              ...dayEntries,
+              createPhotoEntry(targetDayId, group.date, nextUris, entry),
+            ];
+        }
+
+        return nextEntriesByDay;
+      });
+    } catch {
+      Alert.alert(
+        '\uC0AC\uC9C4 \uCD94\uAC00 \uC2E4\uD328',
+        '\uC0AC\uC9C4\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+      );
+    }
   };
 
   const handleSelectDay = (day: DaySelectorItem) => {
     setSelectedDay(day);
     setSelectedFilterId(day.id);
+  };
+
+  const handleOpenPlaceDetail = (entry: PlaceEntry) => {
+    router.push({
+      pathname: '/place-detail',
+      params: {
+        tripId: tripId ?? 'record-trip',
+        dayId: selectedDay.id,
+        placeId: getEntryPlaceId(entry),
+        entryPoint: 'recordDayDetail',
+        placeName: entry.placeName ?? entry.place,
+        cityName: entry.cityName ?? entry.city,
+        countryName: entry.countryName,
+        categoryLabel: entry.category,
+        dateLabel: formatHeaderDate(selectedDay),
+        timeLabel: entry.time,
+        recordText: entry.text,
+        photoUris: getEntryPhotoUrisParam(entry),
+      },
+    });
   };
 
   const handleOpenPlacePhotoGrid = (entry: PlaceEntry) => {
@@ -323,6 +591,21 @@ export default function RecordDayDetailScreen() {
   const handleSubmitPlaceEntry = (input: PlaceCreateInput) => {
     setEntriesByDay((current) => {
       const dayEntries = current[selectedDay.id] ?? RECORD_DAY_ENTRIES;
+
+      if (editingEntry) {
+        return {
+          ...current,
+          [selectedDay.id]: dayEntries.map((entry) =>
+            entry.id === editingEntry.id
+              ? {
+                ...entry,
+                ...input,
+              }
+              : entry,
+          ),
+        };
+      }
+
       const newEntry: PlaceEntry = {
         id: `manual-${selectedDay.id}-${Date.now()}`,
         ...input,
@@ -336,81 +619,246 @@ export default function RecordDayDetailScreen() {
     handleClosePlaceEntryModal();
   };
 
+  const handleDeleteEntry = (entry: PlaceEntry) => {
+    Alert.alert(
+      '\uC7A5\uC18C\uB97C \uC0AD\uC81C\uD560\uAE4C\uC694?',
+      '\uC571\uC5D0\uC11C\uB9CC \uC0AD\uC81C\uB418\uBA70, \uAE30\uAE30\uC758 \uC6D0\uBCF8 \uC0AC\uC9C4\uC740 \uC720\uC9C0\uB429\uB2C8\uB2E4.',
+      [
+        { text: '\uCDE8\uC18C', style: 'cancel' },
+        {
+          text: '\uC0AD\uC81C',
+          style: 'destructive',
+          onPress: () => {
+            setEntriesByDay((current) => {
+              const dayEntries = current[selectedDay.id] ?? RECORD_DAY_ENTRIES;
+              return {
+                ...current,
+                [selectedDay.id]: dayEntries.filter((item) => item.id !== entry.id),
+              };
+            });
+          },
+        },
+      ],
+    );
+  };
+
+  const handleAddTripPhotos = async () => {
+    setHeaderMenuVisible(false);
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: true,
+        quality: 1,
+        exif: true,
+      });
+
+      if (result.canceled || result.assets.length === 0) {
+        return;
+      }
+
+      const photoGroups = groupAssetsByTakenDate(result.assets, selectedDay);
+      const nextDayOptions = mergeDayOptionsWithPhotoGroups(dayOptions, photoGroups);
+      const firstTargetDay = nextDayOptions.find((day) => getDayDateKey(day) === photoGroups[0]?.dateKey);
+
+      setDayOptions(nextDayOptions);
+
+      if (firstTargetDay) {
+        setSelectedDay(firstTargetDay);
+        setSelectedFilterId(firstTargetDay.id);
+      }
+
+      setEntriesByDay((current) => {
+        const nextEntriesByDay = { ...current };
+
+        for (const group of photoGroups) {
+          const targetDay = nextDayOptions.find((day) => getDayDateKey(day) === group.dateKey);
+
+          if (!targetDay) {
+            continue;
+          }
+
+          const targetDayId = targetDay.id;
+          const dayEntries = nextEntriesByDay[targetDayId]
+            ?? (targetDayId === selectedDay.id ? RECORD_DAY_ENTRIES : []);
+          const nextUris = group.assets.map((asset) => asset.uri);
+          const [firstEntry, ...restEntries] = dayEntries;
+
+          nextEntriesByDay[targetDayId] = firstEntry
+            ? [
+              {
+                ...firstEntry,
+                photoUris: [...new Set([...(firstEntry.photoUris ?? []), ...nextUris])],
+              },
+              ...restEntries,
+            ]
+            : [createPhotoEntry(targetDayId, group.date, nextUris)];
+        }
+
+        return nextEntriesByDay;
+      });
+    } catch {
+      Alert.alert(
+        '\uC0AC\uC9C4 \uCD94\uAC00 \uC2E4\uD328',
+        '\uC0AC\uC9C4\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+      );
+    }
+  };
+
+  const handleSaveTrip = () => {
+    setHeaderMenuVisible(false);
+    const coverEntry = entries.find((entry) => entry.photoSources?.[0] || entry.photoUris?.[0]);
+
+    addSavedCompletedTrip({
+      id: tripId ?? 'record-trip',
+      destinationName: coverEntry?.cityName ?? coverEntry?.city ?? 'Sydney',
+      countryName: coverEntry?.countryName ?? 'Australia',
+      startDate: '2025-03-04',
+      endDate: '2025-03-07',
+      coverImage: coverEntry?.photoSources?.[0] ?? RECORD_DAY_ENTRY_IMAGES.bondi1,
+      daysCount: dayOptions.length,
+      photoCount: entries.reduce((total, entry) => (
+        total + (entry.photoCount ?? entry.photoSources?.length ?? 0) + (entry.photoUris?.length ?? 0)
+      ), 0),
+    });
+    Alert.alert(
+      '\uC5EC\uD589\uC744 \uC800\uC7A5\uD588\uC5B4\uC694',
+      '\uB9C8\uC774\uD398\uC774\uC9C0\uC758 \uC5EC\uD589 \uB9AC\uC2A4\uD2B8\uC5D0\uC11C \uD655\uC778\uD560 \uC218 \uC788\uC5B4\uC694.',
+    );
+  };
+
+  const handleDeleteTrip = () => {
+    setHeaderMenuVisible(false);
+    Alert.alert(
+      '\uC5EC\uD589\uC744 \uC0AD\uC81C\uD560\uAE4C\uC694?',
+      '\uC571\uC5D0\uC11C\uB9CC \uC0AD\uC81C\uB418\uBA70, \uAE30\uAE30\uC758 \uC6D0\uBCF8 \uC0AC\uC9C4\uC740 \uC720\uC9C0\uB429\uB2C8\uB2E4.',
+      [
+        { text: '\uCDE8\uC18C', style: 'cancel' },
+        {
+          text: '\uC0AD\uC81C',
+          style: 'destructive',
+          onPress: () => router.back(),
+        },
+      ],
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.fixedTop}>
-        <ScreenHeader
-          balancedSlots
-          onBackPress={() => router.back()}
-          centerSlot={
-            <RecordDateButton
-              dateLabel={
-                selectedFilterId === ALL_DAYS_ID ? '전체' : formatHeaderDate(selectedDay)
-              }
-              onPress={() => setSheetVisible(true)}
-            />
-          }
-          rightSlot={
-            <PrimaryButton
-              label="장소 추가"
-              onPress={handleOpenCreate}
-            />
-          }
-          style={styles.header}
-        />
+      <ScreenHeader
+        balancedSlots
+        onBackPress={() => router.back()}
+        centerSlot={
+          <Text style={styles.headerDateText}>{formatHeaderDate(selectedDay)}</Text>
+        }
+        rightSlot={
+          <Pressable
+            accessibilityLabel="\uC5EC\uD589 \uBA54\uB274"
+            accessibilityRole="button"
+            hitSlop={10}
+            onPress={() => setHeaderMenuVisible((visible) => !visible)}
+            style={styles.headerMoreButton}
+          >
+            <Feather name="more-horizontal" size={24} color={Colors.foundation.black} />
+          </Pressable>
+        }
+        style={styles.header}
+      />
 
+      {headerMenuVisible ? (
+        <>
+          <Pressable
+            accessibilityLabel="\uC5EC\uD589 \uBA54\uB274 \uB2EB\uAE30"
+            accessibilityRole="button"
+            onPress={() => setHeaderMenuVisible(false)}
+            style={styles.headerMenuDismiss}
+          />
+          <View style={styles.headerMenu}>
+            <Pressable accessibilityRole="button" onPress={handleOpenCreate} style={styles.headerMenuRow}>
+              <Feather name="map-pin" size={18} color={Colors.foundation.black} />
+              <Text style={styles.headerMenuLabel}>{'\uC7A5\uC18C \uCD94\uAC00'}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" onPress={handleAddTripPhotos} style={styles.headerMenuRow}>
+              <Feather name="image" size={18} color={Colors.foundation.black} />
+              <Text style={styles.headerMenuLabel}>{'\uC0AC\uC9C4 \uCD94\uAC00'}</Text>
+            </Pressable>
+            <View style={styles.headerMenuDivider} />
+            <Pressable accessibilityRole="button" onPress={handleSaveTrip} style={styles.headerMenuRow}>
+              <Feather name="archive" size={18} color={Colors.foundation.black} />
+              <Text style={styles.headerMenuLabel}>{'\uC5EC\uD589 \uC800\uC7A5'}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" onPress={handleDeleteTrip} style={styles.headerMenuRow}>
+              <Feather name="trash-2" size={18} color={styles.destructiveText.color} />
+              <Text style={[styles.headerMenuLabel, styles.destructiveText]}>{'\uC5EC\uD589 \uC0AD\uC81C'}</Text>
+            </Pressable>
+          </View>
+        </>
+      ) : null}
+
+      <ScrollView
+        stickyHeaderIndices={[1]}
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.mapWrap}>
         <MapPlaceholderCard align="center" style={styles.map} />
+        </View>
 
         <DayFilterBar
           days={dayOptions}
           selectedId={selectedFilterId}
-          onOpenAll={() => setSheetVisible(true)}
+          onSelectAll={() => setDaySheetVisible(true)}
           onSelectDay={handleSelectDay}
         />
-      </View>
 
-      <ScrollView
-        style={styles.entriesScroll}
-        contentContainerStyle={styles.entriesContent}
-        showsVerticalScrollIndicator={false}
-      >
+        <View style={styles.entriesContent}>
         {entries.map((entry, index) => (
           <PlaceEntryCard
             key={`${selectedFilterId}-${entry.id}-${index}`}
             entry={entry}
             showRating={false}
             variant="recordPhotoReview"
+            onPress={() => handleOpenPlaceDetail(entry)}
             onPhotoGridOpen={() => handleOpenPlacePhotoGrid(entry)}
+            onQuickAddPhoto={() => handleAddPhotosToEntry(entry)}
+            onQuickEdit={() => handleOpenEditEntry(entry)}
+            onQuickDelete={() => handleDeleteEntry(entry)}
           />
         ))}
+        </View>
       </ScrollView>
-
-      <DaySelectorSheet
-        visible={sheetVisible}
-        options={selectorOptions}
-        selectedId={selectedFilterId}
-        title="날짜 선택"
-        onSelectOption={(option) => {
-          if (option.id === ALL_DAYS_ID) {
-            setSelectedFilterId(ALL_DAYS_ID);
-          } else {
-            const day = dayOptions.find((item) => item.id === option.id);
-            if (day) {
-              handleSelectDay(day);
-            }
-          }
-          setSheetVisible(false);
-        }}
-        onClose={() => setSheetVisible(false)}
-      />
 
       <PlaceCreateModal
         visible={placeEntryModalVisible}
         mode={placeEntryFormMode}
         tripId={tripId ?? 'record-trip'}
         dayId={selectedDay.id}
+        initialValue={editingEntry ?? undefined}
+        onDelete={(entryId) => {
+          setEntriesByDay((current) => {
+            const dayEntries = current[selectedDay.id] ?? RECORD_DAY_ENTRIES;
+            return {
+              ...current,
+              [selectedDay.id]: dayEntries.filter((entry) => entry.id !== entryId),
+            };
+          });
+          handleClosePlaceEntryModal();
+        }}
         onClose={handleClosePlaceEntryModal}
         onSubmit={handleSubmitPlaceEntry}
+      />
+
+      <DaySelectorSheet
+        visible={daySheetVisible}
+        days={dayOptions}
+        selectedId={selectedFilterId}
+        title={'\uB0A0\uC9DC \uC120\uD0DD'}
+        onSelectDay={(day) => {
+          handleSelectDay(day);
+          setDaySheetVisible(false);
+        }}
+        onClose={() => setDaySheetVisible(false)}
       />
     </SafeAreaView>
   );
@@ -421,15 +869,75 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.light.bgScreen,
   },
-  fixedTop: {
-    backgroundColor: Colors.light.bgScreen,
-  },
   header: {
     width: '100%',
+    height: 44,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.sm,
+    backgroundColor: Colors.light.bgScreen,
+    zIndex: 20,
+  },
+  headerDateText: {
+    ...Typography.body1Regular,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+  },
+  headerMoreButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: -10,
+  },
+  headerMenuDismiss: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 25,
+  },
+  headerMenu: {
+    position: 'absolute',
+    top: 44,
+    right: Spacing.xl,
+    width: 174,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.foundation.white,
+    zIndex: 30,
+    ...Shadows.modal,
+  },
+  headerMenuRow: {
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+  },
+  headerMenuLabel: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.black,
+  },
+  headerMenuDivider: {
+    height: 1,
+    marginVertical: Spacing.xs,
+    marginHorizontal: Spacing.lg,
+    backgroundColor: Colors.light.borderStrong,
+  },
+  destructiveText: {
+    color: '#D13434',
+  },
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: Spacing['4xl'],
+  },
+  mapWrap: {
+    height: 272,
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xl,
+    backgroundColor: Colors.light.bgScreen,
   },
   map: {
-    marginTop: Spacing.lg,
-    marginBottom: Spacing.lg,
+    maxWidth: undefined,
   },
   dayFilterBar: {
     height: 52,
@@ -498,13 +1006,9 @@ const styles = StyleSheet.create({
   dayChipFadeHidden: {
     opacity: 0,
   },
-  entriesScroll: {
-    flex: 1,
-  },
   entriesContent: {
     paddingHorizontal: Spacing.xl,
     paddingTop: Spacing['3xl'],
-    paddingBottom: Spacing['4xl'],
     gap: Spacing['3xl'],
   },
 });

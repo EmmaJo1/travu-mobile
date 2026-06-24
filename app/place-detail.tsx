@@ -128,10 +128,14 @@ function getArchiveDayPlace(placeId?: string) {
 }
 
 function createRecordDayFallbackDetail(params: PlaceDetailRouteParams): PlaceDetailData | undefined {
-  if (
-    (params.entryPoint !== 'recordDayDetail' && params.entryPoint !== 'archiveDayDetail')
-    || !params.placeId
-  ) {
+  const isRecordOrArchiveEntry =
+    params.entryPoint === 'recordDayDetail' || params.entryPoint === 'archiveDayDetail';
+  const canUseTimelineFallback =
+    params.entryPoint === 'activeTripTimeline' &&
+    Boolean(params.placeId) &&
+    Boolean(getParamValue(params.placeName));
+
+  if ((!isRecordOrArchiveEntry && !canUseTimelineFallback) || !params.placeId) {
     return undefined;
   }
 
@@ -185,6 +189,8 @@ function createRecordDayFallbackDetail(params: PlaceDetailRouteParams): PlaceDet
     : [];
 
   return {
+    // TODO: Generate place detail records from photo metadata groups when media analysis is connected.
+    // TODO: Use placeId as the source of truth for timeline-to-place-detail navigation.
     tripId: params.tripId ?? (params.entryPoint === 'archiveDayDetail' ? MOCK_ARCHIVE_DETAIL.id : 'record-trip'),
     dayId: params.dayId ?? (params.entryPoint === 'archiveDayDetail' ? 'archive-day-1' : 'record-day'),
     placeId: params.placeId,
@@ -194,7 +200,11 @@ function createRecordDayFallbackDetail(params: PlaceDetailRouteParams): PlaceDet
     dateLabel: getParamValue(params.dateLabel) ?? MOCK_ARCHIVE_DETAIL.selectedDay.dateLabel ?? '',
     timeLabel: getParamValue(params.timeLabel) ?? recordEntry?.time ?? archivePlace?.timeLabel,
     categoryLabel: getParamValue(params.categoryLabel) ?? recordEntry?.category ?? archivePlace?.category,
-    tripName: params.entryPoint === 'archiveDayDetail' ? MOCK_ARCHIVE_DETAIL.heroTitle : 'Record Trip',
+    tripName: params.entryPoint === 'archiveDayDetail'
+      ? MOCK_ARCHIVE_DETAIL.heroTitle
+      : params.entryPoint === 'activeTripTimeline'
+        ? (getParamValue(params.cityName) ?? getParamValue(params.placeName) ?? 'Active Trip')
+        : 'Record Trip',
     tripDateRange: params.entryPoint === 'archiveDayDetail'
       ? MOCK_ARCHIVE_DETAIL.dateRangeLabel
       : getParamValue(params.dateLabel) ?? '',

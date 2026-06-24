@@ -10,6 +10,7 @@ import ScreenHeader from '@/components/nav/ScreenHeader';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 
 const BACKGROUND = Colors.light.bgScreen;
+const CTA_HEIGHT = 48;
 
 function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
@@ -31,6 +32,11 @@ export default function TripCreatedScreen() {
   const destinationLabel = firstParam(params.destinationLabel) ?? '선택한 여행지';
   const dateLabel = formatDateLabel(firstParam(params.startDate), firstParam(params.endDate));
   const ctaBottom = Math.max(insets.bottom + 32, 64);
+  const homeLinkBottom = ctaBottom + CTA_HEIGHT + Spacing['2xl'];
+
+  const handleGoHome = React.useCallback(() => {
+    router.replace('/(tabs)' as Href);
+  }, [router]);
 
   const handleOpenTrip = React.useCallback(() => {
     router.replace({
@@ -45,7 +51,22 @@ export default function TripCreatedScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar style="dark" />
-      <ScreenHeader title="여행 만들기" onBackPress={() => router.replace('/(tabs)' as Href)} style={styles.header} />
+      <ScreenHeader
+        title="여행 만들기"
+        onBackPress={handleGoHome}
+        rightSlot={
+          <Pressable
+            accessibilityLabel="홈으로 이동하기"
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={handleGoHome}
+            style={styles.headerCloseButton}
+          >
+            <Feather name="x" size={24} color={Colors.foundation.black} />
+          </Pressable>
+        }
+        style={styles.header}
+      />
 
       <View style={styles.center}>
         <View style={styles.iconCircle}>
@@ -63,10 +84,22 @@ export default function TripCreatedScreen() {
 
       <Pressable
         accessibilityRole="button"
+        onPress={handleGoHome}
+        style={({ pressed }) => [
+          styles.homeLinkButton,
+          { bottom: homeLinkBottom },
+          pressed && styles.homeLinkPressed,
+        ]}
+      >
+        <Text style={styles.homeLinkText}>홈으로 이동하기</Text>
+      </Pressable>
+
+      <Pressable
+        accessibilityRole="button"
         onPress={handleOpenTrip}
         style={({ pressed }) => [styles.cta, { bottom: ctaBottom }, pressed && styles.ctaPressed]}
       >
-        <Text style={styles.ctaLabel}>여행 보기</Text>
+        <Text style={styles.ctaLabel}>여행 기록하기</Text>
       </Pressable>
     </SafeAreaView>
   );
@@ -88,6 +121,12 @@ const styles = StyleSheet.create({
   },
   header: {
     height: 44,
+  },
+  headerCloseButton: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   center: {
     position: 'absolute',
@@ -119,7 +158,7 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     width: 320,
-    marginTop: 56,
+    marginTop: Spacing['4xl'],
     borderRadius: Radius.sm,
     backgroundColor: Colors.foundation.white,
     paddingHorizontal: Spacing.xl,
@@ -151,7 +190,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 35,
     right: 35,
-    height: 48,
+    height: CTA_HEIGHT,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: Radius.sm,
@@ -163,5 +202,21 @@ const styles = StyleSheet.create({
   ctaLabel: {
     ...Typography.body2Emphasized,
     color: Colors.foundation.white,
+  },
+  homeLinkButton: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: Typography.body2Emphasized.lineHeight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeLinkPressed: {
+    opacity: 0.64,
+  },
+  homeLinkText: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.grey600,
+    textDecorationLine: 'underline',
   },
 });
