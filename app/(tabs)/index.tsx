@@ -10,8 +10,10 @@ import {
   Alert,
   Image,
   InteractionManager,
+  Modal,
   Platform,
-  ScrollView,
+  Pressable,
+  RefreshControl,
   StyleSheet,
   View,
 } from 'react-native';
@@ -30,15 +32,22 @@ import StartTripSetupModal, {
 import TodayTimelineSection, {
   type TodayTimelineItem,
 } from '@/components/home/TodayTimelineSection';
-import TripDatePickerModal from '@/components/home/TripDatePickerModal';
 import TravelStatusButton from '@/components/home/TravelStatusButton';
 import TravelStatusSheet from '@/components/home/TravelStatusSheet';
+import TripDatePickerModal from '@/components/home/TripDatePickerModal';
+import PlaceCreateModal, {
+  type PlaceCreateInput,
+} from '@/components/record/PlaceCreateModal';
 import TodaySummary from '@/components/trip/TodaySummary';
+import { setActiveTraveling } from '@/constants/activeTravelSession';
 import { HOME_MOCK_DATA } from '@/constants/mockHome';
-import { HOME_TIMELINE_ITEMS } from '@/constants/mockHomeTimeline';
+import {
+  HOME_TIMELINE_ITEMS,
+  generateHomeTimelineItemsForDay,
+} from '@/constants/mockHomeTimeline';
 import type { DestinationOption } from '@/constants/mockTripDestinations';
 import { addSavedCompletedTrip } from '@/constants/savedMyPageTrips';
-import { Colors, Typography } from '@/constants/theme';
+import { Colors, Spacing, Typography } from '@/constants/theme';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
 
 const HERO_HEIGHT = 336;
@@ -50,9 +59,11 @@ const HEADER_HEIGHT = 52;
 const HEADER_DIM_HEIGHT = 129;
 const HERO_MASK_TOP = 180;
 const HERO_MASK_HEIGHT = HERO_HEIGHT - HERO_MASK_TOP;
-const SUMMARY_HEIGHT = 104;
+const SUMMARY_HEIGHT = 136;
+const SUMMARY_OVERLAP = 104;
 const WARM_WHITE = Colors.warm.white;
 const FIGMA_POINT_EN = 'Sansita Swashed';
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const HEADER_DIM_COLORS = [
   'rgba(38,38,38,0.4)',
@@ -106,7 +117,7 @@ const ENGLISH_DESTINATION_LABELS: Record<string, string> = {
   울산: 'Ulsan',
   제주: 'Jeju',
   '위치 미정': 'Set location',
-  미국: 'United States',
+  미국: 'USA',
 };
 
 type PendingTravelStatusAction = 'date' | 'destination' | 'endTrip' | null;
@@ -129,10 +140,27 @@ interface ActiveTripState {
 }
 
 type EditableTimelineItem = TodayTimelineItem & {
+  dayDateKey?: string;
   hidden?: boolean;
   records?: PlaceRecord[];
   memoEntries?: string[];
   addedPhotoUris?: string[];
+};
+
+type TripDay = {
+  dayNumber: number;
+  dateKey: string;
+};
+
+type TripTotalStats = {
+  photoCount: number;
+  placeCount: number;
+  recordCount: number;
+};
+
+type DayScheduleSummary = {
+  photoCount: number;
+  placeCount: number;
 };
 
 type PlaceRecord = {
@@ -207,6 +235,16 @@ function createDestinationId(prefix: string, displayName: string): string {
     .replace(/[^\w-]/g, '');
 
   return `${prefix}-${normalizedName || 'unknown'}`;
+}
+
+function createPlaceId(prefix: string, dateKey: string, placeName: string, timestamp: number): string {
+  const normalizedPlaceName = placeName
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^\w-]/g, '');
+
+  return `${prefix}-${dateKey}-${normalizedPlaceName || 'place'}-${timestamp}`;
 }
 
 function createUnknownDestination(): DestinationOption {
@@ -298,6 +336,117 @@ function formatHeroDateLabel(dateKey: string): string {
   return `${date.getMonth() + 1}.${date.getDate()} ${WEEKDAY_LABELS[date.getDay()]}`;
 }
 
+function formatTimelineFallbackTimeLabel(date = new Date()): string {
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const period = hours >= 12 ? 'PM' : 'AM';
+  const hour12 = hours % 12 || 12;
+
+  if (minutes === 0) {
+    return `${hour12} ${period}`;
+  }
+
+  return `${hour12}:${`${minutes}`.padStart(2, '0')} ${period}`;
+}
+
+function getTimelineTimeSortMinutes(timeLabel: string): number {
+  const match = timeLabel.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
+  if (!match) return Number.MAX_SAFE_INTEGER;
+
+  const rawHour = Number(match[1]);
+  const minute = Number(match[2] ?? 0);
+  const period = match[3].toUpperCase();
+  const hour = period === 'PM'
+    ? rawHour === 12 ? 12 : rawHour + 12
+    : rawHour === 12 ? 0 : rawHour;
+
+  return hour * 60 + minute;
+}
+
+function addDaysToDateKey(dateKey: string, dayOffset: number): string {
+  const date = parseDateKey(dateKey);
+  date.setDate(date.getDate() + dayOffset);
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
+function isSameDateKey(firstDateKey: string, secondDateKey: string): boolean {
+  return firstDateKey === secondDateKey;
+}
+
+function getTimelineRecordCount(item: EditableTimelineItem): number {
+  if (item.records && item.records.length > 0) {
+    return item.records.length;
+  }
+
+  if (item.memoEntries && item.memoEntries.length > 0) {
+    return item.memoEntries.length;
+  }
+
+  return item.memoCount;
+}
+
+function getTripTotalStats(
+  timelineItems: EditableTimelineItem[],
+  tripDays: TripDay[],
+): TripTotalStats {
+  const tripDayKeys = new Set(tripDays.map((day) => day.dateKey));
+
+  return timelineItems.reduce<TripTotalStats>(
+    (stats, item) => {
+      if (item.hidden) {
+        return stats;
+      }
+
+      if (item.dayDateKey && !tripDayKeys.has(item.dayDateKey)) {
+        return stats;
+      }
+
+      return {
+        photoCount: stats.photoCount + item.photoCount,
+        placeCount: stats.placeCount + 1,
+        recordCount: stats.recordCount + getTimelineRecordCount(item),
+      };
+    },
+    {
+      photoCount: 0,
+      placeCount: 0,
+      recordCount: 0,
+    },
+  );
+}
+
+function getDayScheduleSummary(
+  timelineItems: EditableTimelineItem[],
+  dateKey: string,
+  fallbackDateKey: string,
+): DayScheduleSummary {
+  return timelineItems.reduce<DayScheduleSummary>(
+    (summary, item) => {
+      if (item.hidden) {
+        return summary;
+      }
+
+      const itemDateKey = item.dayDateKey ?? fallbackDateKey;
+      if (itemDateKey !== dateKey) {
+        return summary;
+      }
+
+      return {
+        photoCount: summary.photoCount + item.photoCount,
+        placeCount: summary.placeCount + 1,
+      };
+    },
+    {
+      photoCount: 0,
+      placeCount: 0,
+    },
+  );
+}
+
 function formatSheetDateLabel(dateKey: string): string {
   const date = parseDateKey(dateKey);
   return `${date.getMonth() + 1}월 ${date.getDate()}일`;
@@ -306,8 +455,7 @@ function formatSheetDateLabel(dateKey: string): string {
 function getInclusiveDayCount(startDate: string, endDate: string | null): number {
   const start = parseDateKey(startDate).getTime();
   const end = parseDateKey(endDate ?? startDate).getTime();
-  const dayMs = 24 * 60 * 60 * 1000;
-  return Math.max(1, Math.round((end - start) / dayMs) + 1);
+  return Math.max(1, Math.round((end - start) / DAY_MS) + 1);
 }
 
 function formatDateRangeDescription(
@@ -382,6 +530,8 @@ export default function HomeScreen() {
   }>();
   const { currentTrip, todaySummary } = HOME_MOCK_DATA;
   const {
+    status: photoImportStatus,
+    progress: photoImportProgress,
     candidates: photoImportCandidates,
     hasOpenedPhotoImportResults,
     hasDeferredPhotoImportResults,
@@ -412,8 +562,14 @@ export default function HomeScreen() {
     React.useState(false);
   const [pendingTravelStatusAction, setPendingTravelStatusAction] =
     React.useState<PendingTravelStatusAction>(null);
-  const [timelineItems] =
+  const [timelineItems, setTimelineItems] =
     React.useState<EditableTimelineItem[]>(HOME_TIMELINE_ITEMS);
+  const [selectedTripDayIndex, setSelectedTripDayIndex] = React.useState(
+    Math.max(0, INITIAL_ACTIVE_TRIP.dayNumber - 1),
+  );
+  const [isTravelHomeRefreshing, setTravelHomeRefreshing] = React.useState(false);
+  const [isScheduleSheetVisible, setScheduleSheetVisible] = React.useState(false);
+  const [isPlaceCreateModalVisible, setPlaceCreateModalVisible] = React.useState(false);
   const handledTabActionIdRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
@@ -428,18 +584,30 @@ export default function HomeScreen() {
   }, [params.photoImportPreview]);
 
   React.useEffect(() => {
-    if (params.action !== 'startTrip') {
+    if (params.action !== 'startTrip' && params.action !== 'endTrip') {
       return;
     }
 
-    const actionKey = params.actionId ?? 'startTrip';
+    const actionKey = params.actionId ?? params.action;
     if (handledTabActionIdRef.current === actionKey) {
       return;
     }
 
     handledTabActionIdRef.current = actionKey;
-    setStartTripConfirmVisible(true);
-  }, [params.action, params.actionId]);
+
+    if (params.action === 'startTrip') {
+      setStartTripConfirmVisible(true);
+      return;
+    }
+
+    if (isTraveling) {
+      setEndTripConfirmVisible(true);
+    }
+  }, [isTraveling, params.action, params.actionId]);
+
+  React.useEffect(() => {
+    setActiveTraveling(isTraveling);
+  }, [isTraveling]);
 
   React.useEffect(() => {
     if (photoImportHomeFlowStatus !== 'analyzing') {
@@ -492,6 +660,10 @@ export default function HomeScreen() {
     router.push('/onboarding/results' as Href);
   }, [openPhotoImportResults, router]);
 
+  const handleOpenPhotoImportProgress = React.useCallback(() => {
+    router.push('/find-trips-loading' as Href);
+  }, [router]);
+
   const handleClosePhotoImportCompleteModal = React.useCallback(() => {
     setShowPhotoImportCompleteModal(false);
     setHasDismissedPhotoImportCompleteModal(true);
@@ -516,18 +688,6 @@ export default function HomeScreen() {
       setTravelStatusSheetVisible(true);
     });
   }, []);
-
-  const handlePressTimelinePlace = React.useCallback((item: TodayTimelineItem) => {
-    router.push({
-      pathname: '/place-detail',
-      params: {
-        tripId: 'active-paris-trip',
-        dayId: `active-paris-day-${activeTrip.dayNumber}`,
-        placeId: item.id,
-        entryPoint: 'activeTripTimeline',
-      },
-    });
-  }, [activeTrip.dayNumber, router]);
 
   const handlePressEditPeriod = React.useCallback(() => {
     closeSheetThenOpen('date');
@@ -571,19 +731,161 @@ export default function HomeScreen() {
     reopenTravelStatusSheet();
   }, [reopenTravelStatusSheet]);
 
-  const visibleTimelineItems = React.useMemo(
-    () => timelineItems.filter((item) => !item.hidden),
-    [timelineItems],
+  const tripDayCount = Math.max(
+    activeTrip.dayNumber,
+    getInclusiveDayCount(activeTrip.startDate, activeTrip.endDate),
   );
-
+  const tripDays = React.useMemo(
+    () =>
+      Array.from({ length: tripDayCount }, (_, index) => ({
+        dayNumber: index + 1,
+        dateKey: addDaysToDateKey(activeTrip.startDate, index),
+      })),
+    [activeTrip.startDate, tripDayCount],
+  );
+  const selectedTripDay = tripDays[selectedTripDayIndex] ?? tripDays[0];
+  const selectedDateKey = selectedTripDay?.dateKey ?? activeTrip.startDate;
+  const todayDateKey = getTodayDateKey();
+  const tripDayLabels = React.useMemo(
+    () =>
+      tripDays.map((day) =>
+        isSameDateKey(day.dateKey, todayDateKey) ? 'TODAY' : `DAY ${day.dayNumber}`,
+      ),
+    [todayDateKey, tripDays],
+  );
+  const visibleTimelineItems = React.useMemo(
+    () =>
+      generateHomeTimelineItemsForDay({
+        selectedDateKey,
+        // TODO: Pass the selected day's real photo metadata once EXIF/GPS import is connected.
+        photos: [],
+        fallbackItems: timelineItems.filter((item) => !item.hidden),
+      }),
+    [selectedDateKey, timelineItems],
+  );
   const recordedPhotoCount = visibleTimelineItems.reduce(
     (sum, item) => sum + item.photoCount,
     0,
   );
-  const visibleTimelineRecordCount = visibleTimelineItems.reduce(
-    (sum, item) => sum + item.memoCount,
-    0,
+  const tripTotalStats = React.useMemo(
+    () => getTripTotalStats(timelineItems, tripDays),
+    [timelineItems, tripDays],
   );
+  const isSelectedTripDayToday = isSameDateKey(selectedDateKey, todayDateKey);
+  const selectedTimelineTitle = isSelectedTripDayToday
+    ? '오늘의 타임라인'
+    : `${selectedTripDayIndex + 1}일차 타임라인`;
+  const selectedSummaryDateLabel = formatHeroDateLabel(selectedDateKey);
+  const selectedSummary = {
+    distanceKm: visibleTimelineItems.length > 0 ? todaySummary.distanceKm : 0,
+    placeCount: visibleTimelineItems.length,
+    photoCount: recordedPhotoCount,
+  };
+
+  const handlePressTimelinePlace = React.useCallback((item: TodayTimelineItem) => {
+    const timelineItem = item as EditableTimelineItem;
+    const firstRecord = timelineItem.records?.[0];
+
+    router.push({
+      pathname: '/place-detail',
+      params: {
+        tripId: activeTrip.destination.id,
+        dayId: selectedDateKey,
+        placeId: item.id,
+        entryPoint: 'activeTripTimeline',
+        placeName: item.placeName,
+        cityName: item.cityLabel,
+        countryName: activeTrip.destination.countryName,
+        categoryLabel: item.categoryLabel,
+        dateLabel: selectedSummaryDateLabel,
+        timeLabel: item.timeLabel,
+        recordText: firstRecord?.text,
+        photoUris: JSON.stringify(timelineItem.addedPhotoUris ?? []),
+      },
+    });
+  }, [
+    activeTrip.destination.countryName,
+    activeTrip.destination.id,
+    router,
+    selectedDateKey,
+    selectedSummaryDateLabel,
+  ]);
+
+  React.useEffect(() => {
+    setSelectedTripDayIndex((prev) => Math.min(prev, Math.max(0, tripDays.length - 1)));
+  }, [tripDays.length]);
+
+  const handleSelectPreviousTripDay = React.useCallback(() => {
+    setSelectedTripDayIndex((prev) => Math.max(0, prev - 1));
+  }, []);
+
+  const handleSelectNextTripDay = React.useCallback(() => {
+    setSelectedTripDayIndex((prev) => Math.min(Math.max(0, tripDays.length - 1), prev + 1));
+  }, [tripDays.length]);
+
+  const handleRefreshTravelHome = React.useCallback(() => {
+    setTravelHomeRefreshing(true);
+    requestAnimationFrame(() => {
+      setTravelHomeRefreshing(false);
+    });
+  }, []);
+
+  const handleOpenManualPlaceCreate = React.useCallback(() => {
+    setPlaceCreateModalVisible(true);
+  }, []);
+
+  const handleCloseManualPlaceCreate = React.useCallback(() => {
+    setPlaceCreateModalVisible(false);
+  }, []);
+
+  const handleSubmitManualPlace = React.useCallback((input: PlaceCreateInput) => {
+    const createdAt = Date.now();
+    const photoCount = (input.photoUris?.length ?? 0) + (input.photoSources?.length ?? 0);
+    const firstPhotoUri = input.photoUris?.[0];
+    const firstPhotoSource = input.photoSources?.[0];
+    const placeName = input.placeName ?? input.place;
+    const placeId = createPlaceId('manual', selectedDateKey, placeName, createdAt);
+
+    // TODO: Use selected photos' metadata to derive timeLabel and location group.
+    // TODO: Persist manually added places and linked photos to Supabase.
+    // TODO: Use placeId as the source of truth for timeline-to-place-detail navigation.
+    const newTimelineItem: EditableTimelineItem = {
+      id: placeId,
+      dayDateKey: selectedDateKey,
+      timeLabel: input.time ?? formatTimelineFallbackTimeLabel(),
+      placeName,
+      categoryLabel: input.category ?? '직접 추가',
+      cityLabel: input.cityName ?? input.city ?? activeTrip.destination.displayName,
+      memoCount: input.text ? 1 : 0,
+      photoCount,
+      imageSource: firstPhotoSource ?? (firstPhotoUri ? { uri: firstPhotoUri } : currentTrip.heroImage),
+      records: input.text
+        ? [
+            {
+              id: `manual-record-${createdAt}`,
+              tripId: activeTrip.destination.id,
+              dayId: selectedDateKey,
+              placeId,
+              text: input.text,
+              photoIds: input.photoUris,
+              createdAt: new Date().toISOString(),
+            },
+          ]
+        : undefined,
+      memoEntries: input.text ? [input.text] : undefined,
+      addedPhotoUris: input.photoUris,
+    };
+
+    setTimelineItems((current) =>
+      [...current, newTimelineItem].sort((a, b) => {
+        const dayCompare = (a.dayDateKey ?? '').localeCompare(b.dayDateKey ?? '');
+        if (dayCompare !== 0) return dayCompare;
+
+        return getTimelineTimeSortMinutes(a.timeLabel) - getTimelineTimeSortMinutes(b.timeLabel);
+      }),
+    );
+    setPlaceCreateModalVisible(false);
+  }, [activeTrip.destination.displayName, activeTrip.destination.id, currentTrip.heroImage, selectedDateKey]);
 
   const handleConfirmEndTrip = React.useCallback(() => {
     const destinationName = getEnglishLocationLabel(activeTrip.destination);
@@ -597,7 +899,7 @@ export default function HomeScreen() {
       endDate: completedEndDate,
       coverImage: currentTrip.heroImage,
       daysCount: getInclusiveDayCount(activeTrip.startDate, completedEndDate),
-      photoCount: recordedPhotoCount,
+      photoCount: tripTotalStats.photoCount,
     });
     setActiveTrip((prev) => ({
       ...prev,
@@ -606,7 +908,12 @@ export default function HomeScreen() {
     setEndTripConfirmVisible(false);
     setTravelStatusSheetVisible(false);
     setEndTripCompleteVisible(true);
-  }, [activeTrip, currentTrip.heroImage, recordedPhotoCount]);
+  }, [activeTrip, currentTrip.heroImage, tripTotalStats.photoCount]);
+
+  const handleCloseEndTripComplete = React.useCallback(() => {
+    setEndTripCompleteVisible(false);
+    setIsTraveling(false);
+  }, []);
 
   const handleViewCompletedTrip = React.useCallback(() => {
     setEndTripCompleteVisible(false);
@@ -626,8 +933,10 @@ export default function HomeScreen() {
 
   const handleCancelEndTripConfirm = React.useCallback(() => {
     setEndTripConfirmVisible(false);
-    reopenTravelStatusSheet();
-  }, [reopenTravelStatusSheet]);
+    setTravelStatusSheetVisible(false);
+    setPendingTravelStatusAction(null);
+    router.replace('/(tabs)' as Href);
+  }, [router]);
 
   const handlePressStartTripFromIdle = React.useCallback(() => {
     setStartTripConfirmVisible(true);
@@ -766,7 +1075,6 @@ export default function HomeScreen() {
   const statusButtonLabel = activeTrip.isRecording ? '여행 중' : '종료됨';
   const statusBadgeLabel = activeTrip.isRecording ? '여행 기록 중' : '여행 종료됨';
   const statusDotColor = activeTrip.isRecording ? '#D13434' : Colors.foundation.grey500;
-  const heroDateLabel = formatHeroDateLabel(activeTrip.startDate);
   const sheetDateLabel = formatSheetDateLabel(activeTrip.startDate);
   const dateRangeDescription = formatDateRangeDescription(
     activeTrip.startDate,
@@ -776,9 +1084,15 @@ export default function HomeScreen() {
   const headerLocationLabel = getEnglishLocationLabel(activeTrip.destination);
   const homeHeaderTop = getHomeHeaderTop(insets.top);
   const photoImportResultCount = photoImportCandidates.length;
+  const shouldShowPhotoTripDetectionProgressCard =
+    !hasSavedPhotoImportResults &&
+    photoImportStatus === 'analyzing' &&
+    hasDeferredPhotoImportResults;
   const shouldShowPhotoImportResultsCard =
     !hasSavedPhotoImportResults &&
+    !shouldShowPhotoTripDetectionProgressCard &&
     (photoImportHomeFlowStatus === 'completed' ||
+      photoImportStatus === 'results_ready' ||
       hasDeferredPhotoImportResults ||
       hasOpenedPhotoImportResults) &&
     (showPhotoImportCompleteModal ||
@@ -794,8 +1108,11 @@ export default function HomeScreen() {
           headerTop={homeHeaderTop}
           isFirstUserEmptyState={isFirstUserEmptyState}
           showPhotoImportResultsCard={shouldShowPhotoImportResultsCard}
+          showPhotoTripDetectionProgressCard={shouldShowPhotoTripDetectionProgressCard}
+          photoTripDetectionProgress={photoImportProgress}
           photoImportTripCount={photoImportResultCount}
           onPressViewPhotoImportResults={handleOpenPhotoImportResults}
+          onPressPhotoTripDetectionProgress={handleOpenPhotoImportProgress}
           showImportCompleteModal={showPhotoImportCompleteModal && !hasSavedPhotoImportResults}
           onCloseImportCompleteModal={handleClosePhotoImportCompleteModal}
           onPressViewImportResults={handlePressViewCompletedImportResults}
@@ -826,12 +1143,7 @@ export default function HomeScreen() {
     <View style={styles.root}>
       <StatusBar style="light" translucent backgroundColor="transparent" />
 
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        contentInsetAdjustmentBehavior="never"
-      >
+      <View style={styles.travelHomeContent}>
         <View style={styles.hero}>
           <View style={styles.heroImageFrame}>
             <Image
@@ -861,12 +1173,13 @@ export default function HomeScreen() {
             <View style={[styles.heroHeader, { top: homeHeaderTop }]}>
               <View style={styles.locationRow}>
                 <Ionicons name="location-outline" size={16} color={Colors.foundation.white} />
-                <Text style={styles.locationLabel}>{headerLocationLabel}</Text>
-              </View>
-
-              <View style={styles.headerCenter}>
-                <Text style={styles.dayLabel}>Day {activeTrip.dayNumber}</Text>
-                <Text style={styles.dateLabel}>{heroDateLabel}</Text>
+                <Text
+                  style={styles.locationLabel}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {headerLocationLabel}
+                </Text>
               </View>
 
               <TravelStatusButton
@@ -881,17 +1194,178 @@ export default function HomeScreen() {
 
         <View style={styles.summaryOverlap}>
           <TodaySummary
-            distanceKm={todaySummary.distanceKm}
-            placeCount={todaySummary.visitedPlacesCount}
-            momentCount={visibleTimelineRecordCount}
+            distanceKm={selectedSummary.distanceKm}
+            placeCount={selectedSummary.placeCount}
+            momentCount={selectedSummary.photoCount}
+            selectedDayIndex={selectedTripDayIndex}
+            totalDays={tripDays.length}
+            dayLabels={tripDayLabels}
+            selectedDateLabel={selectedSummaryDateLabel}
+            isSelectedToday={isSelectedTripDayToday}
+            onSelectPreviousDay={selectedTripDayIndex > 0 ? handleSelectPreviousTripDay : undefined}
+            onSelectNextDay={
+              selectedTripDayIndex < tripDays.length - 1 ? handleSelectNextTripDay : undefined
+            }
           />
         </View>
 
         <TodayTimelineSection
           items={visibleTimelineItems}
+          title={selectedTimelineTitle}
+          isSelectedToday={isSelectedTripDayToday}
           onPressItem={handlePressTimelinePlace}
+          onPressViewAll={() => setScheduleSheetVisible(true)}
+          onPressAddManually={handleOpenManualPlaceCreate}
+          refreshControl={
+            <RefreshControl
+              refreshing={isTravelHomeRefreshing}
+              onRefresh={handleRefreshTravelHome}
+              tintColor={Colors.foundation.black}
+            />
+          }
+          listContentBottomInset={120 + insets.bottom}
         />
-      </ScrollView>
+      </View>
+
+      <PlaceCreateModal
+        visible={isPlaceCreateModalVisible}
+        mode="create"
+        tripId={activeTrip.destination.id}
+        dayId={selectedDateKey}
+        tripDestinationName={activeTrip.destination.displayName}
+        tripDestinationCountry={activeTrip.destination.countryName}
+        tripLatitude={activeTrip.latitude}
+        tripLongitude={activeTrip.longitude}
+        onClose={handleCloseManualPlaceCreate}
+        onSubmit={handleSubmitManualPlace}
+      />
+
+      <Modal
+        visible={isScheduleSheetVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setScheduleSheetVisible(false)}
+      >
+        <View style={styles.scheduleSheetOverlay}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="전체 일정 닫기"
+            style={StyleSheet.absoluteFill}
+            onPress={() => setScheduleSheetVisible(false)}
+          />
+          <View style={[styles.scheduleSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+            <View style={styles.scheduleSheetHandle} />
+            <Text style={styles.scheduleSheetTitle}>전체 일정</Text>
+            <View style={styles.scheduleDayList}>
+              {tripDays.map((day, index) => {
+                const isSelected = index === selectedTripDayIndex;
+                const daySummary = getDayScheduleSummary(
+                  timelineItems,
+                  day.dateKey,
+                  activeTrip.startDate,
+                );
+                const weekdayLabel = WEEKDAY_LABELS[parseDateKey(day.dateKey).getDay()];
+                const dateLabel = formatSheetDateLabel(day.dateKey);
+
+                return (
+                  <Pressable
+                    accessibilityRole="button"
+                    key={day.dateKey}
+                    onPress={() => {
+                      setSelectedTripDayIndex(index);
+                      setScheduleSheetVisible(false);
+                    }}
+                    style={[
+                      styles.scheduleDayRow,
+                      isSelected && styles.scheduleDayRowSelected,
+                    ]}
+                  >
+                    <View style={styles.scheduleDayTextGroup}>
+                      <View style={styles.scheduleDayHeaderRow}>
+                        <Text
+                          style={[
+                            styles.scheduleDayTitle,
+                            isSelected && styles.scheduleDayTitleSelected,
+                          ]}
+                        >
+                          {day.dayNumber}일차
+                        </Text>
+                        <Text
+                          style={[
+                            styles.scheduleDaySubLabel,
+                            isSelected && styles.scheduleDaySubLabelSelected,
+                          ]}
+                        >
+                          {dateLabel}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.scheduleDaySubLabel,
+                            isSelected && styles.scheduleDaySubLabelSelected,
+                          ]}
+                        >
+                          {weekdayLabel}
+                        </Text>
+                      </View>
+                      <View style={styles.scheduleDayMetaRow}>
+                        <View style={styles.scheduleDayMetaGroup}>
+                          <Text
+                            style={[
+                              styles.scheduleDayMeta,
+                              isSelected && styles.scheduleDayMetaSelected,
+                            ]}
+                          >
+                            {daySummary.placeCount}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.scheduleDayMeta,
+                              isSelected && styles.scheduleDayMetaSelected,
+                            ]}
+                          >
+                            곳
+                          </Text>
+                        </View>
+                        <Text
+                          style={[
+                            styles.scheduleDayMeta,
+                            isSelected && styles.scheduleDayMetaSelected,
+                          ]}
+                        >
+                          ·
+                        </Text>
+                        <View style={styles.scheduleDayMetaGroup}>
+                          <Text
+                            style={[
+                              styles.scheduleDayMeta,
+                              isSelected && styles.scheduleDayMetaSelected,
+                            ]}
+                          >
+                            {daySummary.photoCount}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.scheduleDayMeta,
+                              isSelected && styles.scheduleDayMetaSelected,
+                            ]}
+                          >
+                            장
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                    <Ionicons
+                      name="chevron-forward"
+                      size={18}
+                      color={isSelected ? Colors.foundation.grey500 : Colors.foundation.grey500}
+                    />
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <TravelStatusSheet
         visible={isTravelStatusSheetVisible}
@@ -927,9 +1401,9 @@ export default function HomeScreen() {
 
       <EndTripConfirmModal
         visible={isEndTripConfirmVisible}
-        photoCount={recordedPhotoCount}
-        placeCount={todaySummary.visitedPlacesCount}
-        momentCount={todaySummary.recordedMomentsCount}
+        photoCount={tripTotalStats.photoCount}
+        placeCount={tripTotalStats.placeCount}
+        momentCount={tripTotalStats.recordCount}
         onCancel={handleCancelEndTripConfirm}
         onConfirm={handleConfirmEndTrip}
       />
@@ -938,9 +1412,10 @@ export default function HomeScreen() {
         visible={isEndTripCompleteVisible}
         destinationName={activeTrip.destination.displayName}
         dateRangeDescription={dateRangeDescription}
-        photoCount={recordedPhotoCount}
-        placeCount={todaySummary.visitedPlacesCount}
-        momentCount={todaySummary.recordedMomentsCount}
+        photoCount={tripTotalStats.photoCount}
+        placeCount={tripTotalStats.placeCount}
+        momentCount={tripTotalStats.recordCount}
+        onClose={handleCloseEndTripComplete}
         onViewMyTrips={handleViewCompletedTrip}
       />
     </View>
@@ -952,11 +1427,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: WARM_WHITE,
   },
-  scroll: {
+  travelHomeContent: {
     flex: 1,
-  },
-  scrollContent: {
-    paddingBottom: 120,
     backgroundColor: WARM_WHITE,
   },
   hero: {
@@ -1008,17 +1480,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
+    gap: 12,
   },
   locationRow: {
-    width: 90,
+    flex: 1,
+    minWidth: 0,
     height: 28,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    marginRight: 12,
     zIndex: 1,
   },
   locationLabel: {
-    maxWidth: 70,
+    flexShrink: 1,
+    minWidth: 0,
     height: 24,
     fontFamily: FIGMA_POINT_EN,
     fontSize: 18,
@@ -1026,25 +1502,90 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.foundation.white,
   },
-  headerCenter: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayLabel: {
-    ...Typography.title2,
-    color: Colors.foundation.white,
-    textAlign: 'center',
-  },
-  dateLabel: {
-    ...Typography.body2Emphasized,
-    color: Colors.foundation.white,
-    textAlign: 'center',
-  },
   summaryOverlap: {
     minHeight: SUMMARY_HEIGHT,
-    marginTop: -SUMMARY_HEIGHT,
+    marginTop: -SUMMARY_OVERLAP,
     marginHorizontal: 27,
-    marginBottom: 32,
+    marginBottom: 28,
+  },
+  scheduleSheetOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.24)',
+  },
+  scheduleSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 10,
+    paddingHorizontal: 20,
+    backgroundColor: Colors.foundation.white,
+  },
+  scheduleSheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 999,
+    alignSelf: 'center',
+    backgroundColor: Colors.foundation.grey100,
+  },
+  scheduleSheetTitle: {
+    marginTop: 20,
+    marginBottom: 16,
+    ...Typography.title2,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+  },
+  scheduleDayList: {
+    gap: 8,
+  },
+  scheduleDayRow: {
+    minHeight: 60,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  scheduleDayRowSelected: {
+    backgroundColor: '#E9E9E9',
+  },
+  scheduleDayTextGroup: {
+    gap: 2,
+  },
+  scheduleDayHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  scheduleDayTitle: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+  },
+  scheduleDayTitleSelected: {
+    color: Colors.foundation.black,
+  },
+  scheduleDaySubLabel: {
+    ...Typography.captionRegular,
+    color: Colors.foundation.grey500,
+  },
+  scheduleDaySubLabelSelected: {
+    color: Colors.foundation.grey800,
+  },
+  scheduleDayMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  scheduleDayMetaGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  scheduleDayMeta: {
+    ...Typography.captionEmphasized,
+    color: Colors.foundation.grey500,
+  },
+  scheduleDayMetaSelected: {
+    color: Colors.foundation.grey800,
   },
 });

@@ -18,6 +18,7 @@ interface AuthActionButtonProps {
   onPress: () => void;
   /** state=on(기본 액션) / state=off(보조 액션) */
   state?: 'on' | 'off';
+  disabled?: boolean;
   loading?: boolean;
   style?: StyleProp<ViewStyle>;
 }
@@ -26,13 +27,14 @@ export default function AuthActionButton({
   label,
   onPress,
   state = 'on',
+  disabled = false,
   loading = false,
   style,
 }: AuthActionButtonProps) {
   return (
     <TouchableOpacity
       onPress={onPress}
-      disabled={loading}
+      disabled={disabled || loading}
       activeOpacity={0.75}
       style={[styles.button, state === 'on' ? styles.on : styles.off, style]}
     >

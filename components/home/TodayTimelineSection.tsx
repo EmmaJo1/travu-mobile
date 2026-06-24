@@ -1,9 +1,10 @@
+import { Feather } from '@expo/vector-icons';
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View, type RefreshControlProps } from 'react-native';
 
-import TimeLineCard, { type TimeLineCardProps } from '@/components/home/TimeLineCard';
 import Text from '@/components/common/AppText';
-import { Colors, Typography } from '@/constants/theme';
+import TimeLineCard, { type TimeLineCardProps } from '@/components/home/TimeLineCard';
+import { Colors, Spacing, Typography } from '@/constants/theme';
 
 export type TodayTimelineItem = Omit<TimeLineCardProps, 'isLast' | 'onPress'> & {
   id: string;
@@ -11,51 +12,203 @@ export type TodayTimelineItem = Omit<TimeLineCardProps, 'isLast' | 'onPress'> & 
 
 interface TodayTimelineSectionProps {
   items: TodayTimelineItem[];
+  title?: string;
+  isSelectedToday?: boolean;
   onPressItem?: (item: TodayTimelineItem) => void;
+  onPressViewAll?: () => void;
+  onPressAddManually?: () => void;
+  refreshControl?: React.ReactElement<RefreshControlProps>;
+  listContentBottomInset?: number;
 }
 
 export default function TodayTimelineSection({
   items,
+  title = '오늘의 타임라인',
+  isSelectedToday = false,
   onPressItem,
+  onPressViewAll,
+  onPressAddManually,
+  refreshControl,
+  listContentBottomInset = 0,
 }: TodayTimelineSectionProps) {
+  const emptyTitle = isSelectedToday
+    ? '아직 오늘의 타임라인이 없어요'
+    : '이 날짜의 타임라인이 없어요';
+  const emptyDescription = isSelectedToday
+    ? '오늘 찍은 사진이 생기면\n위치와 시간 기준으로 자동 정리돼요'
+    : '해당 날짜에 촬영된 사진이 있으면\n위치와 시간 기준으로 자동 정리돼요';
+
   return (
     <View style={styles.section}>
       <View style={styles.heading}>
-        <Text style={styles.title}>오늘의 타임라인</Text>
+        <View style={styles.headingTopRow}>
+          <Text style={styles.title}>{title}</Text>
+          {onPressViewAll ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={onPressViewAll}
+              style={({ pressed }) => [styles.viewAllButton, pressed && styles.viewAllButtonPressed]}
+            >
+              <Text style={styles.viewAllText}>전체 일정</Text>
+              <Feather name="chevron-right" size={16} color={Colors.foundation.grey700} />
+            </Pressable>
+          ) : null}
+        </View>
         <Text style={styles.description}>자동으로 정리된 기록을 확인해보세요</Text>
       </View>
 
-      <View style={styles.list}>
-        {items.map((item, index) => (
-          <TimeLineCard
-            key={item.id}
-            {...item}
-            isLast={index === items.length - 1}
-            onPress={onPressItem ? () => onPressItem(item) : undefined}
-          />
-        ))}
-      </View>
+      {items.length > 0 ? (
+        <ScrollView
+          style={styles.listScroll}
+          contentContainerStyle={[styles.list, { paddingBottom: listContentBottomInset }]}
+          showsVerticalScrollIndicator={false}
+          refreshControl={refreshControl}
+        >
+          <View style={styles.listInner}>
+          {items.map((item, index) => (
+            <TimeLineCard
+              key={item.id}
+              {...item}
+              isLast={index === items.length - 1}
+              onPress={onPressItem ? () => onPressItem(item) : undefined}
+            />
+          ))}
+          {onPressAddManually ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={onPressAddManually}
+              style={({ pressed }) => [
+                styles.inlineAddButton,
+                pressed && styles.inlineAddButtonPressed,
+              ]}
+            >
+              <Text style={styles.inlineAddText}>+ 직접 추가</Text>
+            </Pressable>
+          ) : null}
+          </View>
+        </ScrollView>
+      ) : (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyTitle}>{emptyTitle}</Text>
+          <Text style={styles.emptyDescription}>{emptyDescription}</Text>
+          {onPressAddManually ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={onPressAddManually}
+              style={({ pressed }) => [
+                styles.emptyActionButton,
+                pressed && styles.emptyActionButtonPressed,
+              ]}
+            >
+              <Text style={styles.emptyActionText}>직접 추가하기</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   section: {
+    flex: 1,
     paddingHorizontal: 20,
-    gap: 24,
+    gap: 16,
   },
   heading: {
     gap: 2,
+  },
+  headingTopRow: {
+    minHeight: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
   },
   title: {
     ...Typography.title2,
     color: Colors.foundation.black,
   },
+  viewAllButton: {
+    minHeight: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  viewAllButtonPressed: {
+    opacity: 0.72,
+  },
+  viewAllText: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey700,
+  },
   description: {
     ...Typography.captionRegular,
-    color: '#4C4C4C',
+    color: Colors.foundation.grey600,
+  },
+  listScroll: {
+    flex: 1,
   },
   list: {
+    flexGrow: 1,
+  },
+  listInner: {
     gap: 16,
+  },
+  inlineAddButton: {
+    minHeight: 32,
+    alignSelf: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+  },
+  inlineAddButtonPressed: {
+    opacity: 0.64,
+  },
+  inlineAddText: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey700,
+    textAlign: 'center',
+  },
+  emptyState: {
+    flex: 1,
+    minHeight: 180,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 56,
+    paddingHorizontal: 20,
+    paddingVertical: 32,
+  },
+  emptyTitle: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+  },
+  emptyDescription: {
+    maxWidth: 280,
+    marginTop: 12,
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+    textAlign: 'center',
+  },
+  emptyActionButton: {
+    minWidth: 116,
+    height: 40,
+    marginTop: 32,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.foundation.grey100,
+    borderRadius: 999,
+    backgroundColor: Colors.foundation.white,
+  },
+  emptyActionButtonPressed: {
+    opacity: 0.74,
+  },
+  emptyActionText: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.black,
+    textAlign: 'center',
   },
 });

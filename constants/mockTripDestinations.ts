@@ -28,6 +28,8 @@ export interface DestinationOption {
   /** Legacy home active-trip fields. Keep these until all callers migrate. */
   displayName: string;
   countryName: string;
+  englishDisplayName?: string;
+  englishCountryName?: string;
 }
 
 export const DOMESTIC_DESTINATION_CATEGORIES: DestinationCategory[] = [
@@ -81,6 +83,8 @@ function makeDestination(option: Omit<DestinationOption, 'displayName' | 'countr
     source: option.source ?? 'mock',
     displayName: option.name,
     countryName: option.country ?? '',
+    englishDisplayName: option.englishDisplayName,
+    englishCountryName: option.englishCountryName,
   };
 }
 
@@ -354,6 +358,7 @@ export function createCustomDestination(name: string): DestinationOption {
     isCustomDestination: true,
     displayName: trimmedName,
     countryName: '',
+    englishDisplayName: /^[\x00-\x7F]+$/.test(trimmedName) ? trimmedName : undefined,
   };
 }
 

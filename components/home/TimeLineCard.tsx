@@ -31,14 +31,13 @@ export default function TimeLineCard({
   memoCount,
   photoCount,
   imageSource,
-  isLast = false,
   onPress,
 }: TimeLineCardProps) {
   const normalizedTimeLabel = timeLabel.trim();
   const timeMatch = normalizedTimeLabel.match(/^(.+?)\s*(AM|PM)$/i);
   const normalizedTimeText = (timeMatch?.[1] ?? normalizedTimeLabel).trim();
   const period = timeMatch?.[2]?.toUpperCase() ?? '';
-  const shouldStackTime = normalizedTimeText.length > 1;
+  const shouldStackTime = normalizedTimeText.includes(':');
 
   return (
     <Pressable
@@ -56,7 +55,7 @@ export default function TimeLineCard({
               {period ? <Text style={styles.timePeriod}>{period}</Text> : null}
             </View>
           </View>
-          <View style={[styles.timelineLine, isLast && styles.timelineLineLast]} />
+          <View style={styles.timelineLine} />
         </View>
 
         <View style={styles.detailColumn}>
@@ -65,7 +64,7 @@ export default function TimeLineCard({
               <Text style={styles.placeName} numberOfLines={1}>
                 {placeName}
               </Text>
-              <Feather name="chevron-right" size={16} color={Colors.foundation.grey400} />
+              <Feather name="chevron-right" size={18} color={Colors.foundation.grey600} />
             </View>
 
             <View style={styles.categoryRow}>
@@ -104,7 +103,7 @@ export default function TimeLineCard({
 
 const styles = StyleSheet.create({
   card: {
-    minHeight: 100,
+    minHeight: 76,
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
@@ -117,18 +116,18 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 24,
+    gap: 16,
     minWidth: 0,
   },
   timeColumn: {
-    width: 28,
-    height: 100,
+    width: 36,
+    height: 76,
     alignItems: 'center',
-    gap: 8,
+    gap: 4,
   },
   timeArea: {
-    width: 28,
-    minHeight: 30,
+    width: 36,
+    minHeight: 28,
     alignItems: 'center',
     justifyContent: 'flex-start',
   },
@@ -142,7 +141,7 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'flex-start',
-    gap: 0,
+    gap: 2,
   },
   timeNumber: {
     fontFamily: FontFamily.pretendardMedium,
@@ -150,6 +149,7 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     color: Colors.foundation.grey500,
     textAlign: 'center',
+    includeFontPadding: false,
   },
   timePeriod: {
     fontFamily: FontFamily.pretendardMedium,
@@ -157,23 +157,22 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     color: Colors.foundation.grey500,
     textAlign: 'center',
+    includeFontPadding: false,
   },
   timelineLine: {
     width: 2,
     flex: 1,
     backgroundColor: Colors.foundation.grey100,
   },
-  timelineLineLast: {},
   detailColumn: {
     flex: 1,
+    minHeight: 76,
     justifyContent: 'flex-start',
     gap: 8,
-    minHeight: 74,
     minWidth: 0,
-    paddingTop: 0,
   },
   titleBlock: {
-    gap: 4,
+    gap: 2,
   },
   titleRow: {
     minHeight: 22,
@@ -192,7 +191,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   categoryText: {
-    ...Typography.body2Emphasized,
+    ...Typography.captionEmphasized,
     color: Colors.foundation.grey400,
   },
   dot: {
@@ -220,8 +219,8 @@ const styles = StyleSheet.create({
     color: Colors.foundation.black,
   },
   thumbnail: {
-    width: 72,
-    height: 90,
+    width: 90,
+    height: 72,
     borderRadius: Radius.xs,
     backgroundColor: Colors.foundation.white,
   },

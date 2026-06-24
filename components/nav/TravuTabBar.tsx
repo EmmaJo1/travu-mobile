@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
+import { useIsActiveTraveling } from '@/constants/activeTravelSession';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 
 const TAB_ICONS = {
@@ -25,8 +26,10 @@ const TAB_ICONS = {
 type TabRouteName = keyof typeof TAB_ICONS;
 
 const FAB_SIZE = 56;
+const ACTION_CARD_SIDE_INSET = 16;
 const ACTIVE_ICON_COLOR = '#111111';
 const INACTIVE_ICON_COLOR = '#A6A6A6';
+const DESTRUCTIVE_ACTION_COLOR = '#D13434';
 const DIM_OVERLAY_COLOR = 'rgba(0, 0, 0, 0.35)';
 
 function isTabRoute(name: string): name is TabRouteName {
@@ -36,6 +39,7 @@ function isTabRoute(name: string): name is TabRouteName {
 export default function TravuTabBar({ state, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const isActiveTraveling = useIsActiveTraveling();
   const [isMenuOpen, setMenuOpen] = React.useState(false);
   const menuProgress = React.useRef(new Animated.Value(0)).current;
 
@@ -53,10 +57,11 @@ export default function TravuTabBar({ state, navigation }: BottomTabBarProps) {
     setMenuOpen(false);
   }, []);
 
-  const openStartTripFlow = React.useCallback(() => {
+  const openStartOrEndTripFlow = React.useCallback(() => {
     closeMenu();
-    router.push(`/(tabs)/?action=startTrip&actionId=${Date.now()}` as Href);
-  }, [closeMenu, router]);
+    const action = isActiveTraveling ? 'endTrip' : 'startTrip';
+    router.push(`/(tabs)/?action=${action}&actionId=${Date.now()}` as Href);
+  }, [closeMenu, isActiveTraveling, router]);
 
   const openPhotoImportFlow = React.useCallback(() => {
     closeMenu();
@@ -185,10 +190,15 @@ export default function TravuTabBar({ state, navigation }: BottomTabBarProps) {
             ]}
           >
             <FabActionCard
-              icon="map-pin"
-              title="여행 시작하기"
-              description="지금부터 사진과 이동을 자동 정리"
-              onPress={openStartTripFlow}
+              icon={isActiveTraveling ? 'power' : 'map-pin'}
+              title={isActiveTraveling ? '여행 종료하기' : '여행 시작하기'}
+              description={
+                isActiveTraveling
+                  ? '지금까지 정리한 여행 저장'
+                  : '지금부터 사진과 이동을 자동 정리'
+              }
+              accentColor={isActiveTraveling ? DESTRUCTIVE_ACTION_COLOR : undefined}
+              onPress={openStartOrEndTripFlow}
             />
             <FabActionCard
               icon="image"
@@ -219,10 +229,13 @@ interface FabActionCardProps {
   icon: React.ComponentProps<typeof Feather>['name'];
   title: string;
   description: string;
+  accentColor?: string;
   onPress: () => void;
 }
 
-function FabActionCard({ icon, title, description, onPress }: FabActionCardProps) {
+function FabActionCard({ icon, title, description, accentColor, onPress }: FabActionCardProps) {
+  const iconColor = accentColor ?? ACTIVE_ICON_COLOR;
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -230,10 +243,12 @@ function FabActionCard({ icon, title, description, onPress }: FabActionCardProps
       style={({ pressed }) => [styles.actionCard, pressed && styles.actionCardPressed]}
     >
       <View style={styles.actionIconBox}>
-        <Feather name={icon} size={22} color={ACTIVE_ICON_COLOR} />
+        <Feather name={icon} size={22} color={iconColor} />
       </View>
       <View style={styles.actionTextBlock}>
-        <Text style={styles.actionTitle}>{title}</Text>
+        <Text style={[styles.actionTitle, accentColor ? { color: accentColor } : null]}>
+          {title}
+        </Text>
         <Text style={styles.actionDescription}>{description}</Text>
       </View>
     </Pressable>
@@ -247,7 +262,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: Colors.foundation.white,
     paddingTop: Spacing.md,
-    paddingHorizontal: 68,
+    paddingHorizontal: 56,
     minHeight: 64,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: Colors.foundation.grey100,
@@ -266,7 +281,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: Colors.foundation.white,
     paddingTop: Spacing.md,
-    paddingHorizontal: 68,
+    paddingHorizontal: 56,
     minHeight: 64,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: Colors.foundation.grey100,
@@ -278,8 +293,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   icon: {
-    width: 24,
-    height: 24,
+    width: 28,
+    height: 28,
   },
   fabButton: {
     width: FAB_SIZE,
@@ -299,11 +314,14 @@ const styles = StyleSheet.create({
   },
   menuStack: {
     position: 'absolute',
-    left: Spacing.xl,
-    right: Spacing.xl,
+    left: Spacing.xl + ACTION_CARD_SIDE_INSET,
+    right: Spacing.xl + ACTION_CARD_SIDE_INSET,
     gap: Spacing.md,
+    alignItems: 'center',
   },
   actionCard: {
+    alignSelf: 'center',
+    width: 268,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.md,

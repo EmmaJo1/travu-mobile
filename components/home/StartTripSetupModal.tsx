@@ -7,6 +7,7 @@ import {
   View,
 } from 'react-native';
 
+import AuthActionButton from '@/components/common/AuthActionButton';
 import DestinationSelectModal from '@/components/common/DestinationSelectModal';
 import Text from '@/components/common/AppText';
 import TripDateRangePickerModal, {
@@ -18,6 +19,12 @@ import type { DestinationOption } from '@/constants/mockTripDestinations';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 
 const SECTION_GAP = Spacing['2xl'] + Spacing.xs;
+
+function createTodayLocalDate(): Date {
+  const today = new Date();
+
+  return new Date(today.getFullYear(), today.getMonth(), today.getDate());
+}
 
 export interface StartTripSetupValue {
   destinationName: string;
@@ -54,6 +61,16 @@ export default function StartTripSetupModal({
     isEndDateUndecided: false,
   });
 
+  const datePickerInitialRange = React.useMemo<TripDateRangePickerValue>(() => {
+    if (tripDateRange.startDate) return tripDateRange;
+
+    return {
+      startDate: createTodayLocalDate(),
+      endDate: tripDateRange.endDate,
+      isEndDateUndecided: tripDateRange.isEndDateUndecided,
+    };
+  }, [tripDateRange]);
+
   React.useEffect(() => {
     if (!visible) return;
 
@@ -67,18 +84,28 @@ export default function StartTripSetupModal({
     setDestinationSelectVisible(false);
   }, [visible]);
 
+  const hasSelectedDestination = Boolean(selectedDestination);
+  const hasSelectedStartDate = Boolean(tripDateRange.startDate);
+  const hasSelectedEndDate = Boolean(tripDateRange.endDate);
+  const canStartTrip =
+    hasSelectedDestination &&
+    hasSelectedStartDate &&
+    (hasSelectedEndDate || tripDateRange.isEndDateUndecided);
+
   const handleStart = () => {
-    const startDate = tripDateRange.startDate
-      ? dateToDateKey(tripDateRange.startDate)
-      : initialValue.startDate;
+    if (!canStartTrip || !selectedDestination || !tripDateRange.startDate) {
+      return;
+    }
+
+    const startDate = dateToDateKey(tripDateRange.startDate);
     const endDate = tripDateRange.endDate
       ? dateToDateKey(tripDateRange.endDate)
       : startDate;
 
     onStart({
       ...initialValue,
-      destinationName: selectedDestination?.name ?? selectedDestination?.displayName ?? initialValue.destinationName,
-      countryName: selectedDestination?.country ?? selectedDestination?.countryName ?? initialValue.countryName,
+      destinationName: selectedDestination.name ?? selectedDestination.displayName,
+      countryName: selectedDestination.country ?? selectedDestination.countryName ?? '',
       startDate,
       endDate,
       isEndDateUndecided: tripDateRange.isEndDateUndecided,
@@ -143,9 +170,13 @@ export default function StartTripSetupModal({
               />
             </View>
 
-            <Pressable accessibilityRole="button" style={styles.primaryButton} onPress={handleStart}>
-              <Text style={styles.primaryLabel}>여행 시작하기</Text>
-            </Pressable>
+            <AuthActionButton
+              disabled={!canStartTrip}
+              label="여행 시작하기"
+              onPress={handleStart}
+              state={canStartTrip ? 'on' : 'off'}
+              style={styles.primaryButton}
+            />
 
             <Pressable
               accessibilityRole="button"
@@ -164,9 +195,9 @@ export default function StartTripSetupModal({
       <TripDateRangePickerModal
         visible={visible && isDatePickerVisible}
         title="여행 기간 선택"
-        initialStartDate={tripDateRange.startDate}
-        initialEndDate={tripDateRange.endDate}
-        initialIsEndDateUndecided={tripDateRange.isEndDateUndecided}
+        initialStartDate={datePickerInitialRange.startDate}
+        initialEndDate={datePickerInitialRange.endDate}
+        initialIsEndDateUndecided={datePickerInitialRange.isEndDateUndecided}
         onCancel={() => setDatePickerVisible(false)}
         onConfirm={(value) => {
           setTripDateRange(value);
@@ -298,18 +329,8 @@ const styles = StyleSheet.create({
     color: Colors.foundation.black,
   },
   primaryButton: {
-    height: Spacing['4xl'],
-    borderRadius: Radius.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.foundation.black,
     marginTop: Spacing.sm,
     marginBottom: SECTION_GAP,
-  },
-  primaryLabel: {
-    ...Typography.body2Emphasized,
-    color: Colors.foundation.white,
-    textAlign: 'center',
   },
   skipLabel: {
     ...Typography.body2Emphasized,
