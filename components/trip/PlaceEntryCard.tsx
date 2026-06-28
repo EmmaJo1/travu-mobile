@@ -52,8 +52,10 @@ interface PlaceEntryCardProps {
   style?: StyleProp<ViewStyle>;
   showRating?: boolean;
   variant?: PlaceEntryCardVariant;
+  photoDisplayMode?: 'scroll' | 'limited';
   onPress?: () => void;
   onPhotoGridOpen?: () => void;
+  onPhotoDelete?: (photoIndex: number) => void;
   onQuickEdit?: () => void;
   onQuickAddPhoto?: () => void;
   onQuickDelete?: () => void;
@@ -101,7 +103,7 @@ function getTimeParts(time?: string) {
 
   return {
     period: matched[2].toUpperCase(),
-    shouldStack: timeText.includes(':'),
+    shouldStack: false,
     timeText,
   };
 }
@@ -122,8 +124,10 @@ export default function PlaceEntryCard({
   style,
   showRating = true,
   variant = 'archive',
+  photoDisplayMode = 'scroll',
   onPress,
   onPhotoGridOpen,
+  onPhotoDelete,
   onQuickEdit,
   onQuickAddPhoto,
   onQuickDelete,
@@ -134,18 +138,17 @@ export default function PlaceEntryCard({
   const [isQuickMenuOpen, setQuickMenuOpen] = useState(false);
   const [isPhotoGridOpen, setPhotoGridOpen] = useState(false);
   const photoSources = getPhotoSources(entry);
+  const isArchive = variant === 'archive';
   const isPhotoReview = variant === 'recordPhotoReview';
-  const usesReviewLayout = variant === 'recordReview' || variant === 'archive';
-  const supportsPhotoOverflow = usesReviewLayout || isPhotoReview;
+  const usesReviewLayout = variant === 'recordReview';
   const hasQuickMenuActions = Boolean(onQuickEdit || onQuickAddPhoto || onQuickDelete);
   const recordCount = entry.recordCount ?? (entry.text ? 1 : 0);
   const photoCount = isPhotoReview ? photoSources.length : entry.photoCount ?? photoSources.length;
   const timeParts = getTimeParts(entry.time);
-  const hasOverflowPhotos = supportsPhotoOverflow && photoSources.length > 5;
-  const visiblePhotoSources = hasOverflowPhotos
-    ? [...photoSources.slice(0, 4), photoSources[4]]
-    : photoSources.slice(0, 5);
-  const remainingPhotoCount = Math.max(photoSources.length - 4, 0);
+  const shouldLimitPhotos = photoDisplayMode === 'limited';
+  const hasOverflowPhotos = shouldLimitPhotos && photoSources.length > 5;
+  const visiblePhotoSources = hasOverflowPhotos ? photoSources.slice(0, 5) : photoSources;
+  const remainingPhotoCount = Math.max(photoSources.length - visiblePhotoSources.length, 0);
 
   const closeQuickMenu = () => setQuickMenuOpen(false);
 
@@ -168,15 +171,36 @@ export default function PlaceEntryCard({
     setSelectedPhotoIndex(index);
   };
 
+  const handleDeleteCurrentPhoto = (photoIndex: number) => {
+    onPhotoDelete?.(photoIndex);
+
+    if (photoSources.length <= 1) {
+      setSelectedPhotoIndex(null);
+      return;
+    }
+
+    setSelectedPhotoIndex(Math.min(photoIndex, photoSources.length - 2));
+  };
+
   return (
     <>
       <View style={[styles.card, style]}>
         <View style={[styles.timeline, isPhotoReview && styles.timelinePhotoReview]}>
           <View style={timeParts.shouldStack ? styles.timeStacked : styles.timeInline}>
-            <Text style={styles.time}>{timeParts.timeText}</Text>
+            <Text
+              lineBreakStrategyIOS="push-out"
+              numberOfLines={1}
+              style={styles.time}
+            >
+              {timeParts.timeText}
+            </Text>
             {timeParts.period ? (
-              <Text style={styles.time}>
-                {timeParts.shouldStack ? timeParts.period : ` ${timeParts.period}`}
+              <Text
+                lineBreakStrategyIOS="push-out"
+                numberOfLines={1}
+                style={styles.time}
+              >
+                {timeParts.period}
               </Text>
             ) : null}
           </View>
@@ -262,9 +286,9 @@ export default function PlaceEntryCard({
               accessibilityRole={onPress ? 'button' : undefined}
               disabled={!onPress}
               onPress={handlePressPlaceInfo}
-              style={styles.header}
+              style={[styles.header, isArchive && styles.headerArchive]}
             >
-              <View style={styles.headerLeft}>
+              <View style={[styles.headerLeft, isArchive && styles.headerLeftArchive]}>
                 <View style={styles.placeNameRow}>
                   <View style={styles.placeTitlePressArea}>
                     <Text numberOfLines={1} ellipsizeMode="tail" style={styles.placeName}>
@@ -311,6 +335,8 @@ export default function PlaceEntryCard({
                 <TouchableOpacity onPress={entry.onEdit} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                   <Text style={styles.editText}>{LABEL_EDIT}</Text>
                 </TouchableOpacity>
+              ) : isArchive && onPress ? (
+                <Feather name="chevron-right" size={24} color={Colors.foundation.grey700} />
               ) : null}
 
               {hasQuickMenuActions && isQuickMenuOpen ? (
@@ -406,6 +432,13 @@ export default function PlaceEntryCard({
       <FullScreenImageViewer
         images={photoSources}
         initialIndex={selectedPhotoIndex ?? 0}
+        leadingAction={onPhotoDelete ? {
+          destructive: true,
+          icon: 'trash-outline',
+          key: 'delete-photo',
+          label: '\uC0AC\uC9C4 \uC0AD\uC81C',
+          onPress: handleDeleteCurrentPhoto,
+        } : undefined}
         onClose={() => setSelectedPhotoIndex(null)}
         visible={selectedPhotoIndex != null}
       />
@@ -459,7 +492,7 @@ const styles = StyleSheet.create({
     gap: Spacing.md,
   },
   timeline: {
-    width: 28,
+    width: 54,
     alignItems: 'center',
     gap: Spacing.lg,
     paddingTop: Spacing.xs,
@@ -467,12 +500,16 @@ const styles = StyleSheet.create({
   },
   timeInline: {
     minHeight: 14,
+    minWidth: 54,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 2,
   },
   timeStacked: {
     minHeight: 28,
+    minWidth: 40,
     alignItems: 'center',
     justifyContent: 'flex-start',
     gap: 2,
@@ -482,6 +519,8 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     color: Colors.foundation.grey500,
     textAlign: 'center',
+    flexShrink: 0,
+    includeFontPadding: false,
   },
   timelineLine: {
     flex: 1,
@@ -518,12 +557,25 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.40)',
     zIndex: 2,
   },
+  headerArchive: {
+    height: 38,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    borderRadius: 0,
+    backgroundColor: 'transparent',
+  },
   headerLeft: {
     flex: 1,
     minWidth: 0,
     height: 58,
     justifyContent: 'center',
     gap: 2,
+  },
+  headerLeftArchive: {
+    height: 38,
+    justifyContent: 'flex-start',
   },
   infoPressArea: {
     alignSelf: 'stretch',

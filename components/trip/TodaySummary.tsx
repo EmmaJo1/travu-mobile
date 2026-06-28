@@ -1,4 +1,4 @@
-import { Colors } from '@/constants/theme';
+import { Colors, Typography } from '@/constants/theme';
 import * as Haptics from 'expo-haptics';
 import React from 'react';
 import {
@@ -14,8 +14,6 @@ import {
 import Text from '@/components/common/AppText';
 import FrostedGlassSurface from '@/components/common/FrostedGlassSurface';
 
-const FIGMA_PRETENDARD = 'Pretendard';
-const FIGMA_NOTO_SERIF_KR = 'Noto Serif KR';
 const DAY_SELECTOR_DRAG_RESISTANCE = 0.35;
 const DAY_SELECTOR_EDGE_RESISTANCE = 0.5;
 const DAY_SELECTOR_MAX_TRANSLATE_X = 28;
@@ -235,10 +233,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   adjacentDayText: {
-    fontFamily: FIGMA_PRETENDARD,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
+    ...Typography.captionEmphasized,
     letterSpacing: 1.44,
     color: 'rgba(89, 89, 89, 0.70)',
     textAlign: 'center',
@@ -247,23 +242,21 @@ const styles = StyleSheet.create({
     opacity: 0,
   },
   currentDaySlot: {
-    width: 92,
+    minWidth: 108,
     height: 48,
     alignItems: 'center',
     justifyContent: 'center',
     paddingTop: 4,
     paddingBottom: 8,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     borderBottomWidth: 2,
     borderBottomColor: 'rgba(99, 99, 99, 0.80)',
     marginBottom: -2,
   },
   currentDayText: {
-    fontFamily: FIGMA_PRETENDARD,
+    ...Typography.body2Emphasized,
+    flexShrink: 0,
     height: 20,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '600',
     letterSpacing: 3.36,
     textTransform: 'uppercase',
     color: Colors.foundation.black,
@@ -272,11 +265,8 @@ const styles = StyleSheet.create({
     textAlignVertical: 'center',
   },
   currentDateText: {
-    fontFamily: FIGMA_PRETENDARD,
+    ...Typography.captionRegular,
     height: 16,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '400',
     letterSpacing: 0.24,
     color: Colors.foundation.grey800,
     textAlign: 'center',
@@ -307,23 +297,15 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   value: {
-    fontFamily: FIGMA_NOTO_SERIF_KR,
-    lineHeight: 24,
-    fontWeight: '900',
+    ...Typography.dashboardNum,
     color: Colors.foundation.black,
   },
   unit: {
-    fontFamily: FIGMA_NOTO_SERIF_KR,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '700',
+    ...Typography.dashboardEmphasis,
     color: Colors.foundation.grey800,
   },
   label: {
-    fontFamily: FIGMA_PRETENDARD,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '500',
+    ...Typography.captionEmphasized,
     color: Colors.foundation.grey800,
     textAlign: 'center',
   },

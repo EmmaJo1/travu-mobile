@@ -193,14 +193,16 @@ export const Typography = {
   },
   /** Noto Serif KR — 대시보드 전용 */
   dashboardNum: {
-    fontFamily: FontFamily.notoSerifKRBlack,
-    fontSize:   20,
+    fontFamily: 'Noto Serif KR',
+    fontWeight: '900',
+    fontSize:   17,
     lineHeight: 24,
   },
   dashboardEmphasis: {
-    fontFamily: FontFamily.notoSerifKRBold,
-    fontSize:   16,
-    lineHeight: 24,
+    fontFamily: 'Noto Serif KR',
+    fontWeight: '700',
+    fontSize:   14,
+    lineHeight: 20,
   },
   dashboardText: {
     fontFamily: FontFamily.notoSerifKR,

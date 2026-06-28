@@ -55,10 +55,9 @@ export default function EndTripCompleteModal({
             </View>
           </View>
 
-          <Text style={styles.title}>여행이 종료되었어요!</Text>
+          <Text style={styles.title}>{'\uC5EC\uD589\uC774 \uC885\uB8CC\uB418\uC5C8\uC5B4\uC694!'}</Text>
           <Text style={styles.description}>
-            {destinationName} 여행의 모든 기록이{'\n'}
-            '내 여행'에 저장되었습니다.
+            {`${destinationName} \uC5EC\uD589\uC758 \uBAA8\uB4E0 \uAE30\uB85D\uC774\n\uB098\uC758 \uC5EC\uD589\uC5D0 \uC800\uC7A5\uB418\uC5C8\uC2B5\uB2C8\uB2E4.`}
           </Text>
 
           <View style={styles.summaryCard}>

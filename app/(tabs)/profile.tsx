@@ -1,17 +1,13 @@
 import { useRouter, type Href } from 'expo-router';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
-import HorizontalEdgeScrollView from '@/components/common/HorizontalEdgeScrollView';
 import MapPlaceholderCard from '@/components/common/MapPlaceholderCard';
-import MyPageTabs, { type MyPageTabMode } from '@/components/mypage/MyPageTabs';
 import ProfileSummary from '@/components/mypage/ProfileSummary';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import DaySelectorSheet from '@/components/record/DaySelectorSheet';
-import QuestionCard from '@/components/trip/QuestionCard';
-import ReflectionCard from '@/components/trip/ReflectionCard';
 import TripListCardList from '@/components/trip/TripListCardList';
 import { MOCK_MY_PAGE_PROFILE } from '@/constants/mockMyPageProfile';
 import {
@@ -21,49 +17,90 @@ import {
     groupTripsByYear,
     sortMyPageTrips,
     toTripListItem,
+    type MyPageTrip,
     type TravelSortOption,
 } from '@/constants/mockMyPageTrips';
-import {
-    MOCK_QUESTION_CARDS,
-    MOCK_REFLECTION_CARDS,
-} from '@/constants/mockReflections';
 import { useSavedMyPageTrips } from '@/constants/savedMyPageTrips';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 
-const CONTENT_FADE_DURATION_MS = 500;
+function normalizeCountValue(value?: string | null) {
+  return value?.trim() ?? '';
+}
+
+function normalizeCountKey(value?: string | null) {
+  return normalizeCountValue(value).toLowerCase();
+}
+
+function getTripVisitedCitiesForStats(trip: MyPageTrip) {
+  if (trip.visitedCities.length > 0) {
+    return trip.visitedCities;
+  }
+
+  const city = normalizeCountValue(trip.city);
+  return city ? [city] : [];
+}
+
+function getTripVisitedCountriesForStats(trip: MyPageTrip) {
+  if (trip.visitedCountries.length > 0) {
+    return trip.visitedCountries;
+  }
+
+  const country = normalizeCountValue(trip.country);
+  return country ? [country] : [];
+}
+
+function countUniqueValues(values: string[]) {
+  return new Set(values.map(normalizeCountKey).filter(Boolean)).size;
+}
+
+function getTripListCityCountryKey(trip: MyPageTrip) {
+  return `${normalizeCountKey(trip.city)}|${normalizeCountKey(trip.country)}`;
+}
+
+function mergeSavedAndMockTrips(savedTrips: MyPageTrip[]) {
+  const mergedTrips = [...savedTrips];
+  const existingIds = new Set(mergedTrips.map((trip) => normalizeCountKey(trip.id)).filter(Boolean));
+  const existingCityCountryKeys = new Set(mergedTrips.map(getTripListCityCountryKey));
+
+  MOCK_MY_PAGE_TRIPS.forEach((trip) => {
+    const idKey = normalizeCountKey(trip.id);
+    const cityCountryKey = getTripListCityCountryKey(trip);
+
+    if (existingIds.has(idKey) || existingCityCountryKeys.has(cityCountryKey)) {
+      return;
+    }
+
+    existingIds.add(idKey);
+    existingCityCountryKeys.add(cityCountryKey);
+    mergedTrips.push(trip);
+  });
+
+  return mergedTrips;
+}
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<MyPageTabMode>('trip');
   const [sortOption, setSortOption] = useState<TravelSortOption>('latest');
   const [sortSheetVisible, setSortSheetVisible] = useState(false);
-  const contentOpacity = useRef(new Animated.Value(1)).current;
-  const isFirstTabRender = useRef(true);
   const savedTrips = useSavedMyPageTrips();
 
   const myPageTrips = useMemo(
-    () => [...savedTrips, ...MOCK_MY_PAGE_TRIPS],
+    () => mergeSavedAndMockTrips(savedTrips),
     [savedTrips],
+  );
+  const profileStats = useMemo(
+    () => ({
+      totalTrips: myPageTrips.length,
+      uniqueCityCount: countUniqueValues(myPageTrips.flatMap(getTripVisitedCitiesForStats)),
+      uniqueCountryCount: countUniqueValues(myPageTrips.flatMap(getTripVisitedCountriesForStats)),
+    }),
+    [myPageTrips],
   );
   const sortedTrips = useMemo(
     () => sortMyPageTrips(myPageTrips, sortOption),
     [myPageTrips, sortOption],
   );
   const groupedTrips = useMemo(() => groupTripsByYear(sortedTrips), [sortedTrips]);
-
-  useEffect(() => {
-    if (isFirstTabRender.current) {
-      isFirstTabRender.current = false;
-      return;
-    }
-
-    contentOpacity.setValue(0);
-    Animated.timing(contentOpacity, {
-      toValue: 1,
-      duration: CONTENT_FADE_DURATION_MS,
-      useNativeDriver: true,
-    }).start();
-  }, [activeTab, contentOpacity]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -84,18 +121,15 @@ export default function ProfileScreen() {
             <ProfileSummary
               userName={MOCK_MY_PAGE_PROFILE.userName}
               profileImage={MOCK_MY_PAGE_PROFILE.profileImage}
-              recordCount={MOCK_MY_PAGE_PROFILE.recordCount}
-              countryCount={MOCK_MY_PAGE_PROFILE.countryCount}
-              tripCount={MOCK_MY_PAGE_PROFILE.tripCount}
+              cityCount={profileStats.uniqueCityCount}
+              countryCount={profileStats.uniqueCountryCount}
+              tripCount={profileStats.totalTrips}
               tagline={MOCK_MY_PAGE_PROFILE.tagline}
             />
           </View>
-          <MyPageTabs mode={activeTab} onChange={setActiveTab} />
         </View>
 
-        <Animated.View style={{ opacity: contentOpacity }}>
-          {activeTab === 'trip' ? (
-            <View style={styles.travelContent}>
+        <View style={styles.travelContent}>
               <View style={styles.mapSection}>
                 <Text style={styles.sectionTitle}>나의 여행지도</Text>
                 <MapPlaceholderCard
@@ -133,39 +167,19 @@ export default function ProfileScreen() {
 
                       <TripListCardList
                         trips={yearTrips.map(toTripListItem)}
-                        onPressTrip={() => router.push('/day-archive-detail' as Href)}
+                        onPressTrip={(trip) => {
+                          router.push({
+                            pathname: '/day-archive-detail',
+                            params: { tripId: trip.id },
+                          } as Href);
+                        }}
                       />
                     </View>
                   ))}
                 </View>
               </View>
             </View>
-          ) : (
-            <View style={styles.reflectionContent}>
-              <View style={styles.reflectionHeroSection}>
-                <Text style={styles.sectionTitle}>여행이 끝난 후에야 보이는 생각들이 있어요</Text>
 
-                <View style={styles.reflectionCardScrollWrap}>
-                  <HorizontalEdgeScrollView contentContainerStyle={styles.cardRow}>
-                    {MOCK_REFLECTION_CARDS.map((card) => (
-                      <ReflectionCard key={card.id} data={card} />
-                    ))}
-                  </HorizontalEdgeScrollView>
-                </View>
-              </View>
-
-              <View style={styles.reflectionQuestionSection}>
-                <Text style={styles.reflectionSectionTitle}>질문이 남긴 생각</Text>
-
-                <View style={styles.questionList}>
-                  {MOCK_QUESTION_CARDS.map((item) => (
-                    <QuestionCard key={item.id} data={item} style={styles.questionCard} />
-                  ))}
-                </View>
-              </View>
-            </View>
-          )}
-        </Animated.View>
       </ScrollView>
 
       <DaySelectorSheet
@@ -203,8 +217,11 @@ const styles = StyleSheet.create({
   },
   profileSummarySection: {
     width: '100%',
-    paddingVertical: Spacing.lg,
     paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.lg,
+    paddingBottom: Spacing.xl,
+    borderBottomWidth: 2,
+    borderBottomColor: Colors.foundation.grey100,
   },
   /** Figma Frame 203 하단 → 나의 여행지도: 40px */
   travelContent: {
@@ -230,23 +247,6 @@ const styles = StyleSheet.create({
     ...Typography.title2,
     color: Colors.foundation.black,
   },
-  reflectionContent: {
-    marginTop: Spacing['2xl'],
-  },
-  reflectionHeroSection: {
-    gap: Spacing.lg,
-  },
-  /** HorizontalEdgeScrollView edge bleed — 부모에 좌우 패딩 필요 */
-  reflectionCardScrollWrap: {
-    paddingHorizontal: Spacing.xl,
-  },
-  reflectionQuestionSection: {
-    marginTop: Spacing['4xl'],
-    paddingHorizontal: Spacing.xl,
-    gap: Spacing.lg,
-    alignSelf: 'stretch',
-    width: '100%',
-  },
   sectionTitle: {
     ...Typography.title2,
     color: Colors.foundation.black,
@@ -255,11 +255,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     ...Typography.title2,
     color: Colors.foundation.black,
-  },
-  reflectionSectionTitle: {
-    ...Typography.title2,
-    color: Colors.foundation.black,
-    alignSelf: 'stretch',
   },
   /** Figma Frame 187 — 연도 그룹 간 gap 40, paddingHorizontal 20 */
   tripList: {
@@ -299,19 +294,7 @@ const styles = StyleSheet.create({
     color: Colors.foundation.black,
   },
   sortTriggerIcon: {
-    width: Spacing.md,
-    height: Spacing.md,
-  },
-  cardRow: {
-    gap: Spacing.md,
-  },
-  questionList: {
-    gap: Spacing.md,
-    alignSelf: 'stretch',
-    width: '100%',
-  },
-  questionCard: {
-    width: '100%',
-    alignSelf: 'stretch',
+    width: 8,
+    height: 8,
   },
 });

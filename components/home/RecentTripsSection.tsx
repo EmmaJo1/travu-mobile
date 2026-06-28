@@ -11,10 +11,57 @@ interface RecentTripsSectionProps {
   onPressTrip?: (trip: IdleRecentTrip) => void;
 }
 
+const KOREAN_CITY_LABELS: Record<string, string> = {
+  bangkok: '\uBC29\uCF55',
+  busan: '\uBD80\uC0B0',
+  florence: '\uD53C\uB80C\uCCB4',
+  hongkong: '\uD64D\uCF69',
+  'hong kong': '\uD64D\uCF69',
+  kyoto: '\uAD50\uD1A0',
+  macao: '\uB9C8\uCE74\uC624',
+  osaka: '\uC624\uC0AC\uCE74',
+  paris: '\uD30C\uB9AC',
+  rome: '\uB85C\uB9C8',
+  seoul: '\uC11C\uC6B8',
+  singapore: '\uC2F1\uAC00\uD3EC\uB974',
+  sydney: '\uC2DC\uB4DC\uB2C8',
+  tokyo: '\uB3C4\uCFC4',
+  venice: '\uBCA0\uB124\uCE58\uC544',
+  vienna: '\uBE48',
+};
+
+const KOREAN_CITY_LABELS_BY_TRIP_ID: Record<string, string> = {
+  'recent-paris': '\uD30C\uB9AC',
+  'recent-sydney': '\uC2DC\uB4DC\uB2C8',
+};
+
+function getRecentTripCityLabel(trip: IdleRecentTrip) {
+  const extendedTrip = trip as IdleRecentTrip & {
+    cityKo?: string;
+    cityNameKo?: string;
+    localizedName?: { ko?: string };
+  };
+  const localizedCity = extendedTrip.cityNameKo ?? extendedTrip.cityKo ?? extendedTrip.localizedName?.ko;
+
+  if (localizedCity?.trim()) {
+    return localizedCity.trim();
+  }
+
+  const idLabel = KOREAN_CITY_LABELS_BY_TRIP_ID[trip.tripId ?? trip.id] ?? KOREAN_CITY_LABELS_BY_TRIP_ID[trip.id];
+
+  if (idLabel) {
+    return idLabel;
+  }
+
+  const normalizedCity = trip.city.trim().toLowerCase();
+
+  return KOREAN_CITY_LABELS[normalizedCity] ?? trip.city;
+}
+
 export default function RecentTripsSection({ trips, onPressTrip }: RecentTripsSectionProps) {
   return (
     <View style={styles.section}>
-      <Text style={styles.title}>최근 여행을 살펴보세요</Text>
+      <Text style={styles.title}>{'\uCD5C\uADFC \uC5EC\uD589\uC744 \uC0B4\uD3B4\uBCF4\uC138\uC694'}</Text>
 
       <ScrollView
         horizontal
@@ -39,24 +86,13 @@ export default function RecentTripsSection({ trips, onPressTrip }: RecentTripsSe
                 'rgba(72, 72, 72, 0.35)',
                 'rgba(51, 51, 51, 0.40)',
               ]}
-              locations={[0, 0.08, 0.19, 0.31, 0.42, 1]}
+              locations={[0.6446, 0.6725, 0.7106, 0.7455, 0.7924, 1]}
               start={{ x: 0.5, y: 0 }}
               end={{ x: 0.5, y: 1 }}
               style={styles.dim}
             />
-            <Text style={styles.city}>{trip.city}</Text>
+            <Text style={styles.city}>{getRecentTripCityLabel(trip)}</Text>
             <Text style={styles.date}>{trip.dateRange}</Text>
-            <View style={styles.metaRow}>
-              <View style={styles.metaGroup}>
-                <Text style={styles.metaLabel}>장소</Text>
-                <Text style={styles.metaValue}>{trip.placeCount ?? 11}</Text>
-              </View>
-              <Text style={styles.metaSeparator}>·</Text>
-              <View style={styles.metaGroup}>
-                <Text style={styles.metaLabel}>사진</Text>
-                <Text style={styles.metaValue}>{trip.photoCount ?? 32}</Text>
-              </View>
-            </View>
           </Pressable>
         ))}
       </ScrollView>
@@ -79,9 +115,9 @@ const styles = StyleSheet.create({
     paddingRight: 20,
   },
   card: {
-    width: 200,
-    height: 250,
-    borderRadius: 8,
+    width: 160,
+    height: 200,
+    borderRadius: 4,
     overflow: 'hidden',
     backgroundColor: Colors.foundation.grey100,
   },
@@ -94,54 +130,20 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   dim: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: '36%',
+    ...StyleSheet.absoluteFillObject,
   },
   city: {
     position: 'absolute',
     left: 12,
-    top: 180  ,
-    ...Typography.body1Emphasized,
+    bottom: 32,
+    ...Typography.body2Emphasized,
     color: Colors.foundation.white,
   },
   date: {
     position: 'absolute',
     left: 12,
-    top: 202,
-    ...Typography.body2Regular,
-    color: Colors.foundation.white,
-  },
-  metaRow: {
-    position: 'absolute',
-    left: 12,
-    top: 222,
-    height: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  metaGroup: {
-    height: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
-  metaLabel: {
+    bottom: 14,
     ...Typography.captionRegular,
-    color: Colors.foundation.white,
-  },
-  metaValue: {
-    ...Typography.captionEmphasized,
-    color: Colors.foundation.white,
-  },
-  metaSeparator: {
-    width: 12,
-    fontFamily: FontFamily.pretendard,
-    fontSize: 16,
-    lineHeight: 19,
-    textAlign: 'center',
     color: Colors.foundation.white,
   },
 });

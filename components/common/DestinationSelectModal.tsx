@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 
 import AppTextInput from '@/components/common/AppTextInput';
+import AuthActionButton from '@/components/common/AuthActionButton';
 import Text from '@/components/common/AppText';
 import {
   createCustomDestination,
@@ -28,7 +29,9 @@ type DestinationSelectModalProps = {
   initialScope?: DestinationScope;
   initialCategoryId?: string;
   selectedDestination?: DestinationOption | null;
+  selectedDestinations?: DestinationOption[];
   onSelectDestination: (destination: DestinationOption) => void;
+  onConfirmDestinations?: (destinations: DestinationOption[]) => void;
   onClose: () => void;
   onBack?: () => void;
   title?: string;
@@ -48,6 +51,13 @@ function getDestinationLabel(option: DestinationOption): string {
   const country = formatCountry(option);
   if (!country) return option.name;
   return `${option.name}, ${country}`;
+}
+
+function getDestinationKey(destination: DestinationOption) {
+  const name = (destination.name ?? destination.displayName).trim().toLowerCase();
+  const country = (destination.country ?? destination.countryName ?? '').trim().toLowerCase();
+
+  return `${destination.id}|${name}|${country}`;
 }
 
 function DestinationCountryTabs({
@@ -138,9 +148,11 @@ function DestinationCategoryChipList({
 
 function PopularDestinationCard({
   destination,
+  selected,
   onPress,
 }: {
   destination: DestinationOption;
+  selected: boolean;
   onPress: () => void;
 }) {
   const imageSource = toImageSource(destination.image);
@@ -157,6 +169,11 @@ function PopularDestinationCard({
       ) : (
         <View style={[styles.popularImage, styles.imagePlaceholder]} />
       )}
+      {selected ? (
+        <View style={styles.popularCheckBadge}>
+          <Feather name="check" size={14} color={Colors.foundation.white} />
+        </View>
+      ) : null}
       <Text style={styles.popularLabel} numberOfLines={1}>
         {destination.name}
       </Text>
@@ -166,9 +183,11 @@ function PopularDestinationCard({
 
 function DestinationListItem({
   destination,
+  selected,
   onPress,
 }: {
   destination: DestinationOption;
+  selected: boolean;
   onPress: () => void;
 }) {
   const imageSource = toImageSource(destination.image);
@@ -198,9 +217,34 @@ function DestinationListItem({
         ) : null}
       </View>
 
-      <View style={styles.selectPill}>
-        <Text style={styles.selectPillText}>선택</Text>
+      <View style={[styles.selectPill, selected && styles.selectPillActive]}>
+        {selected ? <Feather name="check" size={14} color={Colors.foundation.white} /> : null}
+        <Text style={[styles.selectPillText, selected && styles.selectPillTextActive]}>
+          {selected ? '선택됨' : '선택'}
+        </Text>
       </View>
+    </Pressable>
+  );
+}
+
+
+function SelectedDestinationChip({
+  destination,
+  onRemove,
+}: {
+  destination: DestinationOption;
+  onRemove: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      style={styles.selectedChip}
+      onPress={onRemove}
+    >
+      <Text style={styles.selectedChipText} numberOfLines={1}>
+        {destination.name}
+      </Text>
+      <Feather name="x" size={14} color={Colors.foundation.grey700} />
     </Pressable>
   );
 }
@@ -249,7 +293,9 @@ export default function DestinationSelectModal({
   initialScope = 'domestic',
   initialCategoryId = 'popular',
   selectedDestination,
+  selectedDestinations,
   onSelectDestination,
+  onConfirmDestinations,
   onClose,
   onBack,
   title = '여행지 선택',
@@ -259,6 +305,8 @@ export default function DestinationSelectModal({
   const [searchText, setSearchText] = React.useState('');
   const [scope, setScope] = React.useState<DestinationScope>(initialScope);
   const [categoryId, setCategoryId] = React.useState(initialCategoryId);
+  const [draftDestinations, setDraftDestinations] = React.useState<DestinationOption[]>([]);
+  const isMultiSelect = Boolean(onConfirmDestinations);
 
   React.useEffect(() => {
     if (!visible) return;
@@ -266,7 +314,8 @@ export default function DestinationSelectModal({
     setSearchText('');
     setScope(initialScope);
     setCategoryId(initialCategoryId);
-  }, [initialCategoryId, initialScope, visible]);
+    setDraftDestinations(selectedDestinations ?? (selectedDestination ? [selectedDestination] : []));
+  }, [initialCategoryId, initialScope, selectedDestination, selectedDestinations, visible]);
 
   const trimmedSearchText = searchText.trim();
   const isSearching = trimmedSearchText.length > 0;
@@ -280,14 +329,51 @@ export default function DestinationSelectModal({
   );
   const panelWidth = Math.min(width - Spacing.xl * 2, 340);
   const panelHeight = Math.min(height - Spacing['3xl'], 596);
+  const selectedKeys = React.useMemo(
+    () => new Set(draftDestinations.map(getDestinationKey)),
+    [draftDestinations],
+  );
+  const selectedCount = draftDestinations.length;
+
+  const isDestinationSelected = React.useCallback(
+    (destination: DestinationOption) => selectedKeys.has(getDestinationKey(destination)),
+    [selectedKeys],
+  );
 
   const handleSelectDestination = (destination: DestinationOption) => {
-    onSelectDestination(destination);
+    if (!isMultiSelect) {
+      onSelectDestination(destination);
+      return;
+    }
+
+    const destinationKey = getDestinationKey(destination);
+
+    setDraftDestinations((current) => {
+      if (current.some((item) => getDestinationKey(item) === destinationKey)) {
+        return current.filter((item) => getDestinationKey(item) !== destinationKey);
+      }
+
+      return [...current, destination];
+    });
   };
 
   const handleDirectAdd = () => {
     if (!trimmedSearchText) return;
     handleSelectDestination(createCustomDestination(trimmedSearchText));
+  };
+
+  const handleRemoveDestination = (destination: DestinationOption) => {
+    const destinationKey = getDestinationKey(destination);
+
+    setDraftDestinations((current) =>
+      current.filter((item) => getDestinationKey(item) !== destinationKey),
+    );
+  };
+
+  const handleConfirm = () => {
+    if (!onConfirmDestinations || draftDestinations.length === 0) return;
+
+    onConfirmDestinations(draftDestinations);
   };
 
   const handleChangeScope = (nextScope: DestinationScope) => {
@@ -312,6 +398,7 @@ export default function DestinationSelectModal({
             <DestinationListItem
               key={destination.id}
               destination={destination}
+              selected={isDestinationSelected(destination)}
               onPress={() => handleSelectDestination(destination)}
             />
           ))}
@@ -327,6 +414,7 @@ export default function DestinationSelectModal({
             <PopularDestinationCard
               key={destination.id}
               destination={destination}
+              selected={isDestinationSelected(destination)}
               onPress={() => handleSelectDestination(destination)}
             />
           ))}
@@ -340,6 +428,7 @@ export default function DestinationSelectModal({
           <DestinationListItem
             key={destination.id}
             destination={destination}
+            selected={isDestinationSelected(destination)}
             onPress={() => handleSelectDestination(destination)}
           />
         ))}
@@ -420,6 +509,35 @@ export default function DestinationSelectModal({
           >
             {renderContent()}
           </ScrollView>
+
+          {isMultiSelect ? (
+            <View style={styles.selectionFooter}>
+              {selectedCount > 0 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.selectedChipList}
+                >
+                  {draftDestinations.map((destination) => (
+                    <SelectedDestinationChip
+                      key={getDestinationKey(destination)}
+                      destination={destination}
+                      onRemove={() => handleRemoveDestination(destination)}
+                    />
+                  ))}
+                </ScrollView>
+              ) : (
+                <Text style={styles.selectionEmptyText}>선택한 여행지 0개</Text>
+              )}
+
+              <AuthActionButton
+                disabled={selectedCount === 0}
+                label={selectedCount > 0 ? `완료 (${selectedCount})` : '완료'}
+                onPress={handleConfirm}
+                state={selectedCount > 0 ? 'on' : 'off'}
+              />
+            </View>
+          ) : null}
         </Pressable>
       </Pressable>
     </Modal>
@@ -555,11 +673,23 @@ const styles = StyleSheet.create({
     height: 96,
     alignItems: 'center',
     gap: Spacing.sm,
+    position: 'relative',
   },
   popularImage: {
     width: 90,
     height: 68,
     borderRadius: Radius.xs,
+  },
+  popularCheckBadge: {
+    position: 'absolute',
+    top: Spacing.xs,
+    right: Spacing.xs,
+    width: 22,
+    height: 22,
+    borderRadius: Radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.foundation.black,
   },
   imagePlaceholder: {
     backgroundColor: Colors.foundation.grey100,
@@ -605,13 +735,54 @@ const styles = StyleSheet.create({
     minWidth: 41,
     alignItems: 'center',
     justifyContent: 'center',
+    flexDirection: 'row',
+    gap: Spacing.xs,
     borderRadius: Radius.full,
     paddingHorizontal: 10,
     backgroundColor: '#F2F2F2',
   },
+  selectPillActive: {
+    backgroundColor: Colors.foundation.black,
+  },
   selectPillText: {
     ...Typography.captionEmphasized,
     color: Colors.foundation.grey800,
+  },
+  selectPillTextActive: {
+    color: Colors.foundation.white,
+  },
+  selectedChip: {
+    maxWidth: 120,
+    minHeight: 32,
+    borderRadius: Radius.full,
+    paddingHorizontal: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    backgroundColor: Colors.warm.white,
+  },
+  selectedChipText: {
+    ...Typography.captionEmphasized,
+    flexShrink: 1,
+    color: Colors.foundation.grey800,
+  },
+  selectionFooter: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.foundation.grey100,
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.lg,
+    gap: Spacing.md,
+    backgroundColor: Colors.foundation.white,
+  },
+  selectedChipList: {
+    gap: Spacing.sm,
+    paddingRight: Spacing.xl,
+  },
+  selectionEmptyText: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey500,
+    textAlign: 'center',
   },
   directAddItem: {
     minHeight: 48,

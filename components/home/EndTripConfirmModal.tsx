@@ -37,10 +37,9 @@ export default function EndTripConfirmModal({
             <Feather name="power" size={28} color="#DB2222" />
           </View>
 
-          <Text style={styles.title}>자동 기록을 종료할까요?</Text>
+          <Text style={styles.title}>{'\uC790\uB3D9 \uAE30\uB85D\uC744 \uC885\uB8CC\uD560\uAE4C\uC694?'}</Text>
           <Text style={styles.description}>
-            이후에는 사진 자동 정리가 중단되며,{'\n'}
-            현재까지의 기록은 '내 여행'에 안전하게 저장됩니다.
+            {'\uC774\uD6C4\uC5D0\uB294 \uC0AC\uC9C4 \uC790\uB3D9 \uC815\uB9AC\uAC00 \uC911\uB2E8\uB418\uBA70,\n\uD604\uC7AC\uAE4C\uC9C0\uC758 \uAE30\uB85D\uC740 \uB098\uC758 \uC5EC\uD589\uC5D0 \uC548\uC804\uD558\uAC8C \uC800\uC7A5\uB429\uB2C8\uB2E4.'}
           </Text>
 
           <TripEndStatsPanel

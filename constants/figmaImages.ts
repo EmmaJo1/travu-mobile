@@ -5,6 +5,7 @@ import { RECORD_DAY_ENTRY_IMAGES, RECORD_TRIP_IMAGES } from '@/constants/recordT
 /** Figma 01_MVP Screens에서 export한 로컬 이미지 모음 */
 export const FIGMA_IMAGES = {
   home: {
+    idleHeroParis: require('../assets/images/home-idle-hero-paris.jpg') as ImageSourcePropType,
     heroParis: require('../assets/images/home-hero-paris.png') as ImageSourcePropType,
     photoCandidate1: require('../assets/images/home-photo-candidate-1.png') as ImageSourcePropType,
     photoCandidate2: require('../assets/images/home-photo-candidate-2.png') as ImageSourcePropType,

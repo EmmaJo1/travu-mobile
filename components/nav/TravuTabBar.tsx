@@ -1,5 +1,6 @@
 import { Feather } from '@expo/vector-icons';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import * as Haptics from 'expo-haptics';
 import { type Href, useRouter } from 'expo-router';
 import React from 'react';
 import {
@@ -73,17 +74,36 @@ export default function TravuTabBar({ state, navigation }: BottomTabBarProps) {
     router.push('/create-trip' as Href);
   }, [closeMenu, router]);
 
+  const triggerLightImpact = React.useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, []);
+
+  const triggerSelectionHaptic = React.useCallback(() => {
+    void Haptics.selectionAsync();
+  }, []);
+
   const handleTabPress = React.useCallback(
     (routeName: TabRouteName) => {
       if (routeName === 'record') {
+        if (!isMenuOpen) {
+          triggerLightImpact();
+        }
+
         setMenuOpen((prev) => !prev);
         return;
+      }
+
+      const routeIndex = state.routes.findIndex((route) => route.name === routeName);
+      const isFocused = state.index === routeIndex;
+
+      if (!isFocused) {
+        triggerSelectionHaptic();
       }
 
       closeMenu();
       navigation.navigate(routeName);
     },
-    [closeMenu, navigation],
+    [closeMenu, isMenuOpen, navigation, state.index, state.routes, triggerLightImpact, triggerSelectionHaptic],
   );
 
   const renderTabButton = (routeName: TabRouteName, isFocused: boolean) => {
@@ -236,10 +256,15 @@ interface FabActionCardProps {
 function FabActionCard({ icon, title, description, accentColor, onPress }: FabActionCardProps) {
   const iconColor = accentColor ?? ACTIVE_ICON_COLOR;
 
+  const handlePress = React.useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onPress();
+  }, [onPress]);
+
   return (
     <Pressable
       accessibilityRole="button"
-      onPress={onPress}
+      onPress={handlePress}
       style={({ pressed }) => [styles.actionCard, pressed && styles.actionCardPressed]}
     >
       <View style={styles.actionIconBox}>

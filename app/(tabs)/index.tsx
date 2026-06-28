@@ -8,12 +8,15 @@ import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
   Alert,
+  Animated,
+  Easing,
   Image,
   InteractionManager,
   Modal,
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   View,
 } from 'react-native';
@@ -64,6 +67,12 @@ const SUMMARY_OVERLAP = 104;
 const WARM_WHITE = Colors.warm.white;
 const FIGMA_POINT_EN = 'Sansita Swashed';
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SCHEDULE_SHEET_OPEN_DURATION = 240;
+const SCHEDULE_SHEET_CLOSE_DURATION = 200;
+const SCHEDULE_SHEET_ENTER_TRANSLATE_Y = 48;
+const SCHEDULE_SHEET_EXIT_TRANSLATE_Y = 360;
+const SCHEDULE_DAY_ROW_HEIGHT = 68;
+const SCHEDULE_DAY_CENTER_OFFSET = 160;
 
 const HEADER_DIM_COLORS = [
   'rgba(38,38,38,0.4)',
@@ -89,9 +98,16 @@ function getHomeHeaderTop(safeAreaTop: number) {
 }
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 const ENGLISH_DESTINATION_LABELS: Record<string, string> = {
+  'city-jeju-kr': 'Jeju',
+  'city-seoul-kr': 'Seoul',
+  'city-busan-kr': 'Busan',
+  'city-gyeongju-kr': 'Gyeongju',
+  'city-gangneung-kr': 'Gangneung',
+  'city-osaka-jp': 'Osaka',
+  'city-kyoto-jp': 'Kyoto',
+  'city-tokyo-jp': 'Tokyo',
   'city-paris-fr': 'Paris',
   'country-france': 'France',
-  'city-kyoto-jp': 'Kyoto',
   'country-japan': 'Japan',
   paris: 'Paris',
   프랑스: 'France',
@@ -100,6 +116,13 @@ const ENGLISH_DESTINATION_LABELS: Record<string, string> = {
   kyoto: 'Kyoto',
   일본: 'Japan',
   japan: 'Japan',
+  jeju: 'Jeju',
+  '\uC81C\uC8FC\uB3C4': 'Jeju',
+  '\uACBD\uC8FC': 'Gyeongju',
+  '\uAC15\uB989': 'Gangneung',
+  '\uC624\uC0AC\uCE74': 'Osaka',
+  '\uB3C4\uCFC4': 'Tokyo',
+  '\uD30C\uB9AC': 'Paris',
   시드니: 'Sydney',
   sydney: 'Sydney',
   호주: 'Australia',
@@ -126,6 +149,7 @@ type DestinationSource = 'currentLocation' | 'manual' | 'unknown';
 
 interface ActiveTripState {
   destination: DestinationOption;
+  visitedDestinations: DestinationOption[];
   startDate: string;
   endDate: string | null;
   openEnded: boolean;
@@ -174,15 +198,60 @@ type PlaceRecord = {
   updatedAt?: string;
 };
 
+function getDestinationDisplayName(destination: DestinationOption) {
+  return destination.name ?? destination.displayName;
+}
+
+function getDestinationCountryName(destination: DestinationOption) {
+  return destination.country ?? destination.countryName ?? '';
+}
+
+function getDestinationKey(destination: DestinationOption) {
+  const name = getDestinationDisplayName(destination).trim().toLowerCase();
+  const country = getDestinationCountryName(destination).trim().toLowerCase();
+
+  return `${name}|${country}`;
+}
+
+function mergeVisitedDestinations(
+  currentDestinations: DestinationOption[],
+  nextDestinations: DestinationOption[],
+) {
+  const destinationMap = new Map<string, DestinationOption>();
+
+  [...currentDestinations, ...nextDestinations].forEach((destination) => {
+    destinationMap.set(getDestinationKey(destination), destination);
+  });
+
+  return [...destinationMap.values()];
+}
+
+function getUniqueTravelValues(values: string[]) {
+  const valueMap = new Map<string, string>();
+
+  values.forEach((value) => {
+    const normalizedValue = value.trim();
+
+    if (!normalizedValue) return;
+
+    valueMap.set(normalizedValue.toLowerCase(), normalizedValue);
+  });
+
+  return [...valueMap.values()];
+}
+
+const INITIAL_ACTIVE_DESTINATION: DestinationOption = {
+  id: 'city-paris-fr',
+  name: 'Paris',
+  country: 'France',
+  displayName: 'Paris',
+  countryName: 'France',
+  type: 'city',
+};
+
 const INITIAL_ACTIVE_TRIP: ActiveTripState = {
-  destination: {
-    id: 'city-paris-fr',
-    name: 'Paris',
-    country: 'France',
-    displayName: 'Paris',
-    countryName: 'France',
-    type: 'city',
-  },
+  destination: INITIAL_ACTIVE_DESTINATION,
+  visitedDestinations: [INITIAL_ACTIVE_DESTINATION],
   startDate: '2025-11-02',
   endDate: '2025-11-12',
   openEnded: false,
@@ -193,8 +262,8 @@ const INITIAL_ACTIVE_TRIP: ActiveTripState = {
 };
 
 const DEFAULT_START_TRIP_SETUP: StartTripSetupValue = {
-  destinationName: '시드니',
-  countryName: '호주',
+  destinationName: '',
+  countryName: '',
   startDate: '2020-03-02',
   endDate: '2020-03-14',
 };
@@ -477,10 +546,12 @@ function formatDateRangeDescription(
 
 function getEnglishLocationLabel(destination: DestinationOption): string {
   const candidates = [
+    destination.englishDisplayName,
+    destination.englishCountryName,
     destination.id,
     destination.displayName,
     destination.countryName,
-  ];
+  ].filter(Boolean) as string[];
 
   for (const value of candidates) {
     const normalized = value.trim().toLowerCase();
@@ -569,6 +640,10 @@ export default function HomeScreen() {
   );
   const [isTravelHomeRefreshing, setTravelHomeRefreshing] = React.useState(false);
   const [isScheduleSheetVisible, setScheduleSheetVisible] = React.useState(false);
+  const scheduleSheetTranslateY = React.useRef(
+    new Animated.Value(SCHEDULE_SHEET_EXIT_TRANSLATE_Y),
+  ).current;
+  const scheduleDayScrollRef = React.useRef<ScrollView | null>(null);
   const [isPlaceCreateModalVisible, setPlaceCreateModalVisible] = React.useState(false);
   const handledTabActionIdRef = React.useRef<string | null>(null);
 
@@ -722,6 +797,10 @@ export default function HomeScreen() {
     setActiveTrip((prev) => ({
       ...prev,
       destination,
+      visitedDestinations: mergeVisitedDestinations(
+        prev.visitedDestinations,
+        destination.type === 'country' ? [] : [destination],
+      ),
       destinationSource: 'manual',
       latitude: undefined,
       longitude: undefined,
@@ -830,6 +909,47 @@ export default function HomeScreen() {
     });
   }, []);
 
+  const scrollScheduleToSelectedDay = React.useCallback(() => {
+    const targetY = Math.max(
+      0,
+      selectedTripDayIndex * SCHEDULE_DAY_ROW_HEIGHT - SCHEDULE_DAY_CENTER_OFFSET,
+    );
+
+    scheduleDayScrollRef.current?.scrollTo({
+      y: targetY,
+      animated: false,
+    });
+  }, [selectedTripDayIndex]);
+
+  const openScheduleSheet = React.useCallback(() => {
+    scheduleSheetTranslateY.setValue(SCHEDULE_SHEET_ENTER_TRANSLATE_Y);
+    setScheduleSheetVisible(true);
+
+    requestAnimationFrame(() => {
+      scrollScheduleToSelectedDay();
+
+      Animated.timing(scheduleSheetTranslateY, {
+        toValue: 0,
+        duration: SCHEDULE_SHEET_OPEN_DURATION,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    });
+  }, [scheduleSheetTranslateY, scrollScheduleToSelectedDay]);
+
+  const closeScheduleSheet = React.useCallback(() => {
+    Animated.timing(scheduleSheetTranslateY, {
+      toValue: SCHEDULE_SHEET_EXIT_TRANSLATE_Y,
+      duration: SCHEDULE_SHEET_CLOSE_DURATION,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        setScheduleSheetVisible(false);
+      }
+    });
+  }, [scheduleSheetTranslateY]);
+
   const handleOpenManualPlaceCreate = React.useCallback(() => {
     setPlaceCreateModalVisible(true);
   }, []);
@@ -890,11 +1010,22 @@ export default function HomeScreen() {
   const handleConfirmEndTrip = React.useCallback(() => {
     const destinationName = getEnglishLocationLabel(activeTrip.destination);
     const completedEndDate = activeTrip.endDate ?? getTodayDateKey();
+    const visitedCities = getUniqueTravelValues(
+      activeTrip.visitedDestinations
+        .filter((destination) => destination.type !== 'country')
+        .map(getEnglishLocationLabel),
+    );
+    const visitedCountries = getUniqueTravelValues([
+      ...activeTrip.visitedDestinations.map(getDestinationCountryName),
+      activeTrip.destination.countryName,
+    ]);
 
     addSavedCompletedTrip({
       id: `${activeTrip.destination.id}-${activeTrip.startDate}-${completedEndDate}`,
       destinationName,
       countryName: activeTrip.destination.countryName,
+      visitedCities,
+      visitedCountries,
       startDate: activeTrip.startDate,
       endDate: completedEndDate,
       coverImage: currentTrip.heroImage,
@@ -965,6 +1096,10 @@ export default function HomeScreen() {
     setActiveTrip((prev) => ({
       ...prev,
       destination: params.destination,
+      visitedDestinations: mergeVisitedDestinations(
+        [],
+        params.destination.type === 'country' ? [] : [params.destination],
+      ),
       destinationSource: params.destinationSource,
       latitude: params.latitude,
       longitude: params.longitude,
@@ -983,18 +1118,31 @@ export default function HomeScreen() {
 
   const startTripWithSetup = React.useCallback((setup: StartTripSetupValue) => {
     const now = new Date().toISOString();
+    const hasSetupDestination = setup.destinationName.trim().length > 0;
+    const setupDestination: DestinationOption = hasSetupDestination
+      ? {
+          id: `manual-${setup.destinationName.toLowerCase().replace(/\s+/g, '-')}`,
+          name: setup.destinationName,
+          country: setup.countryName,
+          displayName: setup.destinationName,
+          countryName: setup.countryName,
+          type: 'city',
+        }
+      : createUnknownDestination();
+    const setupDestinations = setup.destinations?.length
+      ? setup.destinations
+      : hasSetupDestination
+        ? [setupDestination]
+        : [];
 
     setStartTripSetupVisible(false);
     setActiveTrip((prev) => ({
       ...prev,
-      destination: {
-        id: `manual-${setup.destinationName.toLowerCase().replace(/\s+/g, '-')}`,
-        name: setup.destinationName,
-        country: setup.countryName,
-        displayName: setup.destinationName,
-        countryName: setup.countryName,
-        type: 'city',
-      },
+      destination: setupDestinations[0] ?? setupDestination,
+      visitedDestinations: mergeVisitedDestinations(
+        [],
+        setupDestinations.filter((destination) => destination.type !== 'country'),
+      ),
       startDate: setup.startDate,
       endDate: setup.endDate,
       openEnded: setup.isEndDateUndecided ?? false,
@@ -1214,7 +1362,7 @@ export default function HomeScreen() {
           title={selectedTimelineTitle}
           isSelectedToday={isSelectedTripDayToday}
           onPressItem={handlePressTimelinePlace}
-          onPressViewAll={() => setScheduleSheetVisible(true)}
+          onPressViewAll={openScheduleSheet}
           onPressAddManually={handleOpenManualPlaceCreate}
           refreshControl={
             <RefreshControl
@@ -1244,19 +1392,32 @@ export default function HomeScreen() {
         visible={isScheduleSheetVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => setScheduleSheetVisible(false)}
+        onRequestClose={closeScheduleSheet}
       >
         <View style={styles.scheduleSheetOverlay}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="전체 일정 닫기"
             style={StyleSheet.absoluteFill}
-            onPress={() => setScheduleSheetVisible(false)}
+            onPress={closeScheduleSheet}
           />
-          <View style={[styles.scheduleSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+          <Animated.View
+            style={[
+              styles.scheduleSheet,
+              {
+                paddingBottom: Math.max(insets.bottom, 16),
+                transform: [{ translateY: scheduleSheetTranslateY }],
+              },
+            ]}
+          >
             <View style={styles.scheduleSheetHandle} />
             <Text style={styles.scheduleSheetTitle}>전체 일정</Text>
-            <View style={styles.scheduleDayList}>
+            <ScrollView
+              ref={scheduleDayScrollRef}
+              style={styles.scheduleDayScroll}
+              contentContainerStyle={styles.scheduleDayList}
+              showsVerticalScrollIndicator={false}
+            >
               {tripDays.map((day, index) => {
                 const isSelected = index === selectedTripDayIndex;
                 const daySummary = getDayScheduleSummary(
@@ -1266,6 +1427,7 @@ export default function HomeScreen() {
                 );
                 const weekdayLabel = WEEKDAY_LABELS[parseDateKey(day.dateKey).getDay()];
                 const dateLabel = formatSheetDateLabel(day.dateKey);
+                const isTodayDate = isSameDateKey(day.dateKey, todayDateKey);
 
                 return (
                   <Pressable
@@ -1273,7 +1435,7 @@ export default function HomeScreen() {
                     key={day.dateKey}
                     onPress={() => {
                       setSelectedTripDayIndex(index);
-                      setScheduleSheetVisible(false);
+                      closeScheduleSheet();
                     }}
                     style={[
                       styles.scheduleDayRow,
@@ -1281,32 +1443,34 @@ export default function HomeScreen() {
                     ]}
                   >
                     <View style={styles.scheduleDayTextGroup}>
-                      <View style={styles.scheduleDayHeaderRow}>
-                        <Text
-                          style={[
-                            styles.scheduleDayTitle,
-                            isSelected && styles.scheduleDayTitleSelected,
-                          ]}
-                        >
-                          {day.dayNumber}일차
-                        </Text>
-                        <Text
-                          style={[
-                            styles.scheduleDaySubLabel,
-                            isSelected && styles.scheduleDaySubLabelSelected,
-                          ]}
-                        >
-                          {dateLabel}
-                        </Text>
-                        <Text
-                          style={[
-                            styles.scheduleDaySubLabel,
-                            isSelected && styles.scheduleDaySubLabelSelected,
-                          ]}
-                        >
-                          {weekdayLabel}
-                        </Text>
-                      </View>
+                    <View style={styles.scheduleDayHeaderRow}>
+                      <Text
+                        style={[
+                          styles.scheduleDayTitle,
+                          isSelected && styles.scheduleDayTitleSelected,
+                        ]}
+                      >
+                        {day.dayNumber}일차
+                      </Text>
+
+                      <Text
+                        style={[
+                          styles.scheduleDaySubLabel,
+                          isSelected && styles.scheduleDaySubLabelSelected,
+                        ]}
+                      >
+                        {dateLabel}
+                      </Text>
+
+                      <Text
+                        style={[
+                          styles.scheduleDaySubLabel,
+                          isSelected && styles.scheduleDaySubLabelSelected,
+                        ]}
+                      >
+                        {weekdayLabel}
+                      </Text>
+                    </View>
                       <View style={styles.scheduleDayMetaRow}>
                         <View style={styles.scheduleDayMetaGroup}>
                           <Text
@@ -1354,16 +1518,24 @@ export default function HomeScreen() {
                         </View>
                       </View>
                     </View>
-                    <Ionicons
-                      name="chevron-forward"
-                      size={18}
-                      color={isSelected ? Colors.foundation.grey500 : Colors.foundation.grey500}
-                    />
+                    <View style={styles.scheduleDayAccessoryRow}>
+                      {isTodayDate && (
+                        <View style={styles.scheduleTodayPill}>
+                          <Text style={styles.scheduleTodayPillText}>오늘</Text>
+                        </View>
+                      )}
+
+                      <Ionicons
+                        name="chevron-forward"
+                        size={18}
+                        color={Colors.foundation.grey500}
+                      />
+                    </View>
                   </Pressable>
                 );
               })}
-            </View>
-          </View>
+            </ScrollView>
+          </Animated.View>
         </View>
       </Modal>
 
@@ -1514,6 +1686,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.24)',
   },
   scheduleSheet: {
+    maxHeight: '72%',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingTop: 10,
@@ -1536,6 +1709,11 @@ const styles = StyleSheet.create({
   },
   scheduleDayList: {
     gap: 8,
+    paddingBottom: 8,
+  },
+  scheduleDayScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
   },
   scheduleDayRow: {
     minHeight: 60,
@@ -1548,6 +1726,12 @@ const styles = StyleSheet.create({
   },
   scheduleDayRowSelected: {
     backgroundColor: '#E9E9E9',
+  },
+  scheduleDayAccessoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginLeft: 12,
   },
   scheduleDayTextGroup: {
     gap: 2,
@@ -1570,6 +1754,20 @@ const styles = StyleSheet.create({
   },
   scheduleDaySubLabelSelected: {
     color: Colors.foundation.grey800,
+  },
+  scheduleTodayPill: {
+    height: 20,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.foundation.grey800,
+  },
+  scheduleTodayPillText: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '600',
+    color: Colors.foundation.white,
   },
   scheduleDayMetaRow: {
     flexDirection: 'row',

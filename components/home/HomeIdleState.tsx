@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 
 import Text from '@/components/common/AppText';
+import FrostedGlassSurface from '@/components/common/FrostedGlassSurface';
 import DetectedTripSection from '@/components/home/DetectedTripSection';
 import PastMomentsSection from '@/components/home/PastMomentsSection';
 import PhotoImportResultsCard from '@/components/home/PhotoImportResultsCard';
@@ -28,17 +29,59 @@ import {
   toIdleRecentTripFromSavedTrip,
 } from '@/constants/idleHomeTravelSelectors';
 import {
-  MOCK_DETECTED_TRIP,
   MOCK_PAST_MOMENTS,
   MOCK_RECENT_TRIPS,
   type DetectedTrip,
   type IdlePastMoment,
 } from '@/constants/mockIdleHomeData';
 import { addSavedIdleDetectedTrip, useSavedMyPageTrips } from '@/constants/savedMyPageTrips';
-import { Colors, FontFamily } from '@/constants/theme';
+import { Colors, FontFamily, Typography } from '@/constants/theme';
 
 const HERO_HEIGHT = 299;
+const MONTHLY_SUMMARY_TOP = 223;
+const MONTHLY_SUMMARY_HEIGHT = 94;
+const MONTHLY_SUMMARY_BOTTOM_GAP = 16;
+const FIXED_HERO_AREA_HEIGHT =
+  MONTHLY_SUMMARY_TOP + MONTHLY_SUMMARY_HEIGHT + MONTHLY_SUMMARY_BOTTOM_GAP;
 const WARM_WHITE = Colors.warm.white;
+const MONTH_LABELS = [
+  'JANUARY',
+  'FEBRUARY',
+  'MARCH',
+  'APRIL',
+  'MAY',
+  'JUNE',
+  'JULY',
+  'AUGUST',
+  'SEPTEMBER',
+  'OCTOBER',
+  'NOVEMBER',
+  'DECEMBER',
+] as const;
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+type MonthlySummary = {
+  travelDays: number;
+  cityCount: number;
+  photoCount: number;
+};
+
+type MonthlySummaryTrip = {
+  startDate?: string | null;
+  endDate?: string | null;
+  dateRangeLabel?: string | null;
+  visitedCities?: string[] | null;
+  destinationName?: string | null;
+  cityName?: string | null;
+  city?: string | null;
+  photoCount?: number | null;
+};
+
+type MonthlySummaryDateRange = {
+  startDate: Date | null;
+  endDate: Date | null;
+};
 
 interface HomeIdleStateProps {
   onPressStartTrip?: () => void;
@@ -71,8 +114,15 @@ export default function HomeIdleState({
 }: HomeIdleStateProps) {
   const router = useRouter();
   const savedMyPageTrips = useSavedMyPageTrips();
-  const [detectedTrips, setDetectedTrips] = React.useState<DetectedTrip[]>([MOCK_DETECTED_TRIP]);
+  const [detectedTrips, setDetectedTrips] = React.useState<DetectedTrip[]>([]);
   const [isRefreshing, setRefreshing] = React.useState(false);
+  const today = React.useMemo(() => new Date(), []);
+  const heroDateLabel = React.useMemo(() => formatIdleHeroDate(today), [today]);
+  const monthlySummary = React.useMemo(
+    () => getMonthlySummary(today, savedMyPageTrips),
+    [today, savedMyPageTrips],
+  );
+  const monthlySummaryTitle = `${MONTH_LABELS[today.getMonth()]} SUMMARY`;
 
   const pendingDetectedTrip = React.useMemo(
     () => getPendingDetectedTrip(detectedTrips),
@@ -131,25 +181,32 @@ export default function HomeIdleState({
     });
   }, [router]);
 
+  const handlePressDetectedTrip = React.useCallback((trip: DetectedTrip) => {
+    router.push({
+      pathname: '/record-day-detail',
+      params: {
+        cityName: trip.city,
+        countryName: trip.country,
+        dateRangeLabel: trip.dateRange,
+        detectedTripId: trip.id,
+        endDate: trip.endDate ?? '',
+        entryPoint: 'detectedTrip',
+        mode: 'create',
+        photoCount: String(trip.photoCount),
+        source: 'photoLibrary',
+        startDate: trip.startDate ?? '',
+      },
+    });
+  }, [router]);
+
   return (
     <View style={styles.root}>
       <StatusBar style="light" translucent backgroundColor="transparent" />
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            tintColor={Colors.foundation.grey600}
-            colors={[Colors.foundation.grey600]}
-            onRefresh={handleRefresh}
-          />
-        }
-      >
+      <View style={styles.fixedHeroArea}>
         <View style={styles.hero}>
           <Image
-            source={FIGMA_IMAGES.archive.hero}
+            source={FIGMA_IMAGES.home.idleHeroParis}
             style={styles.heroImage}
             resizeMode="cover"
           />
@@ -173,18 +230,18 @@ export default function HomeIdleState({
             </View>
 
             <Text style={styles.heroDate} pointerEvents="none">
-              11.30 Mon
+              {heroDateLabel}
             </Text>
 
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="여행 시작"
+              accessibilityLabel={'\uC5EC\uD589 \uC2DC\uC791'}
               hitSlop={8}
               style={styles.startButton}
               onPress={onPressStartTrip}
             >
               <Image
-                source={FIGMA_IMAGES.archive.hero}
+                source={FIGMA_IMAGES.home.idleHeroParis}
                 style={styles.startButtonBackdropImage}
                 resizeMode="cover"
                 blurRadius={14}
@@ -224,16 +281,32 @@ export default function HomeIdleState({
                 style={styles.startButtonDispersionLayer}
               />
               <View style={styles.startButtonFrostLayer} />
-              <Text style={styles.startButtonText}>여행 시작</Text>
+              <Text style={styles.startButtonText}>{'\uC5EC\uD589 \uC2DC\uC791'}</Text>
             </Pressable>
           </View>
 
-          <View style={styles.greetingBlock}>
-            <Text style={styles.greetingTitle}>안녕하세요 은서님!</Text>
-            <Text style={styles.greetingSubtitle}>여행의 기억을 다시 꺼내보세요</Text>
-          </View>
+          <MonthlySummaryCard
+            title={monthlySummaryTitle}
+            travelDays={monthlySummary.travelDays}
+            cityCount={monthlySummary.cityCount}
+            photoCount={monthlySummary.photoCount}
+          />
         </View>
+      </View>
 
+      <ScrollView
+        style={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            tintColor={Colors.foundation.grey600}
+            colors={[Colors.foundation.grey600]}
+            onRefresh={handleRefresh}
+          />
+        }
+      >
         <View style={styles.content}>
           {showPhotoTripDetectionProgressCard ? (
             <View style={styles.photoImportResultsCardOffset}>
@@ -260,6 +333,7 @@ export default function HomeIdleState({
             <DetectedTripSection
               trip={pendingDetectedTrip}
               onSave={handleSaveDetectedTrip}
+              onPressTrip={handlePressDetectedTrip}
             />
           ) : null}
 
@@ -301,6 +375,217 @@ export default function HomeIdleState({
 
 function noop() {}
 
+function formatIdleHeroDate(date: Date) {
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${date.getMonth() + 1}.${day} ${WEEKDAY_LABELS[date.getDay()]}`;
+}
+
+function getMonthRange(date: Date) {
+  const year = date.getFullYear();
+  const month = date.getMonth();
+
+  return {
+    monthStart: new Date(year, month, 1),
+    monthEnd: new Date(year, month + 1, 0),
+  };
+}
+
+function parseDateKeyToLocalDate(dateKey?: string | null) {
+  if (!dateKey) {
+    return null;
+  }
+
+  const [year, month, day] = dateKey.split('-').map(Number);
+
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return new Date(year, month - 1, day);
+}
+
+function parseMonthlySummaryDateRange(dateRangeLabel?: string | null): MonthlySummaryDateRange {
+  const normalized = dateRangeLabel?.replace(/\s+/g, '') ?? '';
+  const match = normalized.match(
+    /^(\d{4})\.(\d{1,2})\.(\d{1,2})-(?:(\d{4})\.)?(\d{1,2})\.(\d{1,2})$/,
+  );
+
+  if (!match) {
+    return { startDate: null, endDate: null };
+  }
+
+  const startYear = Number(match[1]);
+  const startMonth = Number(match[2]);
+  const startDay = Number(match[3]);
+  const endYear = Number(match[4] ?? match[1]);
+  const endMonth = Number(match[5]);
+  const endDay = Number(match[6]);
+
+  return {
+    startDate: new Date(startYear, startMonth - 1, startDay),
+    endDate: new Date(endYear, endMonth - 1, endDay),
+  };
+}
+
+function getTripDateRange(trip: MonthlySummaryTrip) {
+  const startDate = parseDateKeyToLocalDate(trip.startDate);
+  const endDate = parseDateKeyToLocalDate(trip.endDate) ?? startDate;
+
+  if (startDate) {
+    return { startDate, endDate: endDate ?? startDate };
+  }
+
+  const parsedDateRange = parseMonthlySummaryDateRange(trip.dateRangeLabel);
+
+  if (!parsedDateRange.startDate) {
+    return { startDate: null, endDate: null };
+  }
+
+  return {
+    startDate: parsedDateRange.startDate,
+    endDate: parsedDateRange.endDate ?? parsedDateRange.startDate,
+  };
+}
+
+function getOverlappedDayCount(
+  tripStartDate: Date,
+  tripEndDate: Date,
+  monthStart: Date,
+  monthEnd: Date,
+) {
+  const start = new Date(Math.max(tripStartDate.getTime(), monthStart.getTime()));
+  const end = new Date(Math.min(tripEndDate.getTime(), monthEnd.getTime()));
+
+  if (start.getTime() > end.getTime()) {
+    return 0;
+  }
+
+  return Math.floor((end.getTime() - start.getTime()) / DAY_MS) + 1;
+}
+
+function collectTripCities(trip: MonthlySummaryTrip) {
+  const cities =
+    Array.isArray(trip.visitedCities) && trip.visitedCities.length > 0
+      ? trip.visitedCities
+      : [trip.destinationName ?? trip.cityName ?? trip.city ?? ''];
+
+  return cities.map((city) => city.trim()).filter(Boolean);
+}
+
+function getMonthlySummary(date: Date, trips: MonthlySummaryTrip[]): MonthlySummary {
+  const { monthStart, monthEnd } = getMonthRange(date);
+  const cityKeys = new Set<string>();
+
+  return trips.reduce<MonthlySummary>(
+    (summary, trip) => {
+      const { startDate, endDate } = getTripDateRange(trip);
+
+      if (!startDate || !endDate) {
+        return summary;
+      }
+
+      const overlappedDayCount = getOverlappedDayCount(
+        startDate,
+        endDate,
+        monthStart,
+        monthEnd,
+      );
+
+      if (overlappedDayCount <= 0) {
+        return summary;
+      }
+
+      collectTripCities(trip).forEach((city) => {
+        cityKeys.add(city.toLowerCase());
+      });
+
+      // TODO: Split photo counts by photo metadata dates when monthly media data is connected.
+      return {
+        travelDays: summary.travelDays + overlappedDayCount,
+        cityCount: cityKeys.size,
+        photoCount: summary.photoCount + (trip.photoCount ?? 0),
+      };
+    },
+    {
+      cityCount: 0,
+      photoCount: 0,
+      travelDays: 0,
+    },
+  );
+}
+
+function MonthlySummaryCard({
+  title,
+  travelDays,
+  cityCount,
+  photoCount,
+}: {
+  title: string;
+  travelDays: number;
+  cityCount: number;
+  photoCount: number;
+}) {
+  return (
+    <FrostedGlassSurface
+      mode="translucent"
+      style={styles.monthlySummaryShadow}
+      contentStyle={styles.monthlySummaryCard}
+      borderRadius={12}
+      fillColor="rgba(255, 255, 255, 0.50)"
+      borderColor="rgba(199, 199, 199, 0.50)"
+    >
+      <Text style={styles.monthlySummaryTitle}>{title}</Text>
+      <View style={styles.monthlySummaryStats}>
+        <MonthlySummaryMetric
+          value={travelDays}
+          unit={'\uC77C'}
+          label={'\uC5EC\uD589 \uC77C\uC218'}
+          width={45}
+        />
+        <View style={styles.monthlySummaryDivider} />
+        <MonthlySummaryMetric
+          value={cityCount}
+          unit={'\uACF3'}
+          label={'\uB3C4\uC2DC'}
+          width={27}
+        />
+        <View style={styles.monthlySummaryDivider} />
+        <MonthlySummaryMetric
+          value={photoCount}
+          unit={'\uC7A5'}
+          label={'\uC0AC\uC9C4'}
+          width={45}
+          labelColor={Colors.foundation.grey700}
+        />
+      </View>
+    </FrostedGlassSurface>
+  );
+}
+
+function MonthlySummaryMetric({
+  value,
+  unit,
+  label,
+  width,
+  labelColor = Colors.foundation.grey600,
+}: {
+  value: number;
+  unit: string;
+  label: string;
+  width: number;
+  labelColor?: string;
+}) {
+  return (
+    <View style={[styles.monthlySummaryMetric, { width }]}>
+      <View style={styles.monthlySummaryValueRow}>
+        <Text style={styles.monthlySummaryValue}>{value}</Text>
+        <Text style={styles.monthlySummaryUnit}>{unit}</Text>
+      </View>
+      <Text style={[styles.monthlySummaryLabel, { color: labelColor }]}>{label}</Text>
+    </View>
+  );
+}
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -310,10 +595,21 @@ const styles = StyleSheet.create({
     paddingBottom: 120,
     backgroundColor: WARM_WHITE,
   },
+  fixedHeroArea: {
+    height: FIXED_HERO_AREA_HEIGHT,
+    overflow: 'visible',
+    backgroundColor: WARM_WHITE,
+    zIndex: 1,
+  },
+  scroll: {
+    flex: 1,
+    backgroundColor: WARM_WHITE,
+  },
   hero: {
     height: HERO_HEIGHT,
-    overflow: 'hidden',
+    overflow: 'visible',
     backgroundColor: WARM_WHITE,
+    zIndex: 1,
   },
   heroImage: {
     ...StyleSheet.absoluteFillObject,
@@ -424,27 +720,79 @@ const styles = StyleSheet.create({
     zIndex: 1,
     ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' } : null),
   },
-  greetingBlock: {
+  monthlySummaryShadow: {
     position: 'absolute',
-    left: 20,
-    right: 20,
-    bottom: 32,
+    left: 35,
+    right: 35,
+    top: MONTHLY_SUMMARY_TOP,
+    height: MONTHLY_SUMMARY_HEIGHT,
+    borderRadius: 12,
+    zIndex: 3,
+  },
+  monthlySummaryCard: {
+    width: '100%',
+    height: MONTHLY_SUMMARY_HEIGHT,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  monthlySummaryTitle: {
+    ...Typography.captionEmphasized,
+    letterSpacing: 2.88,
+    color: Colors.foundation.grey800,
+    includeFontPadding: false,
+    textAlign: 'center',
+  },
+  monthlySummaryStats: {
+    width: '100%',
+    height: 44,
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    gap: 32,
+  },
+  monthlySummaryMetric: {
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
     gap: 4,
   },
-  greetingTitle: {
-    fontFamily: FontFamily.pretendardBold,
-    fontSize: 20,
-    lineHeight: 28,
-    color: Colors.foundation.white,
+  monthlySummaryValueRow: {
+    height: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    alignSelf: 'stretch',
   },
-  greetingSubtitle: {
-    fontFamily: FontFamily.pretendardSemiBold,
-    fontSize: 14,
-    lineHeight: 20,
-    color: Colors.foundation.white,
+  monthlySummaryValue: {
+    ...Typography.dashboardNum,
+    color: Colors.foundation.black,
+    includeFontPadding: false,
+  },
+  monthlySummaryUnit: {
+    ...Typography.dashboardEmphasis,
+    color: Colors.foundation.grey800,
+    includeFontPadding: false,
+  },
+  monthlySummaryLabel: {
+    ...Typography.captionEmphasized,
+    includeFontPadding: false,
+    textAlign: 'center',
+  },
+  monthlySummaryDivider: {
+    width: 2,
+    height: 32,
+    borderRadius: 1,
+    backgroundColor: 'rgba(217, 217, 217, 0.30)',
   },
   content: {
     paddingHorizontal: 20,
+    paddingTop: 36,
     gap: 44,
   },
   photoImportResultsCardOffset: {
