@@ -1,15 +1,17 @@
-﻿import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
+  TextInput,
   TouchableOpacity,
   View,
   type ImageSourcePropType,
@@ -46,9 +48,22 @@ export interface PlaceCreateInput {
   text?: string;
   photoUris?: string[];
   photoSources?: ImageSourcePropType[];
+  dayId?: string;
+  dayNumber?: number;
+  dateKey?: string;
+  dateLabel?: string;
+  weekdayLabel?: string;
 }
 
 export type PlaceEntryFormMode = 'create' | 'edit';
+
+export interface PlaceEntryDayOption {
+  id: string;
+  dayNumber: number;
+  dateLabel: string;
+  weekdayLabel: string;
+  photoCount?: number;
+}
 
 interface PlaceCreateModalProps {
   visible: boolean;
@@ -63,6 +78,13 @@ interface PlaceCreateModalProps {
   tripDestinationCountry?: string;
   tripLatitude?: number;
   tripLongitude?: number;
+  dayOptions?: PlaceEntryDayOption[];
+  selectedDayId?: string;
+  showPhotoSection?: boolean;
+  showRecordField?: boolean;
+  showCategoryField?: boolean;
+  titleLabel?: string;
+  submitLabel?: string;
 }
 
 interface SelectFieldProps {
@@ -120,17 +142,15 @@ function PhotoField({
         horizontal
         showsHorizontalScrollIndicator={false}
       >
-        {photoCount < 5 && (
-          <TouchableOpacity
-            accessibilityLabel="사진 추가"
-            activeOpacity={0.7}
-            onPress={onAddPress}
-            style={styles.photoAddButton}
-          >
-            <Ionicons color={Colors.foundation.grey500} name="images-outline" size={22} />
-            <Text style={styles.photoAddText}>{photoCount}/5</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          accessibilityLabel="사진 추가"
+          activeOpacity={0.7}
+          onPress={onAddPress}
+          style={styles.photoAddButton}
+        >
+          <Ionicons color={Colors.foundation.grey500} name="images-outline" size={22} />
+          <Text style={styles.photoAddText}>{photoCount}장</Text>
+        </TouchableOpacity>
 
         {photoSources.map((source, index) => (
           <View key={`source-${index}`} style={styles.photoPreview}>
@@ -168,9 +188,18 @@ type PickerPage =
   | 'form'
   | 'category'
   | 'place-search'
-  | 'manual-place-entry';
+  | 'manual-place-entry'
+  | 'travel-day'
+  | 'date-picker';
+
+type CalendarView = 'days' | 'years' | 'months';
 
 const CATEGORIES = ['관광명소', '음식점', '카페', '숙소', '쇼핑', '기타'];
+const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'] as const;
+const CALENDAR_MONTHS = Array.from({ length: 12 }, (_, index) => index);
+const CALENDAR_SWIPE_THRESHOLD = 40;
+const CALENDAR_SELECTOR_CELL_HEIGHT = 44;
+const CALENDAR_SELECTOR_ROW_GAP = Spacing.sm;
 
 function getInitialSelectedPlace(value?: Partial<PlaceCreateInput>): SelectedPlace | undefined {
   const placeName = value?.placeName ?? value?.place;
@@ -230,6 +259,93 @@ function toSelectedPlace(place: PlaceOption): SelectedPlace {
   };
 }
 
+function toDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
+function parseDayOptionDate(day: PlaceEntryDayOption): Date | null {
+  const matched = day.dateLabel.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})$/);
+
+  if (!matched) {
+    return null;
+  }
+
+  return new Date(Number(matched[1]), Number(matched[2]) - 1, Number(matched[3]));
+}
+
+function getDayOptionDateKey(day: PlaceEntryDayOption): string | null {
+  const date = parseDayOptionDate(day);
+  return date ? toDateKey(date) : null;
+}
+
+function formatDateLabel(date: Date): string {
+  return `${date.getFullYear()}.${date.getMonth() + 1}.${date.getDate()}`;
+}
+
+function createDayOptionFromDate(date: Date): PlaceEntryDayOption {
+  const dateKey = toDateKey(date);
+
+  return {
+    id: `local-${dateKey}`,
+    dayNumber: 0,
+    dateLabel: formatDateLabel(date),
+    weekdayLabel: WEEKDAY_LABELS[date.getDay()],
+    photoCount: 0,
+  };
+}
+
+function normalizeDayOptions(days: PlaceEntryDayOption[]): PlaceEntryDayOption[] {
+  const dayMap = new Map<string, PlaceEntryDayOption>();
+
+  for (const day of days) {
+    const dateKey = getDayOptionDateKey(day);
+    if (!dateKey) {
+      continue;
+    }
+
+    dayMap.set(dateKey, dayMap.get(dateKey) ?? day);
+  }
+
+  return [...dayMap.entries()]
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+    .map(([, day], index) => ({
+      ...day,
+      dayNumber: index + 1,
+    }));
+}
+
+function createCalendarWeeks(month: Date): (Date | null)[][] {
+  const year = month.getFullYear();
+  const monthIndex = month.getMonth();
+  const firstDay = new Date(year, monthIndex, 1).getDay();
+  const lastDate = new Date(year, monthIndex + 1, 0).getDate();
+  const cells: (Date | null)[] = Array.from({ length: firstDay }, () => null);
+
+  for (let day = 1; day <= lastDate; day += 1) {
+    cells.push(new Date(year, monthIndex, day));
+  }
+
+  while (cells.length % 7 !== 0) {
+    cells.push(null);
+  }
+
+  return Array.from({ length: cells.length / 7 }, (_, index) =>
+    cells.slice(index * 7, index * 7 + 7),
+  );
+}
+
+function formatDayFieldValue(day?: PlaceEntryDayOption) {
+  if (!day) {
+    return undefined;
+  }
+
+  return `${day.dayNumber}일차 · ${day.dateLabel} ${day.weekdayLabel}`;
+}
+
 export default function PlaceCreateModal({
   visible,
   onClose,
@@ -243,6 +359,13 @@ export default function PlaceCreateModal({
   tripDestinationCountry,
   tripLatitude,
   tripLongitude,
+  dayOptions = [],
+  selectedDayId,
+  showPhotoSection = true,
+  showRecordField = false,
+  showCategoryField = true,
+  titleLabel,
+  submitLabel,
 }: PlaceCreateModalProps) {
   const [place, setPlace] = useState('');
   const [time, setTime] = useState('');
@@ -256,9 +379,35 @@ export default function PlaceCreateModal({
   const [timeWheelVisible, setTimeWheelVisible] = useState(false);
   const [hasUserEditedTime, setHasUserEditedTime] = useState(false);
   const [deleteConfirmationVisible, setDeleteConfirmationVisible] = useState(false);
+  const [customDayOptions, setCustomDayOptions] = useState<PlaceEntryDayOption[]>([]);
+  const [selectedDay, setSelectedDay] = useState<PlaceEntryDayOption>();
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date());
+  const [calendarView, setCalendarView] = useState<CalendarView>('days');
+  const [yearSelectorHeight, setYearSelectorHeight] = useState(0);
+  const yearSelectorRef = useRef<ScrollView>(null);
+  const normalizedPropDayOptions = useMemo(() => normalizeDayOptions(dayOptions), [dayOptions]);
+  const availableDayOptions = useMemo(
+    () => normalizeDayOptions([...dayOptions, ...customDayOptions]),
+    [customDayOptions, dayOptions],
+  );
+  const calendarYears = useMemo(
+    () => Array.from({ length: 51 }, (_, index) => 2000 + index),
+    [],
+  );
+  const activeYearIndex = Math.max(0, calendarYears.indexOf(calendarMonth.getFullYear()));
+
+  const getInitialSelectedDay = useCallback(() => {
+    const initialDayId = initialValue?.dayId ?? selectedDayId;
+
+    return (
+      normalizedPropDayOptions.find((day) => day.id === initialDayId) ??
+      normalizedPropDayOptions[0]
+    );
+  }, [initialValue?.dayId, normalizedPropDayOptions, selectedDayId]);
 
   const resetFields = () => {
     const nextPlace = getInitialSelectedPlace(initialValue);
+    const nextDay = getInitialSelectedDay();
     setSelectedPlace(nextPlace);
     setPlace(nextPlace?.placeName ?? '');
     setTime(initialValue?.time ?? '');
@@ -270,12 +419,17 @@ export default function PlaceCreateModal({
     setTimeWheelVisible(false);
     setHasUserEditedTime(false);
     setDeleteConfirmationVisible(false);
+    setCustomDayOptions([]);
+    setSelectedDay(nextDay);
+    setCalendarMonth(parseDayOptionDate(nextDay ?? dayOptions[0]) ?? new Date());
+    setCalendarView('days');
     setPickerPage('form');
   };
 
   useEffect(() => {
     if (visible) {
       const nextPlace = getInitialSelectedPlace(initialValue);
+      const nextDay = getInitialSelectedDay();
       setSelectedPlace(nextPlace);
       setPlace(nextPlace?.placeName ?? '');
       setTime(initialValue?.time ?? '');
@@ -287,9 +441,31 @@ export default function PlaceCreateModal({
       setTimeWheelVisible(false);
       setHasUserEditedTime(false);
       setDeleteConfirmationVisible(false);
+      setCustomDayOptions([]);
+      setSelectedDay(nextDay);
+      setCalendarMonth(parseDayOptionDate(nextDay ?? dayOptions[0]) ?? new Date());
+      setCalendarView('days');
       setPickerPage('form');
     }
-  }, [visible, initialValue]);
+  }, [visible, initialValue, dayOptions, selectedDayId, getInitialSelectedDay]);
+
+  useEffect(() => {
+    if (pickerPage !== 'date-picker' || calendarView !== 'years' || yearSelectorHeight <= 0) {
+      return;
+    }
+
+    const selectedRow = Math.floor(activeYearIndex / 3);
+    const rowHeight = CALENDAR_SELECTOR_CELL_HEIGHT + CALENDAR_SELECTOR_ROW_GAP;
+    const targetOffset = Math.max(
+      0,
+      selectedRow * rowHeight - (yearSelectorHeight - CALENDAR_SELECTOR_CELL_HEIGHT) / 2,
+    );
+    const frame = requestAnimationFrame(() => {
+      yearSelectorRef.current?.scrollTo({ y: targetOffset, animated: false });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [activeYearIndex, calendarView, pickerPage, yearSelectorHeight]);
 
   const handleClose = () => {
     resetFields();
@@ -299,7 +475,7 @@ export default function PlaceCreateModal({
   const handleSubmit = () => {
     const trimmedPlace = (selectedPlace?.placeName ?? place).trim();
 
-    if (!trimmedPlace) {
+    if (!trimmedPlace || (availableDayOptions.length > 0 && !selectedDay)) {
       return;
     }
 
@@ -318,11 +494,18 @@ export default function PlaceCreateModal({
       text: text.trim() || undefined,
       photoUris: photoUris.length > 0 ? photoUris : undefined,
       photoSources: photoSources.length > 0 ? photoSources : undefined,
+      dayId: selectedDay?.id,
+      dayNumber: selectedDay?.dayNumber,
+      dateKey: selectedDay ? getDayOptionDateKey(selectedDay) ?? undefined : undefined,
+      dateLabel: selectedDay?.dateLabel,
+      weekdayLabel: selectedDay?.weekdayLabel,
     });
     resetFields();
   };
 
-  const canSubmit = (selectedPlace?.placeName ?? place).trim().length > 0;
+  const canSubmit =
+    (selectedPlace?.placeName ?? place).trim().length > 0 &&
+    (availableDayOptions.length === 0 || Boolean(selectedDay));
 
   const applySelectedPlace = (nextPlace: SelectedPlace) => {
     setSelectedPlace(nextPlace);
@@ -336,6 +519,16 @@ export default function PlaceCreateModal({
   };
 
   const handleBack = () => {
+    if (pickerPage === 'date-picker' && calendarView === 'months') {
+      setCalendarView('years');
+      return;
+    }
+
+    if (pickerPage === 'date-picker' && calendarView === 'years') {
+      setCalendarView('days');
+      return;
+    }
+
     setPickerPage('form');
   };
 
@@ -349,12 +542,90 @@ export default function PlaceCreateModal({
     setTimeWheelVisible(false);
   };
 
+  const applySelectedDay = (nextDay: PlaceEntryDayOption) => {
+    setSelectedDay(nextDay);
+    setCalendarView('days');
+    setPickerPage('form');
+  };
+
+  const openDatePicker = () => {
+    setCalendarView('days');
+    setPickerPage('date-picker');
+  };
+
+  const handleChangeCalendarMonth = useCallback((offset: number) => {
+    setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1));
+  }, []);
+
+  const handleSelectCalendarYear = (year: number) => {
+    setCalendarMonth((current) => new Date(year, current.getMonth(), 1));
+    setCalendarView('days');
+  };
+
+  const handleSelectCalendarMonth = (monthIndex: number) => {
+    setCalendarMonth((current) => new Date(current.getFullYear(), monthIndex, 1));
+    setCalendarView('days');
+  };
+
+  const calendarSwipeResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          calendarView === 'days' &&
+          Math.abs(gesture.dx) > 12 &&
+          Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2,
+        onMoveShouldSetPanResponderCapture: () => false,
+        onPanResponderRelease: (_, gesture) => {
+          if (Math.abs(gesture.dx) < CALENDAR_SWIPE_THRESHOLD) {
+            return;
+          }
+
+          handleChangeCalendarMonth(gesture.dx < 0 ? 1 : -1);
+        },
+      }),
+    [calendarView, handleChangeCalendarMonth],
+  );
+
+  const handleSelectCalendarDate = (date: Date) => {
+    const dateKey = toDateKey(date);
+    const existingDay = availableDayOptions.find((day) => getDayOptionDateKey(day) === dateKey);
+
+    if (existingDay) {
+      applySelectedDay(existingDay);
+      return;
+    }
+
+    Alert.alert(
+      '선택한 날짜를 여행 일정에 추가할까요?',
+      undefined,
+      [
+        {
+          text: '취소',
+          style: 'cancel',
+        },
+        {
+          text: '추가',
+          onPress: () => {
+            const newDay = createDayOptionFromDate(date);
+            const nextDays = normalizeDayOptions([...availableDayOptions, newDay]);
+            const nextSelectedDay = nextDays.find((day) => getDayOptionDateKey(day) === dateKey);
+
+            setCustomDayOptions((current) => normalizeDayOptions([...current, newDay]));
+            setSelectedDay(nextSelectedDay ?? newDay);
+            setCalendarView('days');
+            setPickerPage('form');
+          },
+        },
+      ],
+    );
+  };
+
   const handleAddPhotos = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         allowsMultipleSelection: true,
-        selectionLimit: 5 - photoSources.length - photoUris.length,
+        selectionLimit: 0,
         quality: 1,
         exif: true,
       });
@@ -373,7 +644,7 @@ export default function PlaceCreateModal({
 
       setPhotoUris((current) => [
         ...new Set([...current, ...result.assets.map((asset) => asset.uri)]),
-      ].slice(0, 5 - photoSources.length));
+      ]);
     } catch {
       Alert.alert('사진 추가 실패', '사진을 불러오지 못했습니다. 다시 시도해주세요.');
     }
@@ -422,9 +693,13 @@ export default function PlaceCreateModal({
                     ? '장소 검색'
                     : pickerPage === 'manual-place-entry'
                       ? '직접 입력'
+                      : pickerPage === 'travel-day'
+                        ? '여행일자 선택'
+                        : pickerPage === 'date-picker'
+                          ? '다른 날짜 선택'
                   : mode === 'edit'
-                    ? '장소 기록 수정'
-                    : '장소 기록 추가'}
+                    ? titleLabel ?? '장소 기록 수정'
+                    : titleLabel ?? '장소 기록 추가'}
             </Text>
             <TouchableOpacity
               accessibilityLabel="장소 추가 닫기"
@@ -443,19 +718,21 @@ export default function PlaceCreateModal({
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
               >
-                <PhotoField
-                  onAddPress={handleAddPhotos}
-                  onRemovePress={(uri) => {
-                    setPhotoUris((current) => current.filter((item) => item !== uri));
-                  }}
-                  onRemoveSourcePress={(index) => {
-                    setPhotoSources((current) =>
-                      current.filter((_, sourceIndex) => sourceIndex !== index),
-                    );
-                  }}
-                  photoSources={photoSources}
-                  photoUris={photoUris}
-                />
+                {showPhotoSection && !showRecordField ? (
+                  <PhotoField
+                    onAddPress={handleAddPhotos}
+                    onRemovePress={(uri) => {
+                      setPhotoUris((current) => current.filter((item) => item !== uri));
+                    }}
+                    onRemoveSourcePress={(index) => {
+                      setPhotoSources((current) =>
+                        current.filter((_, sourceIndex) => sourceIndex !== index),
+                      );
+                    }}
+                    photoSources={photoSources}
+                    photoUris={photoUris}
+                  />
+                ) : null}
                 <SelectField
                   label="장소"
                   onPress={() => setPickerPage('place-search')}
@@ -463,24 +740,63 @@ export default function PlaceCreateModal({
                   subtitle={getPlaceSubtitle(selectedPlace)}
                   value={selectedPlace?.placeName ?? place}
                 />
+                {availableDayOptions.length > 0 ? (
+                  <SelectField
+                    label="여행일자"
+                    onPress={() => setPickerPage('travel-day')}
+                    placeholder="여행일자를 선택하세요"
+                    value={formatDayFieldValue(selectedDay)}
+                  />
+                ) : null}
                 <SelectField
                   label="방문 시간"
                   onPress={openTimePicker}
                   placeholder="시간을 선택하세요"
                   value={time}
                 />
-                <SelectField
-                  label="카테고리"
-                  onPress={() => setPickerPage('category')}
-                  placeholder="카테고리를 선택하세요"
-                  value={category}
-                />
+                {showRecordField ? (
+                  <View style={styles.field}>
+                    <Text style={styles.label}>기록</Text>
+                    <TextInput
+                      multiline
+                      onChangeText={setText}
+                      placeholder="기록을 입력하세요"
+                      placeholderTextColor={Colors.foundation.grey500}
+                      style={styles.recordInput}
+                      textAlignVertical="top"
+                      value={text}
+                    />
+                  </View>
+                ) : null}
+                {showCategoryField ? (
+                  <SelectField
+                    label="카테고리"
+                    onPress={() => setPickerPage('category')}
+                    placeholder="카테고리를 선택하세요"
+                    value={category}
+                  />
+                ) : null}
+                {showPhotoSection && showRecordField ? (
+                  <PhotoField
+                    onAddPress={handleAddPhotos}
+                    onRemovePress={(uri) => {
+                      setPhotoUris((current) => current.filter((item) => item !== uri));
+                    }}
+                    onRemoveSourcePress={(index) => {
+                      setPhotoSources((current) =>
+                        current.filter((_, sourceIndex) => sourceIndex !== index),
+                      );
+                    }}
+                    photoSources={photoSources}
+                    photoUris={photoUris}
+                  />
+                ) : null}
               </ScrollView>
 
               {mode === 'edit' ? (
                 <View style={styles.editFooter}>
                   <AuthActionButton
-                    label="수정 완료"
+                    label={submitLabel ?? '수정 완료'}
                     onPress={handleSubmit}
                     state={canSubmit ? 'on' : 'off'}
                   />
@@ -499,7 +815,7 @@ export default function PlaceCreateModal({
                 </View>
               ) : (
                 <AuthActionButton
-                  label="추가하기"
+                  label={submitLabel ?? '추가하기'}
                   onPress={handleSubmit}
                   state={canSubmit ? 'on' : 'off'}
                 />
@@ -553,6 +869,188 @@ export default function PlaceCreateModal({
                   )}
                 </TouchableOpacity>
               ))}
+            </View>
+          )}
+
+          {pickerPage === 'travel-day' && (
+            <ScrollView
+              contentContainerStyle={styles.dayPickerList}
+              showsVerticalScrollIndicator={false}
+            >
+              {availableDayOptions.map((day) => {
+                const selected = selectedDay?.id === day.id;
+
+                return (
+                  <TouchableOpacity
+                    key={day.id}
+                    accessibilityRole="button"
+                    activeOpacity={0.7}
+                    onPress={() => applySelectedDay(day)}
+                    style={[styles.dayPickerOption, selected && styles.dayPickerOptionSelected]}
+                  >
+                    <View style={styles.dayPickerTextGroup}>
+                      <Text style={styles.dayPickerDayText}>{day.dayNumber}일차</Text>
+                      <Text style={styles.dayPickerDateText}>
+                        {day.dateLabel} {day.weekdayLabel}
+                      </Text>
+                    </View>
+                    {selected ? (
+                      <Ionicons color={Colors.foundation.grey800} name="checkmark" size={18} />
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              })}
+
+              <TouchableOpacity
+                accessibilityRole="button"
+                activeOpacity={0.7}
+                onPress={openDatePicker}
+                style={styles.addOtherDayOption}
+              >
+                <Text style={styles.addOtherDayText}>+ 다른 날짜 선택</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          )}
+
+          {pickerPage === 'date-picker' && (
+            <View style={styles.calendarStep}>
+              <View style={styles.calendarHeader}>
+                {calendarView === 'days' ? (
+                  <View style={styles.calendarHeaderGroup}>
+                    <TouchableOpacity
+                      accessibilityLabel="이전 달"
+                      accessibilityRole="button"
+                      activeOpacity={0.7}
+                      onPress={() => handleChangeCalendarMonth(-1)}
+                      style={styles.calendarNavButton}
+                    >
+                      <Ionicons color={Colors.foundation.black} name="chevron-back" size={20} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      accessibilityLabel="연월 선택"
+                      accessibilityRole="button"
+                      activeOpacity={0.7}
+                      onPress={() => setCalendarView('years')}
+                      style={styles.calendarTitleButton}
+                    >
+                      <Text style={styles.calendarTitle}>
+                        {calendarMonth.getFullYear()}년 {calendarMonth.getMonth() + 1}월
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      accessibilityLabel="다음 달"
+                      accessibilityRole="button"
+                      activeOpacity={0.7}
+                      onPress={() => handleChangeCalendarMonth(1)}
+                      style={styles.calendarNavButton}
+                    >
+                      <Ionicons color={Colors.foundation.black} name="chevron-forward" size={20} />
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    accessibilityLabel="연월 선택 전환"
+                    accessibilityRole="button"
+                    activeOpacity={0.7}
+                    onPress={() => setCalendarView(calendarView === 'years' ? 'days' : 'years')}
+                    style={styles.calendarTitleButton}
+                  >
+                    <Text style={styles.calendarTitle}>
+                      {calendarView === 'years' ? '연도 선택' : `${calendarMonth.getFullYear()}년`}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {calendarView === 'days' && (
+                <View {...calendarSwipeResponder.panHandlers}>
+                  <View style={styles.weekdayRow}>
+                    {WEEKDAY_LABELS.map((weekday) => (
+                      <Text key={weekday} style={styles.weekdayText}>{weekday}</Text>
+                    ))}
+                  </View>
+
+                  <View style={styles.calendarGrid}>
+                    {createCalendarWeeks(calendarMonth).map((week, weekIndex) => (
+                      <View key={`week-${weekIndex}`} style={styles.calendarRow}>
+                        {week.map((date, dayIndex) => {
+                          if (!date) {
+                            return <View key={`empty-${weekIndex}-${dayIndex}`} style={styles.calendarDayCell} />;
+                          }
+
+                          const dateKey = toDateKey(date);
+                          const selectedDateKey = selectedDay ? getDayOptionDateKey(selectedDay) : null;
+                          const selected = dateKey === selectedDateKey;
+
+                          return (
+                            <TouchableOpacity
+                              key={dateKey}
+                              accessibilityRole="button"
+                              activeOpacity={0.7}
+                              onPress={() => handleSelectCalendarDate(date)}
+                              style={[styles.calendarDayCell, selected && styles.calendarDaySelected]}
+                            >
+                              <Text style={[styles.calendarDayText, selected && styles.calendarDayTextSelected]}>
+                                {date.getDate()}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {calendarView === 'years' && (
+                <ScrollView
+                  ref={yearSelectorRef}
+                  contentContainerStyle={styles.calendarSelectorGrid}
+                  onLayout={(event) => setYearSelectorHeight(event.nativeEvent.layout.height)}
+                  showsVerticalScrollIndicator={false}
+                  style={styles.calendarSelectorScroll}
+                >
+                  {calendarYears.map((year) => {
+                    const active = year === calendarMonth.getFullYear();
+
+                    return (
+                      <TouchableOpacity
+                        key={year}
+                        accessibilityRole="button"
+                        activeOpacity={0.7}
+                        onPress={() => handleSelectCalendarYear(year)}
+                        style={[styles.calendarSelectorCell, active && styles.calendarSelectorCellActive]}
+                      >
+                        <Text style={[styles.calendarSelectorText, active && styles.calendarSelectorTextActive]}>
+                          {year}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              )}
+
+              {calendarView === 'months' && (
+                <View style={styles.calendarSelectorGrid}>
+                  {CALENDAR_MONTHS.map((monthIndex) => {
+                    const active = monthIndex === calendarMonth.getMonth();
+
+                    return (
+                      <TouchableOpacity
+                        key={monthIndex}
+                        accessibilityRole="button"
+                        activeOpacity={0.7}
+                        onPress={() => handleSelectCalendarMonth(monthIndex)}
+                        style={[styles.calendarSelectorCell, active && styles.calendarSelectorCellActive]}
+                      >
+                        <Text style={[styles.calendarSelectorText, active && styles.calendarSelectorTextActive]}>
+                          {monthIndex + 1}월
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
             </View>
           )}
         </View>
@@ -733,6 +1231,16 @@ const styles = StyleSheet.create({
   selectPlaceholder: {
     color: Colors.foundation.grey500,
   },
+  recordInput: {
+    minHeight: 104,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.foundation.grey500,
+    borderRadius: Radius.sm,
+    ...Typography.body2Regular,
+    color: Colors.foundation.black,
+  },
   categoryList: {
     gap: Spacing.xs,
   },
@@ -751,6 +1259,134 @@ const styles = StyleSheet.create({
   categoryText: {
     ...Typography.body2Regular,
     color: Colors.foundation.black,
+  },
+  dayPickerList: {
+    gap: Spacing.sm,
+  },
+  dayPickerOption: {
+    minHeight: 60,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.sm,
+  },
+  dayPickerOptionSelected: {
+    backgroundColor: Colors.light.bgScreen,
+  },
+  dayPickerTextGroup: {
+    gap: 2,
+  },
+  dayPickerDayText: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+  },
+  dayPickerDateText: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+  },
+  addOtherDayOption: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radius.sm,
+  },
+  addOtherDayText: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.grey700,
+  },
+  calendarStep: {
+    height: 360,
+    gap: Spacing.lg,
+  },
+  calendarHeader: {
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarHeaderGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+  },
+  calendarNavButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarTitleButton: {
+    minHeight: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xs,
+  },
+  calendarTitle: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+  },
+  weekdayRow: {
+    flexDirection: 'row',
+  },
+  weekdayText: {
+    flex: 1,
+    ...Typography.captionEmphasized,
+    color: Colors.foundation.grey500,
+    textAlign: 'center',
+  },
+  calendarGrid: {
+    gap: Spacing.xs,
+  },
+  calendarRow: {
+    flexDirection: 'row',
+    gap: Spacing.xs,
+  },
+  calendarDayCell: {
+    flex: 1,
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radius.full,
+  },
+  calendarDaySelected: {
+    backgroundColor: Colors.foundation.black,
+  },
+  calendarDayText: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.black,
+  },
+  calendarDayTextSelected: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.white,
+  },
+  calendarSelectorGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+  },
+  calendarSelectorScroll: {
+    flex: 1,
+  },
+  calendarSelectorCell: {
+    width: '31%',
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radius.sm,
+  },
+  calendarSelectorCellActive: {
+    backgroundColor: Colors.foundation.black,
+  },
+  calendarSelectorText: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.black,
+  },
+  calendarSelectorTextActive: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.white,
   },
   editFooter: {
     gap: Spacing.lg,
@@ -826,7 +1462,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.foundation.white,
   },
   deleteConfirmationConfirm: {
-    backgroundColor: Colors.foundation.black,
+    backgroundColor: '#EB524D',
   },
   deleteConfirmationCancelText: {
     ...Typography.body2Emphasized,

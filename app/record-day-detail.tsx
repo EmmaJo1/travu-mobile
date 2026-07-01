@@ -29,6 +29,7 @@ import ScreenHeader from '@/components/nav/ScreenHeader';
 import DaySelectorSheet, { type DaySelectorItem } from '@/components/record/DaySelectorSheet';
 import PlaceCreateModal, {
   type PlaceCreateInput,
+  type PlaceEntryDayOption,
   type PlaceEntryFormMode,
 } from '@/components/record/PlaceCreateModal';
 import PlaceEntryCard, { type PlaceEntry } from '@/components/trip/PlaceEntryCard';
@@ -42,6 +43,10 @@ import { RECORD_DAY_ENTRY_IMAGES } from '@/constants/recordTripImages';
 import { addSavedCompletedTrip } from '@/constants/savedMyPageTrips';
 import type { DestinationOption } from '@/constants/mockTripDestinations';
 import { Colors, FontFamily, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
+import {
+  isPlaceDetailDeleted,
+  markPlaceDetailDeleted,
+} from '@/services/placeDetailDeletionRegistry';
 
 const ALL_DAYS_ID = 'all';
 const DAY_FILTER_BG = '#F2F2F2';
@@ -329,7 +334,7 @@ function groupAssetsByPlaceVisit(
 function groupAssetsByTakenDate(
   assets: PickedPhotoAsset[],
   fallbackDay: DaySelectorItem,
-): Array<{ date: Date; dateKey: string; assets: PickedPhotoAsset[] }> {
+): { date: Date; dateKey: string; assets: PickedPhotoAsset[] }[] {
   const fallbackDate = parseDayDate(fallbackDay) ?? new Date();
   const grouped = new Map<string, { date: Date; dateKey: string; assets: PickedPhotoAsset[] }>();
 
@@ -350,7 +355,7 @@ function groupAssetsByTakenDate(
 
 function mergeDayOptionsWithPhotoGroups(
   currentDays: DaySelectorItem[],
-  photoGroups: Array<{ date: Date; dateKey: string; assets: PickedPhotoAsset[] }>,
+  photoGroups: { date: Date; dateKey: string; assets: PickedPhotoAsset[] }[],
 ): DaySelectorItem[] {
   const nextDaysByDate = new Map<string, DaySelectorItem>();
 
@@ -380,6 +385,54 @@ function mergeDayOptionsWithPhotoGroups(
       ...day,
       dayNumber: index + 1,
     }));
+}
+
+function toPlaceEntryDayOption(day: DaySelectorItem): PlaceEntryDayOption {
+  return {
+    id: day.id,
+    dayNumber: day.dayNumber,
+    dateLabel: day.dateLabel,
+    weekdayLabel: day.weekdayLabel,
+    photoCount: day.photoCount,
+  };
+}
+
+function resolveDayForPlaceInput(
+  currentDays: DaySelectorItem[],
+  input: PlaceCreateInput,
+  fallbackDay: DaySelectorItem,
+): { dayOptions: DaySelectorItem[]; targetDay: DaySelectorItem } {
+  const matchedById = input.dayId
+    ? currentDays.find((day) => day.id === input.dayId)
+    : undefined;
+
+  if (matchedById) {
+    return { dayOptions: currentDays, targetDay: matchedById };
+  }
+
+  const inputDate = input.dateKey ? parseRouteDateKey(input.dateKey) : null;
+
+  if (!inputDate) {
+    return { dayOptions: currentDays, targetDay: fallbackDay };
+  }
+
+  const inputDateKey = toDateKey(inputDate);
+  const matchedByDate = currentDays.find((day) => getDayDateKey(day) === inputDateKey);
+
+  if (matchedByDate) {
+    return { dayOptions: currentDays, targetDay: matchedByDate };
+  }
+
+  const nextDayOptions = mergeDayOptionsWithPhotoGroups(currentDays, [
+    {
+      assets: [],
+      date: inputDate,
+      dateKey: inputDateKey,
+    },
+  ]);
+  const targetDay = nextDayOptions.find((day) => getDayDateKey(day) === inputDateKey) ?? fallbackDay;
+
+  return { dayOptions: nextDayOptions, targetDay };
 }
 
 function getTimeSortValue(time?: string): number {
@@ -546,20 +599,6 @@ function getEntryPhotoUrisParam(entry: PlaceEntry): string | undefined {
   return JSON.stringify(entry.photoUris);
 }
 
-function getEntryPhotoSourceIndexesParam(entry: PlaceEntry): string | undefined {
-  const originalEntry = RECORD_DAY_ENTRIES.find((item) => getEntryPlaceId(item) === getEntryPlaceId(entry));
-  const originalPhotoSources = originalEntry?.photoSources ?? [];
-
-  if (!entry.photoSources?.length) {
-    return originalPhotoSources.length > 0 ? JSON.stringify([]) : undefined;
-  }
-
-  const sourceIndexes = entry.photoSources
-    .map((source) => originalPhotoSources.findIndex((originalSource) => originalSource === source))
-    .filter((index) => index >= 0);
-
-  return sourceIndexes.length > 0 ? JSON.stringify(sourceIndexes) : undefined;
-}
 
 function parseUpdatedPhotoUris(value?: string | string[]): string[] {
   const rawValue = Array.isArray(value) ? value[0] : value;
@@ -730,6 +769,10 @@ export default function RecordDayDetailScreen() {
   const [photoGridEntry, setPhotoGridEntry] = useState<PlaceEntry | null>(null);
   const [isPhotoGridSelectionMode, setPhotoGridSelectionMode] = useState(false);
   const [selectedPhotoIndexes, setSelectedPhotoIndexes] = useState<number[]>([]);
+  const [, setPendingDeletePhoto] = useState<{
+    entry: PlaceEntry;
+    photoIndex: number;
+  } | null>(null);
   const [tripInfoModalVisible, setTripInfoModalVisible] = useState(false);
 
   useEffect(() => {
@@ -792,7 +835,7 @@ export default function RecordDayDetailScreen() {
       ? dayOptions.flatMap((day) => entriesByDay[day.id] ?? RECORD_DAY_ENTRIES)
       : entriesByDay[selectedDay.id] ?? RECORD_DAY_ENTRIES;
 
-    return [...dayEntries].sort(
+    return dayEntries.filter((entry) => !isPlaceDetailDeleted(getEntryPlaceId(entry))).sort(
       (left, right) => getTimeSortValue(left.time) - getTimeSortValue(right.time),
     );
   }, [dayOptions, entriesByDay, isDetectedTripDraft, selectedDay.id, selectedFilterId]);
@@ -891,6 +934,9 @@ export default function RecordDayDetailScreen() {
   };
 
   const confirmDeletePhotoFromEntry = (entry: PlaceEntry, photoIndex: number) => {
+    const deleteTarget = { entry, photoIndex };
+    setPendingDeletePhoto(deleteTarget);
+
     Alert.alert(
       '\uC0AD\uC81C\uD558\uC2DC\uACA0\uC2B5\uB2C8\uAE4C?',
       '\uC774 \uC0AC\uC9C4\uC744 \uAE30\uB85D\uC5D0\uC11C \uC0AD\uC81C\uD569\uB2C8\uB2E4.',
@@ -898,13 +944,20 @@ export default function RecordDayDetailScreen() {
         {
           text: '\uCDE8\uC18C',
           style: 'cancel',
+          onPress: () => setPendingDeletePhoto(null),
         },
         {
           text: '\uC0AD\uC81C',
           style: 'destructive',
-          onPress: () => handleDeletePhotoFromEntry(entry, photoIndex),
+          onPress: () => {
+            handleDeletePhotoFromEntry(deleteTarget.entry, deleteTarget.photoIndex);
+            setPendingDeletePhoto(null);
+          },
         },
       ],
+      {
+        onDismiss: () => setPendingDeletePhoto(null),
+      },
     );
   };
 
@@ -1061,53 +1114,116 @@ export default function RecordDayDetailScreen() {
     setSelectedPhotoIndexes([]);
   };
 
+  const getEntryDayId = (entry: PlaceEntry) => {
+    for (const day of dayOptions) {
+      const dayEntries = entriesByDay[day.id]
+        ?? (day.id === selectedDay.id ? RECORD_DAY_ENTRIES : undefined);
+
+      if (dayEntries?.some((item) => item.id === entry.id)) {
+        return day.id;
+      }
+    }
+
+    return entry.dayId ?? selectedDay.id;
+  };
+
   const handleSubmitPlaceEntry = (input: PlaceCreateInput) => {
+    const { dayOptions: nextDayOptions, targetDay } = resolveDayForPlaceInput(
+      dayOptions,
+      input,
+      selectedDay,
+    );
+    const targetDayId = targetDay.id;
+
+    if (nextDayOptions !== dayOptions) {
+      setDayOptions(nextDayOptions);
+      setSelectedDay((current) =>
+        nextDayOptions.find((day) => day.id === current.id) ?? current,
+      );
+    }
+
     setEntriesByDay((current) => {
-      const dayEntries = current[selectedDay.id] ?? RECORD_DAY_ENTRIES;
+      const targetDayEntries = current[targetDayId]
+        ?? (targetDayId === selectedDay.id ? RECORD_DAY_ENTRIES : []);
 
       if (editingEntry) {
-        return {
+        const sourceDayId = getEntryDayId(editingEntry);
+        const sourceDayEntries = current[sourceDayId]
+          ?? (sourceDayId === selectedDay.id ? RECORD_DAY_ENTRIES : []);
+        const nextEntriesByDay = {
           ...current,
-          [selectedDay.id]: dayEntries.map((entry) =>
-            entry.id === editingEntry.id
-              ? {
-                ...entry,
-                ...input,
-              }
-              : entry,
+          [sourceDayId]: sourceDayEntries.filter((entry) => entry.id !== editingEntry.id),
+        };
+        const normalizedTargetEntries = sourceDayId === targetDayId
+          ? nextEntriesByDay[sourceDayId]
+          : targetDayEntries;
+        const updatedEntry: PlaceEntry = {
+          ...editingEntry,
+          ...input,
+          id: editingEntry.id,
+          dayId: targetDay.id,
+          dateKey: getDayDateKey(targetDay) ?? undefined,
+          dateLabel: targetDay.dateLabel,
+          weekdayLabel: targetDay.weekdayLabel,
+        };
+
+        return {
+          ...nextEntriesByDay,
+          [targetDayId]: [...normalizedTargetEntries, updatedEntry].sort(
+            (left, right) => getTimeSortValue(left.time) - getTimeSortValue(right.time),
           ),
         };
       }
 
       const newEntry: PlaceEntry = {
-        id: `manual-${selectedDay.id}-${Date.now()}`,
+        id: `manual-${targetDayId}-${Date.now()}`,
         ...input,
+        dayId: targetDay.id,
+        dateKey: getDayDateKey(targetDay) ?? undefined,
+        dateLabel: targetDay.dateLabel,
+        weekdayLabel: targetDay.weekdayLabel,
       };
 
       return {
         ...current,
-        [selectedDay.id]: [...dayEntries, newEntry],
+        [targetDayId]: [...targetDayEntries, newEntry].sort(
+          (left, right) => getTimeSortValue(left.time) - getTimeSortValue(right.time),
+        ),
       };
     });
     handleClosePlaceEntryModal();
   };
 
   const handleDeleteEntry = (entry: PlaceEntry) => {
+    const targetPlaceId = getEntryPlaceId(entry);
+
     Alert.alert(
-      '\uC7A5\uC18C\uB97C \uC0AD\uC81C\uD560\uAE4C\uC694?',
-      '\uC571\uC5D0\uC11C\uB9CC \uC0AD\uC81C\uB418\uBA70, \uAE30\uAE30\uC758 \uC6D0\uBCF8 \uC0AC\uC9C4\uC740 \uC720\uC9C0\uB429\uB2C8\uB2E4.',
+      '\uC774 \uC7A5\uC18C \uAE30\uB85D\uC744 \uC0AD\uC81C\uD560\uAE4C\uC694?',
+      '\uC0AD\uC81C\uD558\uBA74 \uC774 \uC7A5\uC18C\uC758 \uC0AC\uC9C4, \uAE30\uB85D, \uC0C1\uC138 \uD398\uC774\uC9C0 \uC5F0\uACB0\uB3C4 \uD568\uAED8 \uC815\uB9AC\uB3FC\uC694.',
       [
         { text: '\uCDE8\uC18C', style: 'cancel' },
         {
           text: '\uC0AD\uC81C',
           style: 'destructive',
           onPress: () => {
+            markPlaceDetailDeleted(targetPlaceId);
             setEntriesByDay((current) => {
-              const dayEntries = current[selectedDay.id] ?? RECORD_DAY_ENTRIES;
-              return {
-                ...current,
-                [selectedDay.id]: dayEntries.filter((item) => item.id !== entry.id),
-              };
+              const nextEntriesByDay = { ...current };
+
+              for (const day of dayOptions) {
+                const dayEntries = nextEntriesByDay[day.id]
+                  ?? (day.id === selectedDay.id ? RECORD_DAY_ENTRIES : undefined);
+
+                if (!dayEntries) {
+                  continue;
+                }
+
+                nextEntriesByDay[day.id] = dayEntries.filter(
+                  (item) => getEntryPlaceId(item) !== targetPlaceId,
+                );
+              }
+
+              return nextEntriesByDay;
             });
           },
         },
@@ -1313,6 +1429,7 @@ export default function RecordDayDetailScreen() {
             photoDisplayMode="limited"
             showRating={false}
             variant="recordPhotoReview"
+            onLongPress={() => handleDeleteEntry(entry)}
             onPress={() => handleOpenPlaceDetail(entry)}
             onPhotoDelete={(photoIndex) => confirmDeletePhotoFromEntry(entry, photoIndex)}
             onPhotoGridOpen={() => handleOpenPlacePhotoGrid(entry)}
@@ -1329,14 +1446,40 @@ export default function RecordDayDetailScreen() {
         mode={placeEntryFormMode}
         tripId={tripId ?? 'record-trip'}
         dayId={selectedDay.id}
-        initialValue={editingEntry ?? undefined}
+        dayOptions={dayOptions.map(toPlaceEntryDayOption)}
+        selectedDayId={editingEntry ? getEntryDayId(editingEntry) : selectedDay.id}
+        initialValue={
+          editingEntry
+            ? {
+              ...editingEntry,
+              dayId: getEntryDayId(editingEntry),
+            }
+            : {
+              dayId: selectedDay.id,
+              dateKey: getDayDateKey(selectedDay) ?? undefined,
+              dateLabel: selectedDay.dateLabel,
+              weekdayLabel: selectedDay.weekdayLabel,
+            }
+        }
         onDelete={(entryId) => {
           setEntriesByDay((current) => {
-            const dayEntries = current[selectedDay.id] ?? RECORD_DAY_ENTRIES;
-            return {
-              ...current,
-              [selectedDay.id]: dayEntries.filter((entry) => entry.id !== entryId),
-            };
+            const nextEntriesByDay = { ...current };
+
+            for (const day of dayOptions) {
+              const dayEntries = nextEntriesByDay[day.id]
+                ?? (day.id === selectedDay.id ? RECORD_DAY_ENTRIES : undefined);
+              const matchedEntry = dayEntries?.find((entry) => entry.id === entryId);
+
+              if (!dayEntries || !matchedEntry) {
+                continue;
+              }
+
+              markPlaceDetailDeleted(getEntryPlaceId(matchedEntry));
+              nextEntriesByDay[day.id] = dayEntries.filter((entry) => entry.id !== entryId);
+              break;
+            }
+
+            return nextEntriesByDay;
           });
           handleClosePlaceEntryModal();
         }}
@@ -1510,7 +1653,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.light.borderStrong,
   },
   destructiveText: {
-    color: '#D13434',
+    color: '#EB524D',
   },
   scroll: {
     flex: 1,

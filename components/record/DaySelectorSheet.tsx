@@ -53,6 +53,9 @@ interface DaySelectorSheetProps {
   options?: SelectorOption[];
   showPhotoCount?: boolean;
   showTodayChip?: boolean;
+  hideTitle?: boolean;
+  hideOptionAccessory?: boolean;
+  compactOptions?: boolean;
   todayId?: string;
   onSelectDay?: (day: DaySelectorItem) => void;
   onSelectOption?: (option: SelectorOption) => void;
@@ -67,6 +70,9 @@ export default function DaySelectorSheet({
   options,
   showPhotoCount = true,
   showTodayChip = false,
+  hideTitle = false,
+  hideOptionAccessory = false,
+  compactOptions = false,
   todayId,
   onSelectDay,
   onSelectOption,
@@ -175,28 +181,39 @@ export default function DaySelectorSheet({
           ]}
         >
           <View style={styles.handle} />
-          <Text style={styles.title}>{resolvedTitle}</Text>
+          {hideTitle ? null : <Text style={styles.title}>{resolvedTitle}</Text>}
 
           {isOptionMode ? (
             <FlatList
               data={options ?? []}
               keyExtractor={(item) => item.id}
-              contentContainerStyle={styles.list}
+              contentContainerStyle={[styles.list, hideTitle && styles.listWithoutTitle]}
               showsVerticalScrollIndicator={false}
               renderItem={({ item }) => {
                 const selected = item.id === selectedId;
                 return (
                   <Pressable
                     accessibilityRole="button"
-                    style={[styles.row, selected && styles.rowSelected]}
+                    style={[
+                      styles.row,
+                      compactOptions && styles.optionRowCompact,
+                      selected && styles.rowSelected,
+                    ]}
                     onPress={() => onSelectOption?.(item)}
                   >
                     <View style={styles.rowMain}>
-                      <Text style={[styles.optionLabel, selected && styles.optionLabelSelected]}>
+                      <Text
+                        style={[
+                          styles.optionLabel,
+                          compactOptions && styles.optionLabelCompact,
+                          selected && styles.optionLabelSelected,
+                          compactOptions && selected && styles.optionLabelCompactSelected,
+                        ]}
+                      >
                         {item.label}
                       </Text>
                     </View>
-                    {renderAccessory(selected)}
+                    {hideOptionAccessory ? null : renderAccessory(selected)}
                   </Pressable>
                 );
               }}
@@ -219,7 +236,7 @@ export default function DaySelectorSheet({
                     <View style={styles.rowMain}>
                       <View style={styles.dayHeaderRow}>
                         <Text style={[styles.dayLabel, selected && styles.dayLabelSelected]}>
-                          DAY {item.dayNumber}
+                          {item.dayNumber}일차
                         </Text>
                         <Text style={[styles.dateLabel, selected && styles.dateLabelSelected]}>
                           {item.dateLabel}
@@ -292,6 +309,9 @@ const styles = StyleSheet.create({
   list: {
     gap: Spacing.sm,
     paddingBottom: Spacing.sm,
+  },
+  listWithoutTitle: {
+    paddingTop: Spacing.md,
   },
   row: {
     minHeight: 60,
@@ -372,5 +392,17 @@ const styles = StyleSheet.create({
   },
   optionLabelSelected: {
     ...Typography.body1Emphasized,
+  },
+  optionRowCompact: {
+    minHeight: 40,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: 8,
+  },
+  optionLabelCompact: {
+    ...Typography.captionRegular,
+  },
+  optionLabelCompactSelected: {
+    ...Typography.captionEmphasized,
   },
 });

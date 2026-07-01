@@ -1,5 +1,5 @@
 import { Feather } from '@expo/vector-icons';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Image,
   Modal,
@@ -40,6 +40,10 @@ export interface PlaceEntry {
   text?: string;
   photoUris?: string[];
   photoSources?: ImageSourcePropType[];
+  dayId?: string;
+  dateKey?: string;
+  dateLabel?: string;
+  weekdayLabel?: string;
   photoCount?: number;
   recordCount?: number;
   onEdit?: () => void;
@@ -54,6 +58,7 @@ interface PlaceEntryCardProps {
   variant?: PlaceEntryCardVariant;
   photoDisplayMode?: 'scroll' | 'limited';
   onPress?: () => void;
+  onLongPress?: () => void;
   onPhotoGridOpen?: () => void;
   onPhotoDelete?: (photoIndex: number) => void;
   onQuickEdit?: () => void;
@@ -68,7 +73,7 @@ interface QuickMenuRowProps {
   onPress: () => void;
 }
 
-const DESTRUCTIVE = '#D13434';
+const DESTRUCTIVE = '#EB524D';
 const FLAG_SOURCE = require('../../assets/images/flag-place.png');
 const LABEL_RECORD = '\uAE30\uB85D';
 const LABEL_PHOTO = '\uC0AC\uC9C4';
@@ -126,6 +131,7 @@ export default function PlaceEntryCard({
   variant = 'archive',
   photoDisplayMode = 'scroll',
   onPress,
+  onLongPress,
   onPhotoGridOpen,
   onPhotoDelete,
   onQuickEdit,
@@ -171,15 +177,23 @@ export default function PlaceEntryCard({
     setSelectedPhotoIndex(index);
   };
 
-  const handleDeleteCurrentPhoto = (photoIndex: number) => {
-    onPhotoDelete?.(photoIndex);
+  useEffect(() => {
+    if (selectedPhotoIndex == null) {
+      return;
+    }
 
-    if (photoSources.length <= 1) {
+    if (photoSources.length === 0) {
       setSelectedPhotoIndex(null);
       return;
     }
 
-    setSelectedPhotoIndex(Math.min(photoIndex, photoSources.length - 2));
+    if (selectedPhotoIndex > photoSources.length - 1) {
+      setSelectedPhotoIndex(photoSources.length - 1);
+    }
+  }, [photoSources.length, selectedPhotoIndex]);
+
+  const handleDeleteCurrentPhoto = (photoIndex: number) => {
+    onPhotoDelete?.(photoIndex);
   };
 
   return (
@@ -213,6 +227,8 @@ export default function PlaceEntryCard({
               <Pressable
                 accessibilityRole={onPress ? 'button' : undefined}
                 disabled={!onPress}
+                delayLongPress={320}
+                onLongPress={onLongPress}
                 onPress={handlePressPlaceInfo}
                 style={styles.photoReviewInfo}
               >
@@ -285,6 +301,8 @@ export default function PlaceEntryCard({
             <Pressable
               accessibilityRole={onPress ? 'button' : undefined}
               disabled={!onPress}
+              delayLongPress={320}
+              onLongPress={onLongPress}
               onPress={handlePressPlaceInfo}
               style={[styles.header, isArchive && styles.headerArchive]}
             >
@@ -492,7 +510,7 @@ const styles = StyleSheet.create({
     gap: Spacing.md,
   },
   timeline: {
-    width: 54,
+    width: 28,
     alignItems: 'center',
     gap: Spacing.lg,
     paddingTop: Spacing.xs,
@@ -500,7 +518,7 @@ const styles = StyleSheet.create({
   },
   timeInline: {
     minHeight: 14,
-    minWidth: 54,
+    width: 28,
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
@@ -509,7 +527,7 @@ const styles = StyleSheet.create({
   },
   timeStacked: {
     minHeight: 28,
-    minWidth: 40,
+    width: 28,
     alignItems: 'center',
     justifyContent: 'flex-start',
     gap: 2,
@@ -536,6 +554,7 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
+    alignSelf: 'stretch',
     gap: Spacing.lg,
   },
   contentPhotoReview: {

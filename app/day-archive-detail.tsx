@@ -8,7 +8,6 @@ import { StatusBar } from 'expo-status-bar';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import * as ImagePicker from 'expo-image-picker';
 import React, { useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -33,6 +32,10 @@ import Text from '@/components/common/AppText';
 import StartTripSetupModal, {
   type StartTripSetupValue,
 } from '@/components/home/StartTripSetupModal';
+import PlaceCreateModal, {
+  type PlaceCreateInput,
+  type PlaceEntryDayOption,
+} from '@/components/record/PlaceCreateModal';
 import MapPlaceholderCard from '@/components/common/MapPlaceholderCard';
 import DaySelectorSheet, { type DaySelectorItem } from '@/components/record/DaySelectorSheet';
 import PlaceEntryCard, { type PlaceEntry } from '@/components/trip/PlaceEntryCard';
@@ -40,6 +43,7 @@ import type { DestinationOption } from '@/constants/mockTripDestinations';
 import {
   ARCHIVE_DAY_OPTIONS,
   MOCK_ARCHIVE_DETAIL,
+  type ArchiveDetailPlace,
   formatArchiveDayLabel,
   toPlaceEntries,
 } from '@/constants/mockArchiveDetail';
@@ -50,6 +54,10 @@ import {
   useSavedMyPageTrips,
 } from '@/constants/savedMyPageTrips';
 import { Colors, FontFamily, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
+import {
+  isPlaceDetailDeleted,
+  markPlaceDetailDeleted,
+} from '@/services/placeDetailDeletionRegistry';
 
 /** Figma 506:704 - scroll content starts below status bar(59) + header(40). */
 const SCROLL_ORIGIN_Y = 99;
@@ -65,17 +73,12 @@ const FIGMA_Y = {
 
 const BLUR_TOP = FIGMA_Y.blurTop - SCROLL_ORIGIN_Y;
 const BLUR_HEIGHT = FIGMA_Y.blurHeight;
-const PARIS_TOP = FIGMA_Y.parisTop - SCROLL_ORIGIN_Y;
 const PHOTO_FRAME_TOP = FIGMA_Y.photoFrameTop - SCROLL_ORIGIN_Y;
 const HERO_HEIGHT = FIGMA_Y.daySelectorTop - SCROLL_ORIGIN_Y;
 const HERO_MARGIN_TOP = BLUR_TOP < 0 ? BLUR_TOP : 0;
 const BLUR_REGION_TOP = BLUR_TOP - HERO_MARGIN_TOP;
 const PHOTO_FRAME_WIDTH = 350;
 const PHOTO_FRAME_HEIGHT = 505;
-const PARIS_WIDTH = 298;
-const PARIS_CLIP_PADDING_TOP = 18;
-const PARIS_HEIGHT = 128;
-const PARIS_OFFSET_X = 11;
 const FRAME_IMAGE_WIDTH = 301;
 const FRAME_IMAGE_HEIGHT = 400;
 const FRAME_DATE_TOP = 33;
@@ -223,6 +226,81 @@ function resolveInitialArchiveDay(dayId?: string, dayNumberParam?: string): DayS
 
 function getEntryPlaceId(entry: PlaceEntry): string {
   return entry.googlePlaceId ?? entry.id;
+}
+
+function formatPlaceCreateDateLabel(dateLabel: string) {
+  const compactDateLabel = dateLabel.replace(/\s+/g, '');
+  const matched = compactDateLabel.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})/);
+
+  if (!matched) {
+    return dateLabel.trim();
+  }
+
+  return `${matched[1]}.${Number(matched[2])}.${Number(matched[3])}`;
+}
+
+function createArchiveDayOption(day: DaySelectorItem): PlaceEntryDayOption {
+  return {
+    id: day.id,
+    dayNumber: day.dayNumber,
+    dateLabel: formatPlaceCreateDateLabel(day.dateLabel),
+    weekdayLabel: day.weekdayLabel,
+    photoCount: day.photoCount,
+  };
+}
+
+function createDaySelectorItemFromPlaceDay(input: PlaceCreateInput): DaySelectorItem | undefined {
+  if (!input.dayId || !input.dayNumber || !input.dateLabel || !input.weekdayLabel) {
+    return undefined;
+  }
+
+  return {
+    id: input.dayId,
+    dayNumber: input.dayNumber,
+    dateLabel: input.dateLabel,
+    weekdayLabel: input.weekdayLabel,
+    photoCount: 0,
+  };
+}
+
+function getArchivePlacePhotoSources(input: PlaceCreateInput): ImageSourcePropType[] {
+  return [
+    ...(input.photoSources ?? []),
+    ...(input.photoUris ?? []).map((uri) => ({ uri })),
+  ];
+}
+
+function createArchivePlaceEntry(input: PlaceCreateInput): ArchiveDetailPlace {
+  const trimmedPlace = (input.placeName ?? input.place).trim();
+  const photos = getArchivePlacePhotoSources(input);
+  const recordText = input.text?.trim();
+
+  return {
+    id: input.googlePlaceId ?? `archive-place-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+    name: trimmedPlace,
+    timeLabel: input.time?.trim() ?? '',
+    category: input.category,
+    city: input.cityName ?? input.city,
+    memo: recordText || undefined,
+    records: recordText ? [recordText] : undefined,
+    images: photos,
+  };
+}
+
+interface ArchiveCoverPhotoOption {
+  id: string;
+  placeName: string;
+  source: ImageSourcePropType;
+}
+
+function createArchiveCoverPhotoOptions(places: ArchiveDetailPlace[]): ArchiveCoverPhotoOption[] {
+  return places.flatMap((place) =>
+    place.images.map((source, index) => ({
+      id: `${place.id}-cover-${index}`,
+      placeName: place.name,
+      source,
+    })),
+  );
 }
 
 type ArchiveHeaderActionId = 'cover' | 'title' | 'info' | 'place' | 'delete';
@@ -615,7 +693,7 @@ function ArchiveHeaderMenu({
               <Feather
                 name={action.icon}
                 size={18}
-                color={action.destructive ? '#D13434' : Colors.foundation.grey800}
+                color={action.destructive ? '#EB524D' : Colors.foundation.grey800}
               />
               <Text
                 style={[
@@ -652,10 +730,20 @@ export default function DayArchiveDetailScreen() {
   const [isTitleEditorVisible, setTitleEditorVisible] = useState(false);
   const [isTripInfoEditorVisible, setTripInfoEditorVisible] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
-  const activeTrip = fallbackTrip ? { ...fallbackTrip, ...localTripPatch } : undefined;
-  const detail = createArchiveDetailFromTrip(activeTrip);
-  const dayOptions = useMemo(() => createArchiveDayOptionsFromTrip(activeTrip), [activeTrip]);
-  const entries = useMemo(() => toPlaceEntries(detail.places), [detail.places]);
+  const activeTrip = useMemo(
+    () => (fallbackTrip ? { ...fallbackTrip, ...localTripPatch } : undefined),
+    [fallbackTrip, localTripPatch],
+  );
+  const detail = useMemo(() => createArchiveDetailFromTrip(activeTrip), [activeTrip]);
+  const baseDayOptions = useMemo(() => createArchiveDayOptionsFromTrip(activeTrip), [activeTrip]);
+  const [customArchiveDays, setCustomArchiveDays] = useState<DaySelectorItem[]>([]);
+  const dayOptions = useMemo(
+    () =>
+      [...baseDayOptions, ...customArchiveDays].sort(
+        (left, right) => left.dayNumber - right.dayNumber,
+      ),
+    [baseDayOptions, customArchiveDays],
+  );
   const tripInfoInitialValue = useMemo(
     () => createArchiveTripSetupValue(activeTrip, detail),
     [activeTrip, detail],
@@ -663,10 +751,48 @@ export default function DayArchiveDetailScreen() {
   const [selectedDay, setSelectedDay] = useState<DaySelectorItem>(() =>
     dayOptions[0] ?? resolveInitialArchiveDay(),
   );
+  const [addedPlacesByDay, setAddedPlacesByDay] = useState<Record<string, ArchiveDetailPlace[]>>(
+    {},
+  );
+  const [deletedArchivePlaceIds, setDeletedArchivePlaceIds] = useState<Set<string>>(() => new Set());
   const [sheetVisible, setSheetVisible] = useState(false);
+  const [isPlaceCreateModalVisible, setPlaceCreateModalVisible] = useState(false);
+  const [isCoverPhotoPickerVisible, setCoverPhotoPickerVisible] = useState(false);
+  const [coverPhotoPickerKey, setCoverPhotoPickerKey] = useState(0);
   const [isFixedHeaderVisible, setFixedHeaderVisible] = useState(false);
   const [isHeaderMenuVisible, setHeaderMenuVisible] = useState(false);
   const [isScrollEnabled, setScrollEnabled] = useState(true);
+  const placeCreateDayOptions = useMemo(() => {
+    const options = dayOptions.map(createArchiveDayOption);
+    return options.length > 0 ? options : [createArchiveDayOption(selectedDay)];
+  }, [dayOptions, selectedDay]);
+  const placeCreateInitialValue = useMemo(
+    () => ({
+      dayId: selectedDay.id,
+      dayNumber: selectedDay.dayNumber,
+      dateLabel: formatPlaceCreateDateLabel(selectedDay.dateLabel),
+      weekdayLabel: selectedDay.weekdayLabel,
+      photoUris: [],
+      photoSources: [],
+    }),
+    [selectedDay],
+  );
+  const visibleArchivePlaces = useMemo(
+    () =>
+      [...detail.places, ...(addedPlacesByDay[selectedDay.id] ?? [])].filter(
+        (place) => !deletedArchivePlaceIds.has(place.id) && !isPlaceDetailDeleted(place.id),
+      ),
+    [addedPlacesByDay, deletedArchivePlaceIds, detail.places, selectedDay.id],
+  );
+  const entries = useMemo(() => toPlaceEntries(visibleArchivePlaces), [visibleArchivePlaces]);
+  const coverPhotoOptions = useMemo(
+    () => createArchiveCoverPhotoOptions(visibleArchivePlaces),
+    [visibleArchivePlaces],
+  );
+  const currentCoverUri = useMemo(
+    () => resolveImageUri(detail.photoFrameImage),
+    [detail.photoFrameImage],
+  );
 
   const photoFrameLeft = (screenWidth - PHOTO_FRAME_WIDTH) / 2;
 
@@ -760,6 +886,39 @@ export default function DayArchiveDetailScreen() {
     });
   };
 
+  const handleDeleteArchiveEntry = React.useCallback((entry: PlaceEntry) => {
+    const targetPlaceId = getEntryPlaceId(entry);
+
+    Alert.alert(
+      '\uC774 \uC7A5\uC18C \uAE30\uB85D\uC744 \uC0AD\uC81C\uD560\uAE4C\uC694?',
+      '\uC0AD\uC81C\uD558\uBA74 \uC774 \uC7A5\uC18C\uC758 \uC0AC\uC9C4, \uAE30\uB85D, \uC0C1\uC138 \uD398\uC774\uC9C0 \uC5F0\uACB0\uB3C4 \uD568\uAED8 \uC815\uB9AC\uB3FC\uC694.',
+      [
+        { text: LABEL_CANCEL, style: 'cancel' },
+        {
+          text: '\uC0AD\uC81C',
+          style: 'destructive',
+          onPress: () => {
+            markPlaceDetailDeleted(targetPlaceId);
+            setDeletedArchivePlaceIds((current) => {
+              const next = new Set(current);
+              next.add(targetPlaceId);
+              return next;
+            });
+            setAddedPlacesByDay((current) => {
+              const nextPlacesByDay: Record<string, ArchiveDetailPlace[]> = {};
+
+              for (const [dayId, places] of Object.entries(current)) {
+                nextPlacesByDay[dayId] = places.filter((place) => place.id !== targetPlaceId);
+              }
+
+              return nextPlacesByDay;
+            });
+          },
+        },
+      ],
+    );
+  }, []);
+
   const updateArchiveTrip = React.useCallback(
     (patch: Partial<MyPageTrip>) => {
       setLocalTripPatch((current) => ({ ...current, ...patch }));
@@ -771,29 +930,22 @@ export default function DayArchiveDetailScreen() {
     [tripFromSaved],
   );
 
-  const handleChangeCoverImage = React.useCallback(async () => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  const closeCoverPhotoPicker = React.useCallback(() => {
+    setCoverPhotoPickerVisible(false);
+  }, []);
 
-    if (!permission.granted) {
-      Alert.alert(
-        '\uC0AC\uC9C4 \uAD8C\uD55C\uC774 \uD544\uC694\uD574\uC694',
-        '\uC0AC\uC9C4\uCCA9\uC5D0\uC11C \uB300\uD45C \uC0AC\uC9C4\uC744 \uC120\uD0DD\uD558\uB824\uBA74 \uAD8C\uD55C\uC774 \uD544\uC694\uD574\uC694.',
-      );
-      return;
-    }
+  const openCoverPhotoPicker = React.useCallback(() => {
+    setCoverPhotoPickerKey((current) => current + 1);
+    setCoverPhotoPickerVisible(true);
+  }, []);
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      allowsEditing: false,
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 1,
-    });
-
-    if (result.canceled || !result.assets[0]?.uri) {
-      return;
-    }
-
-    updateArchiveTrip({ coverImage: { uri: result.assets[0].uri } });
-  }, [updateArchiveTrip]);
+  const handleSelectCoverPhoto = React.useCallback(
+    (source: ImageSourcePropType) => {
+      updateArchiveTrip({ coverImage: source });
+      closeCoverPhotoPicker();
+    },
+    [closeCoverPhotoPicker, updateArchiveTrip],
+  );
 
   const openTitleEditor = React.useCallback(() => {
     setTitleDraft(resolveArchiveHeroTitle(activeTrip));
@@ -840,6 +992,28 @@ export default function DayArchiveDetailScreen() {
     [activeTrip?.title, activeTrip?.titleEn, updateArchiveTrip],
   );
 
+  const handleCreateArchivePlace = React.useCallback(
+    (value: PlaceCreateInput) => {
+      const targetDayId = value.dayId ?? selectedDay.id;
+      const nextPlace = createArchivePlaceEntry(value);
+      const nextDay = createDaySelectorItemFromPlaceDay(value);
+
+      if (nextDay && !dayOptions.some((day) => day.id === nextDay.id)) {
+        setCustomArchiveDays((current) =>
+          current.some((day) => day.id === nextDay.id) ? current : [...current, nextDay],
+        );
+      }
+
+      // TODO: Persist newly created archive places to Supabase when archive editing sync is connected.
+      setAddedPlacesByDay((current) => ({
+        ...current,
+        [targetDayId]: [...(current[targetDayId] ?? []), nextPlace],
+      }));
+      setPlaceCreateModalVisible(false);
+    },
+    [dayOptions, selectedDay.id],
+  );
+
   const handleDeleteTrip = React.useCallback(() => {
     Alert.alert(LABEL_DELETE_TRIP_TITLE, LABEL_DELETE_TRIP_MESSAGE, [
       { style: 'cancel', text: LABEL_CANCEL },
@@ -864,7 +1038,7 @@ export default function DayArchiveDetailScreen() {
     setHeaderMenuVisible(false);
 
     if (actionId === 'cover') {
-      void handleChangeCoverImage();
+      openCoverPhotoPicker();
       return;
     }
 
@@ -880,6 +1054,11 @@ export default function DayArchiveDetailScreen() {
 
     if (actionId === 'info') {
       setTripInfoEditorVisible(true);
+      return;
+    }
+
+    if (actionId === 'place') {
+      setPlaceCreateModalVisible(true);
       return;
     }
 
@@ -913,6 +1092,7 @@ export default function DayArchiveDetailScreen() {
             onPress={() => setSheetVisible(true)}
             style={styles.archiveHeaderDateButton}
           >
+            <View style={styles.archiveHeaderDateIconSpacer} />
             <Text numberOfLines={1} style={styles.archiveHeaderDateText}>
               {formatArchiveStickyHeaderDate(selectedDay)}
             </Text>
@@ -1001,7 +1181,7 @@ export default function DayArchiveDetailScreen() {
         />
 
         <View style={styles.recordSection}>
-          <MapPlaceholderCard align="top" />
+          <MapPlaceholderCard align="top" style={styles.archiveMapCard} />
 
           <View style={styles.entries}>
             {entries.map((entry) => (
@@ -1010,6 +1190,7 @@ export default function DayArchiveDetailScreen() {
                 entry={entry}
                 showRating={false}
                 variant="archive"
+                onLongPress={() => handleDeleteArchiveEntry(entry)}
                 onPress={() => handleOpenPlaceDetail(entry)}
                 onPhotoGridOpen={() => handleOpenPlacePhotoGrid(entry)}
               />
@@ -1038,11 +1219,86 @@ export default function DayArchiveDetailScreen() {
         onCancel={() => setTripInfoEditorVisible(false)}
         onStart={handleSaveTripInfo}
       />
+      <PlaceCreateModal
+        visible={isPlaceCreateModalVisible}
+        mode="create"
+        initialValue={placeCreateInitialValue}
+        dayOptions={placeCreateDayOptions}
+        selectedDayId={selectedDay.id}
+        tripId={detail.id}
+        dayId={selectedDay.id}
+        tripDestinationName={detail.city}
+        tripDestinationCountry={detail.country}
+        onClose={() => setPlaceCreateModalVisible(false)}
+        onSubmit={handleCreateArchivePlace}
+      />
       <ArchiveHeaderMenu
         visible={isHeaderMenuVisible}
         onClose={() => setHeaderMenuVisible(false)}
         onSelectAction={handleSelectHeaderAction}
       />
+      <Modal
+        key={`cover-photo-picker-${coverPhotoPickerKey}`}
+        animationType="fade"
+        transparent
+        visible={isCoverPhotoPickerVisible}
+        onRequestClose={closeCoverPhotoPicker}
+      >
+        <Pressable style={styles.coverPickerOverlay} onPress={closeCoverPhotoPicker}>
+          <Pressable style={styles.coverPickerCard}>
+            <View style={styles.coverPickerHeader}>
+              <Text style={styles.coverPickerTitle}>대표사진 선택</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="대표사진 선택 닫기"
+                hitSlop={8}
+                onPress={closeCoverPhotoPicker}
+                style={styles.coverPickerCloseButton}
+              >
+                <Feather name="x" size={20} color={Colors.foundation.black} />
+              </Pressable>
+            </View>
+
+            {coverPhotoOptions.length > 0 ? (
+              <ScrollView
+                contentContainerStyle={styles.coverPickerGrid}
+                showsVerticalScrollIndicator={false}
+              >
+                {coverPhotoOptions.map((photo) => {
+                  const selected = resolveImageUri(photo.source) === currentCoverUri;
+
+                  return (
+                    <Pressable
+                      key={photo.id}
+                      accessibilityRole="button"
+                      onPress={() => handleSelectCoverPhoto(photo.source)}
+                      style={styles.coverPickerPhoto}
+                    >
+                      <Image
+                        source={photo.source}
+                        style={styles.coverPickerImage}
+                        contentFit="cover"
+                      />
+                      {selected ? (
+                        <View style={styles.coverPickerSelectedBadge}>
+                          <Feather name="check" size={14} color={Colors.foundation.white} />
+                        </View>
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            ) : (
+              <View style={styles.coverPickerEmpty}>
+                <Text style={styles.coverPickerEmptyTitle}>선택할 사진이 없어요.</Text>
+                <Text style={styles.coverPickerEmptyDescription}>
+                  이 여행에 사진을 추가한 뒤 대표사진을 변경할 수 있어요.
+                </Text>
+              </View>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
       <Modal
         animationType="fade"
         transparent
@@ -1112,10 +1368,9 @@ const styles = StyleSheet.create({
   archiveHeaderDateButton: {
     position: 'absolute',
     top: 9,
-    left: '50%',
-    width: 132,
+    left: 64,
+    right: 64,
     height: 22,
-    marginLeft: -66,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1125,6 +1380,11 @@ const styles = StyleSheet.create({
     ...Typography.body1Regular,
     color: Colors.foundation.black,
     flexShrink: 1,
+    textAlign: 'center',
+  },
+  archiveHeaderDateIconSpacer: {
+    width: 10,
+    height: 10,
   },
   archiveHeaderDateIcon: {
     width: 10,
@@ -1264,6 +1524,10 @@ const styles = StyleSheet.create({
     marginTop: MAP_TOP_GAP,
     gap: 28,
   },
+  archiveMapCard: {
+    maxWidth: '100%',
+    alignSelf: 'stretch',
+  },
   entries: {
     gap: 40,
   },
@@ -1293,7 +1557,86 @@ const styles = StyleSheet.create({
     color: Colors.foundation.black,
   },
   headerQuickMenuTextDestructive: {
-    color: '#D13434',
+    color: '#EB524D',
+  },
+  coverPickerOverlay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xl,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+  },
+  coverPickerCard: {
+    width: '100%',
+    maxWidth: 340,
+    maxHeight: '72%',
+    padding: Spacing.xl,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.foundation.white,
+    ...Shadows.modal,
+  },
+  coverPickerHeader: {
+    minHeight: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  coverPickerTitle: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+  },
+  coverPickerCloseButton: {
+    position: 'absolute',
+    right: 0,
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  coverPickerGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    paddingTop: Spacing.lg,
+  },
+  coverPickerPhoto: {
+    width: '31%',
+    aspectRatio: 1,
+    overflow: 'hidden',
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.light.bgScreen,
+  },
+  coverPickerImage: {
+    width: '100%',
+    height: '100%',
+  },
+  coverPickerSelectedBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radius.full,
+    backgroundColor: Colors.foundation.black,
+  },
+  coverPickerEmpty: {
+    minHeight: 180,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: Spacing.lg,
+  },
+  coverPickerEmptyTitle: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+  },
+  coverPickerEmptyDescription: {
+    marginTop: Spacing.sm,
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+    textAlign: 'center',
   },
   titleEditorOverlay: {
     flex: 1,
