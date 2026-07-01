@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Text from '@/components/common/AppText';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 
-interface FullScreenImageViewerAction {
+export interface FullScreenImageViewerAction {
   key: string;
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
@@ -35,6 +35,7 @@ interface FullScreenImageViewerProps {
   onPressAction?: (index: number) => void;
   actions?: FullScreenImageViewerAction[];
   leadingAction?: FullScreenImageViewerAction;
+  presentation?: 'modal' | 'inline';
 }
 
 function clampIndex(index: number, imageCount: number): number {
@@ -50,6 +51,7 @@ export default function FullScreenImageViewer({
   onPressAction,
   actions = [],
   leadingAction,
+  presentation = 'modal',
 }: FullScreenImageViewerProps) {
   const listRef = useRef<FlatList<ImageSourcePropType>>(null);
   const insets = useSafeAreaInsets();
@@ -75,7 +77,7 @@ export default function FullScreenImageViewer({
     return () => cancelAnimationFrame(animationFrameId);
   }, [images.length, selectedIndex, visible, width]);
 
-  if (images.length === 0) {
+  if (!visible || images.length === 0) {
     return null;
   }
 
@@ -85,9 +87,8 @@ export default function FullScreenImageViewer({
     );
   };
 
-  return (
-    <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
-      <View style={styles.viewer}>
+  const viewerContent = (
+    <View style={styles.viewer}>
         <FlatList
           ref={listRef}
           data={images}
@@ -120,7 +121,7 @@ export default function FullScreenImageViewer({
               style={[styles.leadingButton, { top: insets.top + 12 }]}
             >
               <Ionicons
-                color={leadingAction.destructive ? '#D13434' : '#FFFFFF'}
+                color={leadingAction.destructive ? '#EB524D' : '#FFFFFF'}
                 name={leadingAction.icon}
                 size={24}
               />
@@ -170,7 +171,7 @@ export default function FullScreenImageViewer({
                     style={styles.actionRow}
                   >
                     <Ionicons
-                      color={action.destructive ? '#D13434' : Colors.foundation.black}
+                      color={action.destructive ? '#EB524D' : Colors.foundation.black}
                       name={action.icon}
                       size={18}
                     />
@@ -199,8 +200,17 @@ export default function FullScreenImageViewer({
               <Text style={styles.bottomActionText}>{actionLabel}</Text>
             </Pressable>
           ) : null}
-        </View>
-      </View>
+    </View>
+    </View>
+  );
+
+  if (presentation === 'inline') {
+    return <View style={styles.inlineViewer}>{viewerContent}</View>;
+  }
+
+  return (
+    <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
+      {viewerContent}
     </Modal>
   );
 }
@@ -209,6 +219,10 @@ const styles = StyleSheet.create({
   viewer: {
     flex: 1,
     backgroundColor: '#050505',
+  },
+  inlineViewer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
   },
   page: {
     flex: 1,
@@ -284,7 +298,7 @@ const styles = StyleSheet.create({
     color: Colors.foundation.black,
   },
   actionTextDestructive: {
-    color: '#D13434',
+    color: '#EB524D',
   },
   bottomAction: {
     position: 'absolute',

@@ -3,6 +3,11 @@ import type { ImageSourcePropType } from 'react-native';
 export interface PlaceDetailPhoto {
   id: string;
   source: ImageSourcePropType;
+  takenAt?: string;
+  createdAt?: string;
+  timestamp?: string | number;
+  photoTakenAt?: string;
+  exifDateTimeOriginal?: string;
 }
 
 export interface PlaceDetailRecord {

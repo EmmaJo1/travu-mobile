@@ -5,8 +5,11 @@ import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
   Alert,
+  Animated,
+  Easing,
   Image,
   Modal,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -20,7 +23,13 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import AppTextInput from '@/components/common/AppTextInput';
 import Text from '@/components/common/AppText';
-import FullScreenImageViewer from '@/components/common/FullScreenImageViewer';
+import FullScreenImageViewer, {
+  type FullScreenImageViewerAction,
+} from '@/components/common/FullScreenImageViewer';
+import PlaceCreateModal, {
+  type PlaceCreateInput,
+  type PlaceEntryDayOption,
+} from '@/components/record/PlaceCreateModal';
 import TimeWheelPickerModal from '@/components/record/TimeWheelPickerModal';
 import {
   getMockPlaceDetail,
@@ -28,11 +37,16 @@ import {
   type PlaceDetailRecord,
   type PlaceDetailData,
 } from '@/constants/mockPlaceDetails';
+import {
+  isPlaceDetailDeleted,
+  markPlaceDetailDeleted,
+} from '@/services/placeDetailDeletionRegistry';
 import { MOCK_ARCHIVE_DETAIL } from '@/constants/mockArchiveDetail';
 import { RECORD_DAY_ENTRIES } from '@/constants/mockRecordDayDetail';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 import {
   convertDateToPlaceEntryTime,
+  extractPhotoTakenAt,
   formatPlaceEntryTime,
   parsePlaceEntryTime,
 } from '@/utils/placeEntryTime';
@@ -55,8 +69,12 @@ type PlaceDetailRouteParams = {
   photoUris?: string;
 };
 
-const DESTRUCTIVE = '#D13434';
+const DESTRUCTIVE = '#EB524D';
 const DATE_LABEL_PATTERN = /^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})(?:\s*(.*))?$/;
+const RECORD_SWIPE_ACTION_WIDTH = 104;
+const RECORD_SWIPE_OPEN_THRESHOLD = 8;
+const RECORD_SWIPE_DIRECTION_RATIO = 1.6;
+const RECORD_SHEET_DIM_DURATION = 100;
 
 function makePhotoId() {
   return `photo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -83,8 +101,95 @@ function formatSpacedDateLabel(label?: string) {
   return `${matched[1]}. ${Number(matched[2])}. ${Number(matched[3])}${suffix ? ` ${suffix}` : ''}`;
 }
 
+function getPlaceDetailDayOption(label?: string): PlaceEntryDayOption | undefined {
+  const matched = label?.trim().match(DATE_LABEL_PATTERN);
+
+  if (!matched) {
+    return undefined;
+  }
+
+  const dateLabel = `${matched[1]}.${Number(matched[2])}.${Number(matched[3])}`;
+  const weekdayLabel = matched[4]?.trim() ?? '';
+
+  return {
+    id: `place-detail-day-${dateLabel}`,
+    dayNumber: 1,
+    dateLabel,
+    weekdayLabel,
+  };
+}
+
 function getRecordSortValue(record: PlaceDetailRecord) {
   return new Date(record.createdAt).getTime();
+}
+
+function getRecordTimeSortValue(time?: string) {
+  const matched = time?.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
+
+  if (!matched) {
+    return null;
+  }
+
+  const hour = Number(matched[1]);
+  const minute = Number(matched[2] ?? 0);
+  const meridiem = matched[3].toUpperCase();
+
+  if (hour < 1 || hour > 12 || minute < 0 || minute > 59) {
+    return null;
+  }
+
+  const hour24 = meridiem === 'AM'
+    ? hour % 12
+    : (hour % 12) + 12;
+
+  return hour24 * 60 + minute;
+}
+
+function coercePhotoDate(value: unknown) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  if (typeof value === 'number') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+
+  const normalizedValue = value.trim().replace(
+    /^(\d{4}):(\d{2}):(\d{2})/,
+    '$1-$2-$3',
+  );
+  const date = new Date(normalizedValue);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getPhotoTakenDate(photo?: PlaceDetailPhoto) {
+  if (!photo) {
+    return null;
+  }
+
+  return coercePhotoDate(photo.takenAt)
+    ?? coercePhotoDate(photo.photoTakenAt)
+    ?? coercePhotoDate(photo.exifDateTimeOriginal)
+    ?? coercePhotoDate(photo.timestamp)
+    ?? coercePhotoDate(photo.createdAt);
+}
+
+function getEarliestRecordPhotoTakenDate(photoIds: string[], photos: PlaceDetailPhoto[]) {
+  return photoIds.reduce<Date | null>((earliestDate, photoId) => {
+    const photoDate = getPhotoTakenDate(photos.find((photo) => photo.id === photoId));
+
+    if (!photoDate || (earliestDate && earliestDate <= photoDate)) {
+      return earliestDate;
+    }
+
+    return photoDate;
+  }, null);
 }
 
 function getParamValue(value?: string | string[]): string | undefined {
@@ -136,7 +241,7 @@ function getSerializablePhotoUris(photos: PlaceDetailPhoto[]): string[] {
 }
 
 function getRecordDayEntry(placeId?: string) {
-  if (!placeId) {
+  if (!placeId || isPlaceDetailDeleted(placeId)) {
     return undefined;
   }
 
@@ -146,7 +251,7 @@ function getRecordDayEntry(placeId?: string) {
 }
 
 function getArchiveDayPlace(placeId?: string) {
-  if (!placeId) {
+  if (!placeId || isPlaceDetailDeleted(placeId)) {
     return undefined;
   }
 
@@ -161,7 +266,11 @@ function createRecordDayFallbackDetail(params: PlaceDetailRouteParams): PlaceDet
     Boolean(params.placeId) &&
     Boolean(getParamValue(params.placeName));
 
-  if ((!isRecordOrArchiveEntry && !canUseTimelineFallback) || !params.placeId) {
+  if (
+    (!isRecordOrArchiveEntry && !canUseTimelineFallback) ||
+    !params.placeId ||
+    isPlaceDetailDeleted(params.placeId)
+  ) {
     return undefined;
   }
 
@@ -248,13 +357,22 @@ export default function PlaceDetailScreen() {
 
   const initialDetail = React.useMemo(
     () => (
-      getMockPlaceDetail(params.tripId, params.dayId, params.placeId)
+      isPlaceDetailDeleted(params.placeId)
+        ? undefined
+        : getMockPlaceDetail(params.tripId, params.dayId, params.placeId)
       ?? createRecordDayFallbackDetail(params)
     ),
     [params],
   );
 
-  const [placeName] = React.useState(initialDetail?.placeName ?? '');
+  const [placeInfo, setPlaceInfo] = React.useState(() => ({
+    placeName: initialDetail?.placeName ?? '',
+    cityName: initialDetail?.cityName ?? '',
+    countryName: initialDetail?.countryName ?? '',
+    dateLabel: initialDetail?.dateLabel ?? '',
+    timeLabel: initialDetail?.timeLabel ?? '',
+    categoryLabel: initialDetail?.categoryLabel ?? '',
+  }));
   const [photos, setPhotos] = React.useState<PlaceDetailPhoto[]>(initialDetail?.photos ?? []);
   const [records, setRecords] = React.useState<PlaceDetailRecord[]>(
     [...(initialDetail?.records ?? [])].sort((a, b) => getRecordSortValue(a) - getRecordSortValue(b)),
@@ -264,21 +382,42 @@ export default function PlaceDetailScreen() {
   const [viewerIndex, setViewerIndex] = React.useState(0);
   const [viewerPhotoIds, setViewerPhotoIds] = React.useState<string[] | null>(null);
   const [isViewerViewOnly, setViewerViewOnly] = React.useState(false);
-  const [shouldReopenGridAfterViewer, setShouldReopenGridAfterViewer] = React.useState(false);
   const [isViewerOpen, setViewerOpen] = React.useState(false);
   const [isGridOpen, setGridOpen] = React.useState(false);
+  const [photoGridSessionKey, setPhotoGridSessionKey] = React.useState(0);
   const [isGridViewOnly, setGridViewOnly] = React.useState(false);
   const [isGridSelectionInitiallyEnabled, setGridSelectionInitiallyEnabled] = React.useState(false);
-  const [gridSelectionPurpose, setGridSelectionPurpose] = React.useState<'recordCreate' | 'linkRecord'>('recordCreate');
+  const [gridSelectionPurpose, setGridSelectionPurpose] =
+    React.useState<'recordCreate' | 'linkRecord' | 'coverSelect'>('recordCreate');
+  const [isRecordPhotoPickerTransitioning, setRecordPhotoPickerTransitioning] = React.useState(false);
   const [isRecordModalOpen, setRecordModalOpen] = React.useState(false);
+  const [isPlaceInfoModalOpen, setPlaceInfoModalOpen] = React.useState(false);
   const [recordModalMode, setRecordModalMode] = React.useState<'sheet' | 'screen'>('sheet');
+  const [recordComposerSource, setRecordComposerSource] =
+    React.useState<'placeDetail' | 'photoViewer'>('placeDetail');
   const [selectedRecordPhotoIds, setSelectedRecordPhotoIds] = React.useState<string[]>([]);
   const [recordDraft, setRecordDraft] = React.useState('');
   const [recordTimeLabel, setRecordTimeLabel] = React.useState(initialDetail?.timeLabel ?? '');
+  const [hasRecordTimeBeenEdited, setRecordTimeEdited] = React.useState(false);
   const [isDeleteConfirmOpen, setDeleteConfirmOpen] = React.useState(false);
   const [isPhotoDeleteConfirmOpen, setPhotoDeleteConfirmOpen] = React.useState(false);
+  const [pendingDeleteRecordId, setPendingDeleteRecordId] = React.useState<string | null>(null);
+  const [openSwipeRecordId, setOpenSwipeRecordId] = React.useState<string | null>(null);
+  const [isRecordSwipeActive, setRecordSwipeActive] = React.useState(false);
   const [pendingDeletePhotoIds, setPendingDeletePhotoIds] = React.useState<string[]>([]);
   const [gridSelectionResetSignal, setGridSelectionResetSignal] = React.useState(0);
+  const recordPhotoPickerOpenTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recordSheetRestoreTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => () => {
+    if (recordPhotoPickerOpenTimerRef.current) {
+      clearTimeout(recordPhotoPickerOpenTimerRef.current);
+    }
+
+    if (recordSheetRestoreTimerRef.current) {
+      clearTimeout(recordSheetRestoreTimerRef.current);
+    }
+  }, []);
 
   React.useEffect(() => {
     if (params.openPhotoGrid === '1' && initialDetail) {
@@ -310,6 +449,58 @@ export default function PlaceDetailScreen() {
       .filter((photo): photo is PlaceDetailPhoto => Boolean(photo)),
     [photos, selectedRecordPhotoIds],
   );
+  const sortedRecords = React.useMemo(
+    () => records
+      .map((record, index) => ({ index, record }))
+      .sort((a, b) => {
+        const aTime = getRecordTimeSortValue(a.record.time);
+        const bTime = getRecordTimeSortValue(b.record.time);
+
+        if (aTime != null && bTime != null && aTime !== bTime) {
+          return aTime - bTime;
+        }
+
+        if (aTime != null && bTime == null) {
+          return -1;
+        }
+
+        if (aTime == null && bTime != null) {
+          return 1;
+        }
+
+        return a.index - b.index;
+      })
+      .map(({ record }) => record),
+    [records],
+  );
+  const placeInfoDayOption = React.useMemo(
+    () => getPlaceDetailDayOption(placeInfo.dateLabel),
+    [placeInfo.dateLabel],
+  );
+
+  const handleCloseSwipeRecord = React.useCallback(() => {
+    setOpenSwipeRecordId(null);
+  }, []);
+
+  const requestDeleteRecord = React.useCallback((recordId: string) => {
+    setOpenSwipeRecordId(null);
+    setPendingDeleteRecordId(recordId);
+  }, []);
+
+  const cancelDeleteRecord = React.useCallback(() => {
+    setPendingDeleteRecordId(null);
+  }, []);
+
+  const confirmDeleteRecord = React.useCallback(() => {
+    if (!pendingDeleteRecordId) {
+      return;
+    }
+
+    setRecords((currentRecords) =>
+      currentRecords.filter((record) => record.id !== pendingDeleteRecordId),
+    );
+    setPendingDeleteRecordId(null);
+  }, [pendingDeleteRecordId]);
 
   if (!initialDetail) {
     return (
@@ -321,8 +512,8 @@ export default function PlaceDetailScreen() {
           </Pressable>
         </View>
         <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>장소를 찾을 수 없어요</Text>
-          <Text style={styles.emptyDescription}>이전 화면으로 돌아가 다시 시도해 주세요.</Text>
+          <Text style={styles.emptyTitle}>{'\uC7A5\uC18C\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC5B4\uC694'}</Text>
+          <Text style={styles.emptyDescription}>{'\uC774\uC804 \uD654\uBA74\uC73C\uB85C \uB3CC\uC544\uAC00 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.'}</Text>
         </View>
       </SafeAreaView>
     );
@@ -348,14 +539,33 @@ export default function PlaceDetailScreen() {
   const openPhotoGrid = (selectionMode = false, viewOnly = false) => {
     setGridViewOnly(viewOnly);
     setGridSelectionInitiallyEnabled(selectionMode);
+    setPhotoGridSessionKey((currentKey) => currentKey + 1);
     setGridOpen(true);
   };
 
+  const restoreRecordSheetAfterPhotoGrid = () => {
+    if (recordSheetRestoreTimerRef.current) {
+      clearTimeout(recordSheetRestoreTimerRef.current);
+    }
+
+    recordSheetRestoreTimerRef.current = setTimeout(() => {
+      setRecordModalOpen(true);
+      setRecordPhotoPickerTransitioning(false);
+      recordSheetRestoreTimerRef.current = null;
+    }, 120);
+  };
+
   const handleClosePhotoGrid = () => {
+    if (gridSelectionPurpose === 'coverSelect') {
+      setGridOpen(false);
+      setGridSelectionPurpose('recordCreate');
+      return;
+    }
+
     if (gridSelectionPurpose === 'linkRecord') {
       setGridOpen(false);
       setGridSelectionPurpose('recordCreate');
-      requestAnimationFrame(() => setRecordModalOpen(true));
+      restoreRecordSheetAfterPhotoGrid();
       return;
     }
 
@@ -398,11 +608,22 @@ export default function PlaceDetailScreen() {
     setGridOpen(false);
   };
 
-  const openRecordComposer = (photoIds: string[], mode: 'sheet' | 'screen') => {
+  const openRecordComposer = (
+    photoIds: string[],
+    mode: 'sheet' | 'screen',
+    source: 'placeDetail' | 'photoViewer' = 'placeDetail',
+  ) => {
     setSelectedRecordPhotoIds(photoIds);
     setRecordModalMode(mode);
+    setRecordComposerSource(source);
     setRecordDraft('');
-    setRecordTimeLabel(createCurrentTimeLabel());
+    const earliestPhotoDate = getEarliestRecordPhotoTakenDate(photoIds, photos);
+    setRecordTimeLabel(
+      earliestPhotoDate
+        ? formatPlaceEntryTime(convertDateToPlaceEntryTime(earliestPhotoDate))
+        : createCurrentTimeLabel(),
+    );
+    setRecordTimeEdited(false);
     setRecordModalOpen(true);
   };
 
@@ -415,6 +636,7 @@ export default function PlaceDetailScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsMultipleSelection: true,
+      exif: true,
       quality: 1,
     });
 
@@ -422,10 +644,15 @@ export default function PlaceDetailScreen() {
       return;
     }
 
-    const addedPhotos = result.assets.map((asset) => ({
-      id: makePhotoId(),
-      source: { uri: asset.uri },
-    }));
+    const addedPhotos = result.assets.map((asset) => {
+      const takenAt = extractPhotoTakenAt(asset);
+
+      return {
+        id: makePhotoId(),
+        source: { uri: asset.uri },
+        takenAt: takenAt?.toISOString(),
+      };
+    });
 
     setPhotos((currentPhotos) => [...currentPhotos, ...addedPhotos]);
   };
@@ -452,9 +679,19 @@ export default function PlaceDetailScreen() {
     setRecordDraft('');
     setSelectedRecordPhotoIds([]);
     setRecordTimeLabel(createCurrentTimeLabel());
+    setRecordTimeEdited(false);
     setRecordModalOpen(false);
-    setViewerOpen(false);
-    setGridOpen(false);
+    setRecordComposerSource('placeDetail');
+
+    if (recordComposerSource !== 'photoViewer') {
+      setViewerOpen(false);
+      setGridOpen(false);
+    }
+  };
+
+  const handleCloseRecordModal = () => {
+    setRecordModalOpen(false);
+    setRecordComposerSource('placeDetail');
   };
 
   const handlePressAddRecord = () => {
@@ -463,34 +700,71 @@ export default function PlaceDetailScreen() {
   };
 
   const handleOpenRecordPhotoPicker = () => {
+    if (isRecordPhotoPickerTransitioning) {
+      return;
+    }
+
+    if (recordPhotoPickerOpenTimerRef.current) {
+      clearTimeout(recordPhotoPickerOpenTimerRef.current);
+    }
+
+    if (recordSheetRestoreTimerRef.current) {
+      clearTimeout(recordSheetRestoreTimerRef.current);
+      recordSheetRestoreTimerRef.current = null;
+    }
+
+    setRecordPhotoPickerTransitioning(true);
+    setGridOpen(false);
     setGridSelectionPurpose('linkRecord');
     setGridViewOnly(false);
     setGridSelectionInitiallyEnabled(true);
     setRecordModalOpen(false);
-    requestAnimationFrame(() => setGridOpen(true));
+    setPhotoGridSessionKey((currentKey) => currentKey + 1);
+
+    recordPhotoPickerOpenTimerRef.current = setTimeout(() => {
+      setGridOpen(true);
+      setRecordPhotoPickerTransitioning(false);
+      recordPhotoPickerOpenTimerRef.current = null;
+    }, 200);
   };
 
   const handleUnlinkRecordPhoto = (photoId: string) => {
     setSelectedRecordPhotoIds((currentIds) => currentIds.filter((id) => id !== photoId));
   };
 
+  const handleChangeRecordTime = (nextTimeLabel: string) => {
+    setRecordTimeLabel(nextTimeLabel);
+    setRecordTimeEdited(true);
+  };
+
   const handlePressEditPlace = () => {
     setMoreOpen(false);
-    // TODO: Reuse the record-day-detail place search modal here when it is extracted as a shared component.
-    Alert.alert('장소 정보 수정', '장소 검색 모달로 연결할 예정입니다.');
+    setPlaceInfoModalOpen(true);
+  };
+
+  const handleSubmitPlaceInfo = (input: PlaceCreateInput) => {
+    const nextDateLabel = input.dateLabel
+      ? `${input.dateLabel}${input.weekdayLabel ? ` ${input.weekdayLabel}` : ''}`
+      : placeInfo.dateLabel;
+
+    setPlaceInfo((current) => ({
+      ...current,
+      placeName: input.placeName ?? input.place,
+      cityName: input.cityName ?? input.city ?? current.cityName,
+      countryName: input.countryName ?? current.countryName,
+      dateLabel: nextDateLabel,
+      timeLabel: input.time ?? current.timeLabel,
+      categoryLabel: input.category ?? current.categoryLabel,
+    }));
+    setPlaceInfoModalOpen(false);
   };
 
   const handlePressChangeCover = () => {
     setMoreOpen(false);
-    if (photos.length <= 1) {
-      return;
-    }
-
-    setPhotos((currentPhotos) => {
-      const [firstPhoto, ...restPhotos] = currentPhotos;
-      return [...restPhotos, firstPhoto];
-    });
-    setHeroIndex(0);
+    setGridSelectionPurpose('coverSelect');
+    setGridViewOnly(true);
+    setGridSelectionInitiallyEnabled(false);
+    setGridOpen(true);
   };
 
   const handleSetCoverPhoto = (photoIndex: number) => {
@@ -513,10 +787,10 @@ export default function PlaceDetailScreen() {
       return;
     }
 
-    Alert.alert('사진을 삭제할까요?', '장소의 사진 목록에서 제거돼요.', [
-      { text: '취소', style: 'cancel' },
+    Alert.alert('\uC0AC\uC9C4\uC744 \uC0AD\uC81C\uD560\uAE4C\uC694?', '\uC7A5\uC18C\uC758 \uC0AC\uC9C4 \uBAA9\uB85D\uC5D0\uC11C \uC81C\uAC70\uD560\uAC8C\uC694.', [
+      { text: '\uCDE8\uC18C', style: 'cancel' },
       {
-        text: '삭제',
+        text: '\uC0AD\uC81C',
         style: 'destructive',
         onPress: () => {
           const remainingViewerPhotoIds = (viewerPhotoIds ?? photos.map((photo) => photo.id))
@@ -607,17 +881,17 @@ export default function PlaceDetailScreen() {
 
         {isMoreOpen ? (
           <View style={styles.moreMenu}>
-            <MenuRow icon="image" label="사진 추가" onPress={handleAddPhoto} />
-            <MenuRow icon="edit-3" label="기록 추가" onPress={handlePressAddRecord} />
-            <MenuRow icon="map-pin" label="장소 정보 수정" onPress={handlePressEditPlace} />
-            <MenuRow icon="star" label="대표사진 변경" onPress={handlePressChangeCover} />
+            <MenuRow icon="image" label={'\uC0AC\uC9C4 \uCD94\uAC00'} onPress={handleAddPhoto} />
+            <MenuRow icon="edit-3" label={'\uAE30\uB85D \uCD94\uAC00'} onPress={handlePressAddRecord} />
+            <MenuRow icon="map-pin" label={'\uC7A5\uC18C \uC815\uBCF4 \uC218\uC815'} onPress={handlePressEditPlace} />
+            <MenuRow icon="star" label={'\uB300\uD45C\uC0AC\uC9C4 \uBCC0\uACBD'} onPress={handlePressChangeCover} />
             <View style={styles.menuDivider} />
-            <MenuRow icon="calendar" label="해당 날짜 전체보기" onPress={navigateToDay} />
+            <MenuRow icon="calendar" label={'\uD574\uB2F9 \uB0A0\uC9DC \uC804\uCCB4\uBCF4\uAE30'} onPress={navigateToDay} />
             <View style={styles.menuDivider} />
             <MenuRow
               destructive
               icon="trash-2"
-              label="삭제"
+              label={'\uC7A5\uC18C \uC0AD\uC81C'}
               onPress={() => {
                 setMoreOpen(false);
                 setDeleteConfirmOpen(true);
@@ -630,7 +904,7 @@ export default function PlaceDetailScreen() {
       {isMoreOpen ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="더보기 메뉴 닫기"
+          accessibilityLabel="\uB354\uBCF4\uAE30 \uBA54\uB274 \uB2EB\uAE30"
           style={styles.menuDismissLayer}
           onPress={() => setMoreOpen(false)}
         />
@@ -638,6 +912,7 @@ export default function PlaceDetailScreen() {
 
       <ScrollView
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 40 }]}
+        scrollEnabled={!isRecordSwipeActive}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.topGroup}>
@@ -672,24 +947,24 @@ export default function PlaceDetailScreen() {
           </View>
 
           <View style={styles.placeInfo}>
-            <Text style={styles.placeTitle}>{placeName}</Text>
+            <Text style={styles.placeTitle}>{placeInfo.placeName}</Text>
             <View style={styles.metaRow}>
-              <Text style={styles.placeMeta}>{initialDetail.cityName}</Text>
+              <Text style={styles.placeMeta}>{placeInfo.cityName}</Text>
               <View style={styles.metaDot} />
-              <Text style={styles.placeMeta}>{initialDetail.countryName}</Text>
+              <Text style={styles.placeMeta}>{placeInfo.countryName}</Text>
             </View>
-            <Text style={styles.dateText}>{formatSpacedDateLabel(initialDetail.dateLabel)}</Text>
+            <Text style={styles.dateText}>{formatSpacedDateLabel(placeInfo.dateLabel)}</Text>
           </View>
         </View>
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View style={styles.sectionTitleRow}>
-              <Text style={styles.sectionTitle}>사진</Text>
-              <Text style={styles.sectionCount}>{photos.length}장</Text>
+              <Text style={styles.sectionTitle}>{'\uC0AC\uC9C4'}</Text>
+              <Text style={styles.sectionCount}>{photos.length}{'\uC7A5'}</Text>
             </View>
             <Pressable accessibilityRole="button" onPress={() => openPhotoGrid(false)} style={styles.viewAllButton}>
-              <Text style={styles.viewAllText}>전체보기</Text>
+              <Text style={styles.viewAllText}>{'\uC804\uCCB4\uBCF4\uAE30'}</Text>
               <Feather name="chevron-right" size={18} color={Colors.foundation.black} />
             </Pressable>
           </View>
@@ -701,8 +976,7 @@ export default function PlaceDetailScreen() {
                 onPress={handleAddPhoto}
                 style={[styles.photoThumb, styles.photoAddThumb]}
               >
-                <Feather name="plus" size={24} color={Colors.foundation.grey600} />
-                <Text style={styles.photoAddThumbText}>사진 추가</Text>
+                <Feather name="plus" size={28} color={Colors.foundation.black} />
               </Pressable>
               {photos.map((photo, index) => (
                 <Pressable key={photo.id} onPress={() => openViewer(index)} style={styles.photoThumb}>
@@ -716,62 +990,154 @@ export default function PlaceDetailScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View style={styles.sectionTitleRow}>
-              <Text style={styles.sectionTitle}>기록</Text>
-              <Text style={styles.sectionCount}>{records.length}개</Text>
+              <Text style={styles.sectionTitle}>{'\uAE30\uB85D'}</Text>
+              <Text style={styles.sectionCount}>{records.length}{'\uAC1C'}</Text>
             </View>
             <Pressable accessibilityRole="button" onPress={handlePressAddRecord} style={styles.addRecordButton}>
-              <Feather name="plus" size={16} color={Colors.foundation.black} />
-              <Text style={styles.addRecordButtonText}>기록 추가</Text>
+              <Feather name="plus" size={12} color={Colors.foundation.black} />
+              <Text style={styles.addRecordButtonText}>{'\uAE30\uB85D'}</Text>
             </Pressable>
           </View>
 
           <View style={styles.recordList}>
-            {records.map((record, index) => {
+            {sortedRecords.map((record, index) => {
               const recordPhoto = record.photoIds?.[0]
                 ? photos.find((photo) => photo.id === record.photoIds?.[0])
                 : undefined;
               const extraPhotoCount = Math.max((record.photoIds?.length ?? 0) - 1, 0);
 
               return (
-                <View key={record.id} style={styles.recordItem}>
-                  <View style={styles.recordTimeColumn}>
-                    <Text style={styles.recordTime}>{record.time ?? initialDetail.timeLabel ?? ''}</Text>
-                    <View style={[styles.recordLine, index === records.length - 1 && styles.recordLineLast]} />
-                  </View>
-
-                  <View style={styles.recordBody}>
-                    {record.text ? <Text style={styles.recordText}>{record.text}</Text> : null}
-                    {recordPhoto ? (
-                      <Pressable onPress={() => openViewer(0, record.photoIds)} style={styles.recordPhoto}>
-                        <Image source={recordPhoto.source} style={styles.recordPhotoImage} resizeMode="cover" />
-                        {extraPhotoCount > 0 ? (
-                          <View style={styles.recordPhotoCountBadge}>
-                            <Text style={styles.recordPhotoCountText}>+{extraPhotoCount}</Text>
-                          </View>
-                        ) : null}
-                      </Pressable>
-                    ) : null}
-                  </View>
-                </View>
+                <SwipeableRecordItem
+                  key={record.id}
+                  recordId={record.id}
+                  isLast={index === sortedRecords.length - 1}
+                  isSwipeOpen={openSwipeRecordId === record.id}
+                  onCloseSwipe={handleCloseSwipeRecord}
+                  onOpenSwipe={setOpenSwipeRecordId}
+                  onRequestDelete={requestDeleteRecord}
+                  onSwipeEnd={() => setRecordSwipeActive(false)}
+                  onSwipeStart={() => setRecordSwipeActive(true)}
+                  timeLabel={record.time ?? placeInfo.timeLabel ?? ''}
+                >
+                  {record.text ? <Text style={styles.recordText}>{record.text}</Text> : null}
+                  {recordPhoto ? (
+                    <Pressable onPress={() => openViewer(0, record.photoIds)} style={styles.recordPhoto}>
+                      <Image source={recordPhoto.source} style={styles.recordPhotoImage} resizeMode="cover" />
+                      {extraPhotoCount > 0 ? (
+                        <View style={styles.recordPhotoCountBadge}>
+                          <Text style={styles.recordPhotoCountText}>+{extraPhotoCount}</Text>
+                        </View>
+                      ) : null}
+                    </Pressable>
+                  ) : null}
+                </SwipeableRecordItem>
               );
             })}
           </View>
         </View>
       </ScrollView>
 
-      <FullScreenImageViewer
-        actionLabel="이 순간 기록하기"
-        actions={isViewerViewOnly ? [] : [
+      <PhotoGridModal
+        key={photoGridSessionKey}
+        clearSelectionSignal={gridSelectionResetSignal}
+        initialSelectionMode={isGridSelectionInitiallyEnabled}
+        initialSelectedPhotoIds={gridSelectionPurpose === 'linkRecord' ? selectedRecordPhotoIds : undefined}
+        onAddPhoto={handleAddPhoto}
+        onClose={handleClosePhotoGrid}
+        onRequestDeletePhotos={requestDeleteGridPhotos}
+        onPressPhoto={(index) => {
+          if (gridSelectionPurpose === 'coverSelect') {
+            handleSetCoverPhoto(index);
+            setGridOpen(false);
+            setGridSelectionPurpose('recordCreate');
+            return;
+          }
+
+          openViewer(index, undefined, isGridViewOnly);
+        }}
+        onStartRecord={(photoIds) => {
+          if (gridSelectionPurpose === 'linkRecord') {
+            setRecordPhotoPickerTransitioning(true);
+            setSelectedRecordPhotoIds(photoIds);
+            if (!hasRecordTimeBeenEdited) {
+              const earliestPhotoDate = getEarliestRecordPhotoTakenDate(photoIds, photos);
+
+              if (earliestPhotoDate) {
+                setRecordTimeLabel(formatPlaceEntryTime(convertDateToPlaceEntryTime(earliestPhotoDate)));
+              }
+            }
+            setGridOpen(false);
+            setGridSelectionPurpose('recordCreate');
+            restoreRecordSheetAfterPhotoGrid();
+            return;
+          }
+
+          setGridOpen(false);
+          requestAnimationFrame(() => openRecordComposer(photoIds, 'sheet'));
+        }}
+        coverPhotoId={photos[0]?.id}
+        mode={
+          gridSelectionPurpose === 'coverSelect'
+            ? 'cover-select'
+            : gridSelectionPurpose === 'linkRecord'
+              ? 'selectForRecord'
+              : 'default'
+        }
+        photos={photos}
+        transitionDuration={gridSelectionPurpose === 'linkRecord' ? 200 : 400}
+        viewerActionLabel={isGridViewOnly ? undefined : '\uAE30\uB85D \uCD94\uAC00\uD558\uAE30'}
+        viewerActions={isGridViewOnly ? [] : [
           {
             key: 'share',
             icon: 'share-outline',
-            label: '공유하기',
-            onPress: () => Alert.alert('공유하기', '사진 공유 기능은 추후 연결 예정입니다.'),
+            label: '\uACF5\uC720\uD558\uAE30',
+            onPress: () => Alert.alert('\uACF5\uC720\uD558\uAE30', '\uC0AC\uC9C4 \uACF5\uC720 \uAE30\uB2A5\uC740 \uCD94\uD6C4 \uC5F0\uACB0\uD560 \uC608\uC815\uC785\uB2C8\uB2E4.'),
           },
           {
             key: 'cover',
             icon: 'image-outline',
-            label: '대표사진으로 설정',
+            label: '\uB300\uD45C\uC0AC\uC9C4 \uBCC0\uACBD',
+            onPress: (index) => handleSetCoverPhoto(index),
+          },
+          {
+            key: 'info',
+            icon: 'information-circle-outline',
+            label: '\uC0AC\uC9C4 \uC815\uBCF4 \uBCF4\uAE30',
+            onPress: () => Alert.alert('\uC0AC\uC9C4 \uC815\uBCF4', '\uC0AC\uC9C4 \uCD2C\uC601 \uC815\uBCF4\uB294 \uCD94\uD6C4 \uC5F0\uACB0 \uC608\uC815\uC785\uB2C8\uB2E4.'),
+          },
+          {
+            key: 'delete',
+            icon: 'trash-outline',
+            label: '\uC0AD\uC81C',
+            destructive: true,
+            onPress: (index) => {
+              setViewerPhotoIds(null);
+              handleDeleteViewerPhoto(index);
+            },
+          },
+        ]}
+        onPressViewerAction={isGridViewOnly ? undefined : (index) => {
+          const targetPhoto = photos[index];
+          if (targetPhoto) {
+            openRecordComposer([targetPhoto.id], 'sheet', 'photoViewer');
+          }
+        }}
+        visible={isGridOpen}
+      />
+
+      <FullScreenImageViewer
+        actionLabel={'\uAE30\uB85D \uCD94\uAC00\uD558\uAE30'}
+        actions={isViewerViewOnly ? [] : [
+          {
+            key: 'share',
+            icon: 'share-outline',
+            label: '\uACF5\uC720\uD558\uAE30',
+            onPress: () => Alert.alert('\uACF5\uC720\uD558\uAE30', '\uC0AC\uC9C4 \uACF5\uC720 \uAE30\uB2A5\uC740 \uCD94\uD6C4 \uC5F0\uACB0\uD560 \uC608\uC815\uC785\uB2C8\uB2E4.'),
+          },
+          {
+            key: 'cover',
+            icon: 'image-outline',
+            label: '\uB300\uD45C\uC0AC\uC9C4 \uBCC0\uACBD',
             onPress: (index) => {
               const targetPhoto = viewerPhotos[index];
               const photoIndex = photos.findIndex((photo) => photo.id === targetPhoto?.id);
@@ -781,13 +1147,13 @@ export default function PlaceDetailScreen() {
           {
             key: 'info',
             icon: 'information-circle-outline',
-            label: '사진 정보 보기',
-            onPress: () => Alert.alert('사진 정보', '사진 촬영 정보는 추후 연결 예정입니다.'),
+            label: '\uC0AC\uC9C4 \uC815\uBCF4 \uBCF4\uAE30',
+            onPress: () => Alert.alert('\uC0AC\uC9C4 \uC815\uBCF4', '\uC0AC\uC9C4 \uCD2C\uC601 \uC815\uBCF4\uB294 \uCD94\uD6C4 \uC5F0\uACB0 \uC608\uC815\uC785\uB2C8\uB2E4.'),
           },
           {
             key: 'delete',
             icon: 'trash-outline',
-            label: '삭제',
+            label: '\uC0AD\uC81C',
             destructive: true,
             onPress: (index) => {
               handleDeleteViewerPhoto(index);
@@ -799,7 +1165,7 @@ export default function PlaceDetailScreen() {
         leadingAction={isViewerViewOnly ? {
           key: 'delete',
           icon: 'trash-outline',
-          label: '사진 삭제',
+          label: '\uC0AC\uC9C4 \uC0AD\uC81C',
           destructive: true,
           onPress: handleDeleteViewerPhoto,
         } : undefined}
@@ -807,54 +1173,47 @@ export default function PlaceDetailScreen() {
           setViewerOpen(false);
           setViewerPhotoIds(null);
           setViewerViewOnly(false);
-          if (shouldReopenGridAfterViewer) {
-            setShouldReopenGridAfterViewer(false);
-            requestAnimationFrame(() => setGridOpen(true));
-          }
         }}
         onPressAction={isViewerViewOnly ? undefined : (index) => {
           const targetPhoto = viewerPhotos[index];
           if (targetPhoto) {
-            setViewerOpen(false);
-            requestAnimationFrame(() => openRecordComposer([targetPhoto.id], 'sheet'));
+            openRecordComposer([targetPhoto.id], 'sheet', 'photoViewer');
           }
         }}
         visible={isViewerOpen}
       />
 
-      <PhotoGridModal
-        clearSelectionSignal={gridSelectionResetSignal}
-        initialSelectionMode={isGridSelectionInitiallyEnabled}
-        onAddPhoto={handleAddPhoto}
-        onClose={handleClosePhotoGrid}
-        onRequestDeletePhotos={requestDeleteGridPhotos}
-        onPressPhoto={(index) => {
-          setShouldReopenGridAfterViewer(true);
-          setGridOpen(false);
-          requestAnimationFrame(() => openViewer(index, undefined, isGridViewOnly));
+      <PlaceCreateModal
+        visible={isPlaceInfoModalOpen}
+        mode="edit"
+        tripId={initialDetail.tripId}
+        dayId={initialDetail.dayId}
+        dayOptions={placeInfoDayOption ? [placeInfoDayOption] : []}
+        selectedDayId={placeInfoDayOption?.id}
+        showPhotoSection={false}
+        initialValue={{
+          id: initialDetail.placeId,
+          place: placeInfo.placeName,
+          placeName: placeInfo.placeName,
+          city: placeInfo.cityName,
+          cityName: placeInfo.cityName,
+          countryName: placeInfo.countryName,
+          time: placeInfo.timeLabel,
+          category: placeInfo.categoryLabel,
+          dayId: placeInfoDayOption?.id,
+          dateLabel: placeInfoDayOption?.dateLabel,
+          weekdayLabel: placeInfoDayOption?.weekdayLabel,
         }}
-        onStartRecord={(photoIds) => {
-          if (gridSelectionPurpose === 'linkRecord') {
-            setSelectedRecordPhotoIds(photoIds);
-            setGridOpen(false);
-            setGridSelectionPurpose('recordCreate');
-            requestAnimationFrame(() => setRecordModalOpen(true));
-            return;
-          }
-
-          setGridOpen(false);
-          requestAnimationFrame(() => openRecordComposer(photoIds, 'sheet'));
-        }}
-        photos={photos}
-        visible={isGridOpen}
+        onClose={() => setPlaceInfoModalOpen(false)}
+        onSubmit={handleSubmitPlaceInfo}
       />
 
       <RecordCreateModal
         draft={recordDraft}
         mode={recordModalMode}
         onChangeDraft={setRecordDraft}
-        onChangeTime={setRecordTimeLabel}
-        onClose={() => setRecordModalOpen(false)}
+        onChangeTime={handleChangeRecordTime}
+        onClose={handleCloseRecordModal}
         onOpenPhotoPicker={handleOpenRecordPhotoPicker}
         onRemovePhoto={handleUnlinkRecordPhoto}
         onSave={handleSaveRecord}
@@ -866,6 +1225,7 @@ export default function PlaceDetailScreen() {
       <ConfirmDeleteModal
         onCancel={() => setDeleteConfirmOpen(false)}
         onDelete={() => {
+          markPlaceDetailDeleted(initialDetail.placeId);
           setDeleteConfirmOpen(false);
           router.back();
         }}
@@ -880,6 +1240,12 @@ export default function PlaceDetailScreen() {
         }}
         onDelete={confirmDeleteGridPhotos}
         visible={isPhotoDeleteConfirmOpen}
+      />
+
+      <ConfirmRecordDeleteModal
+        onCancel={cancelDeleteRecord}
+        onDelete={confirmDeleteRecord}
+        visible={pendingDeleteRecordId != null}
       />
     </SafeAreaView>
   );
@@ -901,39 +1267,290 @@ function MenuRow({ icon, label, destructive = false, onPress }: MenuRowProps) {
   );
 }
 
+interface SwipeableRecordItemProps {
+  children: React.ReactNode;
+  isLast: boolean;
+  isSwipeOpen: boolean;
+  onCloseSwipe: () => void;
+  onOpenSwipe: (recordId: string) => void;
+  onRequestDelete: (recordId: string) => void;
+  onSwipeEnd: () => void;
+  onSwipeStart: () => void;
+  recordId: string;
+  timeLabel: string;
+}
+
+const SwipeableRecordItem = React.memo(function SwipeableRecordItem({
+  children,
+  isLast,
+  isSwipeOpen,
+  onCloseSwipe,
+  onOpenSwipe,
+  onRequestDelete,
+  onSwipeEnd,
+  onSwipeStart,
+  recordId,
+  timeLabel,
+}: SwipeableRecordItemProps) {
+  const translateX = React.useRef(new Animated.Value(0)).current;
+  const committedX = React.useRef(0);
+  const [rowWidth, setRowWidth] = React.useState(0);
+  const deleteTriggerThreshold = rowWidth > 0 ? rowWidth * 0.5 : RECORD_SWIPE_ACTION_WIDTH * 2;
+  const maxSwipeDistance = rowWidth > 0 ? rowWidth : deleteTriggerThreshold;
+
+  const closeSwipe = React.useCallback(() => {
+    committedX.current = 0;
+    Animated.spring(translateX, {
+      toValue: 0,
+      useNativeDriver: false,
+      friction: 9,
+      tension: 90,
+    }).start();
+  }, [translateX]);
+
+  const openSwipe = React.useCallback(() => {
+    committedX.current = -RECORD_SWIPE_ACTION_WIDTH;
+    Animated.spring(translateX, {
+      toValue: -RECORD_SWIPE_ACTION_WIDTH,
+      useNativeDriver: false,
+      friction: 9,
+      tension: 90,
+    }).start();
+  }, [translateX]);
+
+  const deleteBackgroundWidth = React.useMemo(
+    () =>
+      translateX.interpolate({
+        inputRange: [-maxSwipeDistance, 0],
+        outputRange: [maxSwipeDistance, 0],
+        extrapolate: 'clamp',
+      }),
+    [maxSwipeDistance, translateX],
+  );
+
+  React.useEffect(() => {
+    if (!isSwipeOpen && committedX.current !== 0) {
+      closeSwipe();
+    }
+  }, [closeSwipe, isSwipeOpen]);
+
+  const panResponder = React.useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponderCapture: (_, gesture) =>
+          ((committedX.current < 0 && gesture.dx > RECORD_SWIPE_OPEN_THRESHOLD) ||
+            gesture.dx < -RECORD_SWIPE_OPEN_THRESHOLD) &&
+          Math.abs(gesture.dx) > Math.abs(gesture.dy) * RECORD_SWIPE_DIRECTION_RATIO,
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          ((committedX.current < 0 && gesture.dx > RECORD_SWIPE_OPEN_THRESHOLD) ||
+            gesture.dx < -RECORD_SWIPE_OPEN_THRESHOLD) &&
+          Math.abs(gesture.dx) > Math.abs(gesture.dy) * RECORD_SWIPE_DIRECTION_RATIO,
+        onPanResponderGrant: () => {
+          onSwipeStart();
+          if (!isSwipeOpen) {
+            onOpenSwipe(recordId);
+          }
+        },
+        onPanResponderMove: (_, gesture) => {
+          const nextX = Math.max(
+            -maxSwipeDistance,
+            Math.min(0, committedX.current + gesture.dx),
+          );
+          translateX.setValue(nextX);
+        },
+        onPanResponderRelease: (_, gesture) => {
+          const rawX = committedX.current + gesture.dx;
+          const dragDistance = Math.abs(Math.min(0, rawX));
+          const shouldCloseFromRightSwipe =
+            committedX.current < 0 && gesture.dx > RECORD_SWIPE_OPEN_THRESHOLD;
+          const shouldRequestDelete = dragDistance >= deleteTriggerThreshold;
+          const shouldOpen = dragDistance >= RECORD_SWIPE_OPEN_THRESHOLD;
+          onSwipeEnd();
+
+          if (shouldCloseFromRightSwipe) {
+            closeSwipe();
+            onCloseSwipe();
+            return;
+          }
+
+          if (shouldRequestDelete) {
+            closeSwipe();
+            onCloseSwipe();
+            onRequestDelete(recordId);
+            return;
+          }
+
+          if (shouldOpen) {
+            openSwipe();
+            onOpenSwipe(recordId);
+            return;
+          }
+
+          closeSwipe();
+          onCloseSwipe();
+        },
+        onPanResponderTerminate: () => {
+          closeSwipe();
+          onSwipeEnd();
+          onCloseSwipe();
+        },
+        onPanResponderTerminationRequest: () => false,
+        onShouldBlockNativeResponder: () => true,
+      }),
+    [
+      closeSwipe,
+      deleteTriggerThreshold,
+      isSwipeOpen,
+      maxSwipeDistance,
+      onCloseSwipe,
+      onOpenSwipe,
+      onRequestDelete,
+      onSwipeEnd,
+      onSwipeStart,
+      openSwipe,
+      recordId,
+      translateX,
+    ],
+  );
+
+  const handleDeletePress = React.useCallback(() => {
+    closeSwipe();
+    onCloseSwipe();
+    onRequestDelete(recordId);
+  }, [closeSwipe, onCloseSwipe, onRequestDelete, recordId]);
+
+  return (
+    <View
+      onLayout={(event) => setRowWidth(event.nativeEvent.layout.width)}
+      style={styles.recordSwipeContainer}
+    >
+      <Animated.View
+        style={[
+          styles.recordDeleteBackground,
+          {
+            width: deleteBackgroundWidth,
+          },
+        ]}
+      >
+        <Pressable
+          accessibilityLabel={'\uAE30\uB85D \uC0AD\uC81C'}
+          accessibilityRole="button"
+          onPress={handleDeletePress}
+          style={styles.recordDeleteAction}
+        >
+          <Feather name="trash-2" size={22} color={Colors.foundation.white} />
+        </Pressable>
+      </Animated.View>
+
+      <Animated.View
+        {...panResponder.panHandlers}
+        style={[
+          styles.recordItem,
+          {
+            transform: [{ translateX }],
+          },
+        ]}
+      >
+        <Pressable
+          delayLongPress={320}
+          onLongPress={handleDeletePress}
+          style={styles.recordItemPressable}
+        >
+          <View style={styles.recordTimeColumn}>
+            <Text style={styles.recordTime}>{timeLabel}</Text>
+            <View style={[styles.recordLine, isLast && styles.recordLineLast]} />
+          </View>
+
+          <View style={styles.recordBody}>{children}</View>
+        </Pressable>
+      </Animated.View>
+    </View>
+  );
+});
 interface PhotoGridModalProps {
   visible: boolean;
   photos: PlaceDetailPhoto[];
   clearSelectionSignal: number;
+  coverPhotoId?: string;
   initialSelectionMode: boolean;
+  initialSelectedPhotoIds?: string[];
+  mode?: 'default' | 'cover-select' | 'selectForRecord';
   onAddPhoto: () => void;
   onClose: () => void;
   onRequestDeletePhotos: (photoIds: string[]) => void;
   onPressPhoto: (index: number) => void;
   onStartRecord: (photoIds: string[]) => void;
+  transitionDuration?: number;
+  viewerActionLabel?: string;
+  viewerActions?: FullScreenImageViewerAction[];
+  onPressViewerAction?: (index: number) => void;
 }
 
 function PhotoGridModal({
   visible,
   photos,
   clearSelectionSignal,
+  coverPhotoId,
   initialSelectionMode,
+  initialSelectedPhotoIds,
+  mode = 'default',
   onAddPhoto,
   onClose,
   onRequestDeletePhotos,
   onPressPhoto,
   onStartRecord,
+  transitionDuration = 100,
+  viewerActionLabel,
+  viewerActions = [],
+  onPressViewerAction,
 }: PhotoGridModalProps) {
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isCoverSelectMode = mode === 'cover-select';
+  const isRecordSelectMode = mode === 'selectForRecord';
   const [isSelectionMode, setSelectionMode] = React.useState(initialSelectionMode);
   const [selectedPhotoIds, setSelectedPhotoIds] = React.useState<string[]>([]);
+  const [isPresented, setPresented] = React.useState(visible);
+  const [isInlineViewerOpen, setInlineViewerOpen] = React.useState(false);
+  const [inlineViewerIndex, setInlineViewerIndex] = React.useState(0);
+  const slideX = React.useRef(new Animated.Value(visible ? 0 : width)).current;
 
   React.useEffect(() => {
     if (visible) {
       setSelectionMode(initialSelectionMode);
-      setSelectedPhotoIds([]);
+      setSelectedPhotoIds(initialSelectedPhotoIds ?? []);
+      setInlineViewerOpen(false);
     }
-  }, [initialSelectionMode, visible]);
+  }, [initialSelectedPhotoIds, initialSelectionMode, visible]);
+
+  React.useEffect(() => {
+    if (visible) {
+      setPresented(true);
+      slideX.setValue(width);
+      Animated.timing(slideX, {
+        toValue: 0,
+        duration: transitionDuration,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+      return;
+    }
+
+    if (!isPresented) {
+      return;
+    }
+
+    Animated.timing(slideX, {
+      toValue: width,
+      duration: transitionDuration,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        setPresented(false);
+      }
+    });
+  }, [isPresented, slideX, transitionDuration, visible, width]);
 
   React.useEffect(() => {
     setSelectionMode(false);
@@ -949,7 +1566,7 @@ function PhotoGridModal({
   };
 
   const selectedCount = selectedPhotoIds.length;
-  const showSelectionActionBar = isSelectionMode && selectedCount > 0;
+  const showSelectionActionBar = !isCoverSelectMode && isSelectionMode && selectedCount > 0;
 
   const handleToggleSelectionMode = () => {
     setSelectionMode((current) => !current);
@@ -964,28 +1581,63 @@ function PhotoGridModal({
     onRequestDeletePhotos(selectedPhotoIds);
   };
 
+  const handleRequestClose = () => {
+    if (isInlineViewerOpen) {
+      setInlineViewerOpen(false);
+      return;
+    }
+
+    onClose();
+  };
+
+  if (!isPresented) {
+    return null;
+  }
+
   return (
-    <Modal animationType="slide" onRequestClose={onClose} visible={visible}>
-      <View style={[styles.modalScreen, { paddingTop: insets.top }]}>
+    <Modal animationType="none" onRequestClose={handleRequestClose} visible={isPresented}>
+      <Animated.View
+        style={[
+          styles.modalScreen,
+          {
+            paddingTop: insets.top,
+            transform: [{ translateX: slideX }],
+          },
+        ]}
+      >
         <View style={styles.modalHeader}>
           <Pressable accessibilityRole="button" hitSlop={10} onPress={onClose} style={styles.headerButton}>
             <Feather name="chevron-left" size={28} color={Colors.foundation.black} />
           </Pressable>
           <Text style={styles.modalTitle}>
-            {isSelectionMode ? `${selectedCount}개 선택` : `사진 ${photos.length}장`}
+            {isCoverSelectMode
+              ? '\uB300\uD45C\uC0AC\uC9C4 \uC120\uD0DD'
+              : isSelectionMode
+                ? `${selectedCount}\uAC1C \uC120\uD0DD`
+                : `\uC0AC\uC9C4 ${photos.length}\uC7A5`}
           </Text>
-          <Pressable
-            accessibilityRole="button"
-            hitSlop={10}
-            onPress={handleToggleSelectionMode}
-            style={styles.gridSelectButton}
-          >
-            <Text style={styles.gridSelectText}>{isSelectionMode ? '취소' : '선택'}</Text>
-          </Pressable>
+          {isCoverSelectMode || isRecordSelectMode ? (
+            <View style={styles.gridSelectButton} />
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              hitSlop={10}
+              onPress={handleToggleSelectionMode}
+              style={styles.gridSelectButton}
+            >
+              <Text style={styles.gridSelectText}>{isSelectionMode ? '\uCDE8\uC18C' : '\uC120\uD0DD'}</Text>
+            </Pressable>
+          )}
         </View>
 
         <Text style={styles.gridHint}>
-          {isSelectionMode ? '사진을 선택해 기록에 연결하거나 삭제할 수 있어요.' : '사진을 눌러 크게 확인해보세요.'}
+          {isCoverSelectMode
+            ? '\uB300\uD45C\uC0AC\uC9C4\uC73C\uB85C \uC0AC\uC6A9\uD560 \uC0AC\uC9C4\uC744 \uC120\uD0DD\uD574 \uC8FC\uC138\uC694.'
+            : isSelectionMode
+              ? isRecordSelectMode
+                ? '\uC0AC\uC9C4\uC744 \uC120\uD0DD\uD574 \uAE30\uB85D\uC5D0 \uC5F0\uACB0\uD560 \uC218 \uC788\uC5B4\uC694.'
+                : '\uC0AC\uC9C4\uC744 \uC120\uD0DD\uD574 \uAE30\uB85D\uC5D0 \uC5F0\uACB0\uD558\uAC70\uB098 \uC0AD\uC81C\uD560 \uC218 \uC788\uC5B4\uC694.'
+              : '\uC0AC\uC9C4\uC744 \uB20C\uB7EC \uD06C\uAC8C \uD655\uC778\uD574 \uBCF4\uC138\uC694.'}
         </Text>
 
         <ScrollView
@@ -994,39 +1646,51 @@ function PhotoGridModal({
             { paddingBottom: showSelectionActionBar ? insets.bottom + 96 : Spacing.xl },
           ]}
         >
-          {!isSelectionMode ? (
+          {!isSelectionMode && !isCoverSelectMode && !isRecordSelectMode ? (
             <Pressable
               accessibilityRole="button"
               onPress={onAddPhoto}
               style={[styles.gridPhoto, styles.gridAddPhoto]}
             >
               <Feather name="plus" size={28} color={Colors.foundation.grey500} />
-              <Text style={styles.gridAddPhotoText}>사진 추가</Text>
+              <Text style={styles.gridAddPhotoText}>{'\uC0AC\uC9C4 \uCD94\uAC00'}</Text>
             </Pressable>
           ) : null}
           {photos.length === 0 ? (
             <View style={styles.gridEmptyState}>
-              <Text style={styles.gridEmptyText}>사진이 없어요</Text>
+              <Text style={styles.gridEmptyText}>
+                {isCoverSelectMode
+                  ? '\uC774 \uC7A5\uC18C\uC5D0 \uCD94\uAC00\uB41C \uC0AC\uC9C4\uC774 \uC5C6\uC5B4\uC694.\n\uC0AC\uC9C4\uC744 \uCD94\uAC00\uD55C \uB4A4 \uB300\uD45C\uC0AC\uC9C4\uC744 \uBCC0\uACBD\uD560 \uC218 \uC788\uC5B4\uC694.'
+                  : '\uC0AC\uC9C4\uC774 \uC5C6\uC5B4\uC694.'}
+              </Text>
             </View>
           ) : null}
           {photos.map((photo, index) => {
-            const isSelected = selectedPhotoIds.includes(photo.id);
+            const isSelected = isCoverSelectMode
+              ? photo.id === coverPhotoId
+              : selectedPhotoIds.includes(photo.id);
             return (
               <Pressable
                 key={photo.id}
                 onPress={() => {
-                  if (isSelectionMode) {
+                  if (isCoverSelectMode) {
+                    onPressPhoto(index);
+                    return;
+                  }
+
+                  if (isSelectionMode || isRecordSelectMode) {
                     togglePhoto(photo.id);
                     return;
                   }
 
-                  onPressPhoto(index);
+                  setInlineViewerIndex(index);
+                  setInlineViewerOpen(true);
                 }}
                 style={styles.gridPhoto}
               >
                 <Image source={photo.source} style={styles.gridPhotoImage} resizeMode="cover" />
-                {isSelectionMode && isSelected ? <View style={styles.gridSelectedOverlay} /> : null}
-                {isSelectionMode ? (
+                {(isSelectionMode || isCoverSelectMode || isRecordSelectMode) && isSelected ? <View style={styles.gridSelectedOverlay} /> : null}
+                {isSelectionMode || isCoverSelectMode || isRecordSelectMode ? (
                   <View style={[styles.gridCheck, isSelected && styles.gridCheckSelected]}>
                     {isSelected ? <Feather name="check" size={14} color={Colors.foundation.white} /> : null}
                   </View>
@@ -1044,19 +1708,31 @@ function PhotoGridModal({
                 onPress={() => onStartRecord(selectedPhotoIds)}
                 style={styles.gridRecordButton}
               >
-                <Text style={styles.gridRecordButtonText}>기록 추가</Text>
+                <Text style={styles.gridRecordButtonText}>{'\uC120\uD0DD \uC644\uB8CC'}</Text>
               </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={handlePressDeleteSelected}
-                style={styles.gridDeleteButton}
-              >
-                <Text style={styles.gridDeleteButtonText}>삭제</Text>
-              </Pressable>
+              {isRecordSelectMode ? null : (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={handlePressDeleteSelected}
+                  style={styles.gridDeleteButton}
+                >
+                  <Text style={styles.gridDeleteButtonText}>{'\uC0AD\uC81C'}</Text>
+                </Pressable>
+              )}
             </View>
           </View>
         ) : null}
-      </View>
+        <FullScreenImageViewer
+          actionLabel={viewerActionLabel}
+          actions={viewerActions}
+          images={photos.map((photo) => photo.source)}
+          initialIndex={inlineViewerIndex}
+          onClose={() => setInlineViewerOpen(false)}
+          onPressAction={onPressViewerAction}
+          presentation="inline"
+          visible={isInlineViewerOpen}
+        />
+      </Animated.View>
     </Modal>
   );
 }
@@ -1090,27 +1766,79 @@ function RecordCreateModal({
 }: RecordCreateModalProps) {
   const insets = useSafeAreaInsets();
   const [isTimePickerOpen, setTimePickerOpen] = React.useState(false);
+  const [isSheetPresented, setSheetPresented] = React.useState(visible);
+  const dimOpacity = React.useRef(new Animated.Value(0)).current;
+  const sheetTranslateY = React.useRef(new Animated.Value(320)).current;
   const isScreenMode = mode === 'screen';
   const saveDisabled = !draft.trim();
+  const showMemoPlaceholder = draft.length === 0;
+
+  React.useEffect(() => {
+    if (isScreenMode) {
+      return undefined;
+    }
+
+    if (visible) {
+      setSheetPresented(true);
+      dimOpacity.setValue(0);
+      sheetTranslateY.setValue(320);
+      Animated.parallel([
+        Animated.timing(dimOpacity, {
+          toValue: 1,
+          duration: RECORD_SHEET_DIM_DURATION,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(sheetTranslateY, {
+          toValue: 0,
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
+      return undefined;
+    }
+
+    Animated.parallel([
+      Animated.timing(dimOpacity, {
+        toValue: 0,
+        duration: RECORD_SHEET_DIM_DURATION,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(sheetTranslateY, {
+        toValue: 320,
+        duration: 180,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (finished) {
+        setSheetPresented(false);
+      }
+    });
+
+    return undefined;
+  }, [dimOpacity, isScreenMode, sheetTranslateY, visible]);
 
   const content = (
     <View style={isScreenMode ? styles.recordScreenContent : styles.recordSheetContent}>
       <View style={styles.recordModalHeader}>
-        <Pressable accessibilityRole="button" hitSlop={10} onPress={onClose} style={styles.recordCloseButton}>
-          {isScreenMode ? (
+        {isScreenMode ? (
+          <Pressable accessibilityRole="button" hitSlop={10} onPress={onClose} style={styles.recordCloseButton}>
             <Feather name="chevron-left" size={28} color={Colors.foundation.black} />
-          ) : (
-            <Feather name="x" size={24} color={Colors.foundation.black} />
-          )}
-        </Pressable>
-        <Text style={styles.recordModalTitle}>기록 추가</Text>
+          </Pressable>
+        ) : (
+          <View style={styles.recordCloseButton} />
+        )}
+        <Text style={styles.recordModalTitle}>{'\uAE30\uB85D \uCD94\uAC00'}</Text>
         <View style={styles.recordCloseButton} />
       </View>
 
       <View style={styles.selectedPhotosBlock}>
         <View style={styles.selectedPhotosHeader}>
-          <Text style={styles.selectedPhotosLabel}>사진 연결</Text>
-          <Text style={styles.selectedPhotosOptional}>선택 사항</Text>
+          <Text style={styles.selectedPhotosLabel}>{'\uC0AC\uC9C4 \uC5F0\uACB0'}</Text>
+          <Text style={styles.selectedPhotosOptional}>{'\uC120\uD0DD \uC0AC\uD56D'}</Text>
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <View style={styles.selectedPhotoRow}>
@@ -1120,7 +1848,7 @@ function RecordCreateModal({
               style={[styles.selectedPhotoThumb, styles.linkPhotoButton]}
             >
               <Feather name="plus" size={20} color={Colors.foundation.grey600} />
-              <Text style={styles.linkPhotoButtonText}>사진 선택</Text>
+              <Text style={styles.linkPhotoButtonText}>{'\uC0AC\uC9C4 \uCD94\uAC00'}</Text>
             </Pressable>
             {photos.map((photo) => (
               <View key={photo.id} style={styles.linkedPhotoThumbWrap}>
@@ -1144,24 +1872,31 @@ function RecordCreateModal({
         onPress={() => setTimePickerOpen(true)}
         style={styles.timeRow}
       >
-        <Text style={styles.timeLabel}>시간</Text>
+        <Text style={styles.timeLabel}>{'\uBC29\uBB38 \uC2DC\uAC04'}</Text>
         <View style={styles.timeValueRow}>
-          <Text style={styles.timeValue}>{timeLabel ?? '시간 미정'}</Text>
+          <Text style={styles.timeValue}>{timeLabel ?? '\uC2DC\uAC04 \uBBF8\uC815'}</Text>
           <Feather name="chevron-right" size={18} color={Colors.foundation.grey500} />
         </View>
       </Pressable>
 
       <View style={styles.memoBlock}>
-        <Text style={styles.memoLabel}>기록</Text>
-        <AppTextInput
-          multiline
-          maxLength={1000}
-          onChangeText={onChangeDraft}
-          placeholder="이 장소에서 어떤 순간을 기억하나요?"
-          placeholderTextColor={Colors.foundation.grey500}
-          style={styles.recordInput}
-          value={draft}
-        />
+        <Text style={styles.memoLabel}>{'\uAE30\uB85D'}</Text>
+        <View style={styles.recordInputFrame}>
+          <AppTextInput
+            multiline
+            maxLength={1000}
+            onChangeText={onChangeDraft}
+            placeholder=""
+            placeholderTextColor={Colors.foundation.grey500}
+            style={styles.recordInput}
+            value={draft}
+          />
+          {showMemoPlaceholder ? (
+            <Text pointerEvents="none" style={styles.recordInputPlaceholder}>
+              {'\uC774 \uC7A5\uC18C\uC5D0\uC11C \uC5B4\uB5A4 \uC21C\uAC04\uC744 \uAE30\uC5B5\uD558\uB098\uC694?'}
+            </Text>
+          ) : null}
+        </View>
         <Text style={styles.memoCount}>{draft.length}/1000</Text>
       </View>
 
@@ -1171,7 +1906,7 @@ function RecordCreateModal({
         onPress={onSave}
         style={[styles.saveButton, saveDisabled && styles.saveButtonDisabled]}
       >
-        <Text style={styles.saveButtonText}>저장하기</Text>
+        <Text style={styles.saveButtonText}>{'\uC800\uC7A5\uD558\uAE30'}</Text>
       </Pressable>
       <TimeWheelPickerModal
         onClose={() => setTimePickerOpen(false)}
@@ -1194,13 +1929,23 @@ function RecordCreateModal({
   }
 
   return (
-    <Modal animationType="slide" transparent visible={visible} onRequestClose={onClose}>
+    <Modal animationType="none" transparent visible={visible || isSheetPresented} onRequestClose={onClose}>
       <View style={styles.sheetOverlay}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <View style={[styles.recordSheet, { paddingBottom: insets.bottom + Spacing.xl }]}>
+        <Animated.View style={[styles.sheetDim, { opacity: dimOpacity }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        </Animated.View>
+        <Animated.View
+          style={[
+            styles.recordSheet,
+            {
+              paddingBottom: insets.bottom + Spacing.xl,
+              transform: [{ translateY: sheetTranslateY }],
+            },
+          ]}
+        >
           <View style={styles.sheetHandle} />
           {content}
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -1217,16 +1962,40 @@ function ConfirmDeleteModal({ visible, onCancel, onDelete }: ConfirmDeleteModalP
     <Modal animationType="fade" transparent visible={visible} onRequestClose={onCancel}>
       <View style={styles.overlay}>
         <View style={styles.deleteModal}>
-          <Text style={styles.deleteTitle}>이 장소를 삭제할까요?</Text>
+          <Text style={styles.deleteTitle}>{'\uC774 \uC7A5\uC18C\uB97C \uC0AD\uC81C\uD560\uAE4C\uC694?'}</Text>
           <Text style={styles.deleteDescription}>
-            연결된 사진과 기록은 함께 정리될 수 있어요.
+            {'\uC5F0\uACB0\uB41C \uC0AC\uC9C4\uACFC \uAE30\uB85D\uC740 \uD568\uAED8 \uC815\uB9AC\uB420 \uC218 \uC788\uC5B4\uC694.'}
           </Text>
           <View style={styles.deleteButtonRow}>
             <Pressable onPress={onCancel} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>취소</Text>
+              <Text style={styles.secondaryButtonText}>{'\uCDE8\uC18C'}</Text>
             </Pressable>
             <Pressable onPress={onDelete} style={styles.destructiveButton}>
-              <Text style={styles.destructiveButtonText}>삭제</Text>
+              <Text style={styles.destructiveButtonText}>{'\uC0AD\uC81C'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function ConfirmRecordDeleteModal({ visible, onCancel, onDelete }: ConfirmDeleteModalProps) {
+  return (
+    <Modal animationType="fade" transparent visible={visible} onRequestClose={onCancel}>
+      <View style={styles.overlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} />
+        <View style={styles.deleteModal}>
+          <Text style={styles.deleteTitle}>{'\uC0AD\uC81C\uD558\uC2DC\uACA0\uC2B5\uB2C8\uAE4C?'}</Text>
+          <Text style={styles.deleteDescription}>
+            {'\uC774 \uAE30\uB85D\uC740 \uC0AD\uC81C \uD6C4 \uBCF5\uAD6C\uD560 \uC218 \uC5C6\uC5B4\uC694.'}
+          </Text>
+          <View style={styles.deleteButtonRow}>
+            <Pressable onPress={onCancel} style={styles.secondaryButton}>
+              <Text style={styles.secondaryButtonText}>{'\uCDE8\uC18C'}</Text>
+            </Pressable>
+            <Pressable onPress={onDelete} style={styles.destructiveButton}>
+              <Text style={styles.destructiveButtonText}>{'\uC0AD\uC81C'}</Text>
             </Pressable>
           </View>
         </View>
@@ -1247,16 +2016,16 @@ function ConfirmPhotoDeleteModal({ visible, count, onCancel, onDelete }: Confirm
     <Modal animationType="fade" transparent visible={visible} onRequestClose={onCancel}>
       <View style={styles.overlay}>
         <View style={styles.deleteModal}>
-          <Text style={styles.deleteTitle}>선택한 사진을 삭제할까요?</Text>
+          <Text style={styles.deleteTitle}>{'\uC120\uD0DD\uD55C \uC0AC\uC9C4\uC744 \uC0AD\uC81C\uD560\uAE4C\uC694?'}</Text>
           <Text style={styles.deleteDescription}>
-            {count}장의 사진은 기기 사진첩에서는 삭제되지 않고, Travu의 현재 장소 사진 목록에서만 삭제됩니다.
+            {count}{'\uC7A5\uC758 \uC0AC\uC9C4\uC740 \uAE30\uAE30 \uC0AC\uC9C4\uCCA9\uC5D0\uC11C\uB294 \uC0AD\uC81C\uB418\uC9C0 \uC54A\uACE0, Travu\uC758 \uD604\uC7AC \uC7A5\uC18C \uC0AC\uC9C4 \uBAA9\uB85D\uC5D0\uC11C\uB9CC \uC0AD\uC81C\uB429\uB2C8\uB2E4.'}
           </Text>
           <View style={styles.deleteButtonRow}>
             <Pressable onPress={onCancel} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>취소</Text>
+              <Text style={styles.secondaryButtonText}>{'\uCDE8\uC18C'}</Text>
             </Pressable>
             <Pressable onPress={onDelete} style={styles.destructiveButton}>
-              <Text style={styles.destructiveButtonText}>삭제</Text>
+              <Text style={styles.destructiveButtonText}>{'\uC0AD\uC81C'}</Text>
             </Pressable>
           </View>
         </View>
@@ -1443,39 +2212,57 @@ const styles = StyleSheet.create({
   photoAddThumb: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.xs,
-    borderWidth: 1,
-    borderColor: Colors.foundation.grey100,
-    backgroundColor: Colors.foundation.white,
-  },
-  photoAddThumbText: {
-    ...Typography.captionEmphasized,
-    color: Colors.foundation.grey600,
+    backgroundColor: Colors.foundation.grey100,
   },
   photoThumbImage: {
     width: '100%',
     height: '100%',
   },
   addRecordButton: {
-    height: 36,
+    width: 52,
+    height: 24,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.xs,
-    paddingHorizontal: Spacing.lg,
-    borderWidth: 1,
-    borderColor: Colors.foundation.grey100,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.foundation.white,
+    gap: 2,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 4,
+    borderRadius: 16,
+    backgroundColor: Colors.foundation.grey100,
   },
   addRecordButtonText: {
-    ...Typography.body2Emphasized,
+    ...Typography.captionEmphasized,
     color: Colors.foundation.black,
   },
   recordList: {
     gap: Spacing.xl,
   },
+  recordSwipeContainer: {
+    position: 'relative',
+    overflow: 'hidden',
+    borderRadius: Radius.xs,
+  },
+  recordDeleteBackground: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'stretch',
+    justifyContent: 'center',
+    backgroundColor: DESTRUCTIVE,
+    overflow: 'hidden',
+  },
+  recordDeleteAction: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   recordItem: {
+    width: '100%',
+    backgroundColor: Colors.light.bgScreen,
+    zIndex: 1,
+  },
+  recordItemPressable: {
     flexDirection: 'row',
     gap: Spacing.md,
     alignItems: 'flex-start',
@@ -1489,8 +2276,10 @@ const styles = StyleSheet.create({
   },
   recordTime: {
     ...Typography.captionEmphasized,
+    width: '100%',
     lineHeight: 14,
     color: Colors.foundation.grey500,
+    textAlign: 'center',
   },
   recordLine: {
     width: 2,
@@ -1681,6 +2470,9 @@ const styles = StyleSheet.create({
   sheetOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
+  },
+  sheetDim: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.22)',
   },
   recordSheet: {
@@ -1804,15 +2596,30 @@ const styles = StyleSheet.create({
     ...Typography.body2Emphasized,
     color: Colors.foundation.black,
   },
-  recordInput: {
+  recordInputFrame: {
+    position: 'relative',
     minHeight: 150,
-    padding: Spacing.md,
     borderWidth: 1,
     borderColor: Colors.foundation.grey100,
     borderRadius: Radius.sm,
+  },
+  recordInput: {
+    minHeight: 150,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
     ...Typography.body2Regular,
     color: Colors.foundation.black,
+    includeFontPadding: true,
     textAlignVertical: 'top',
+  },
+  recordInputPlaceholder: {
+    position: 'absolute',
+    top: Spacing.md,
+    left: Spacing.md,
+    right: Spacing.md,
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey500,
+    includeFontPadding: true,
   },
   memoCount: {
     ...Typography.captionRegular,
