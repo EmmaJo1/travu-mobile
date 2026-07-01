@@ -6,6 +6,7 @@ import {
   mockPhotoImportProvider,
 } from '@/services/photoImport/mockPhotoImportProvider';
 import type {
+  PhotoImportDetectionState,
   PhotoImportStatus,
   PhotoImportTripCandidate,
 } from '@/services/photoImport/types';
@@ -15,6 +16,8 @@ const MOCK_ANALYSIS_PROGRESS = 62;
 
 interface PhotoImportFlowContextValue {
   status: PhotoImportStatus;
+  detectionState: PhotoImportDetectionState;
+  errorMessage?: string;
   progress: number;
   candidates: PhotoImportTripCandidate[];
   selectedCandidateIds: string[];
@@ -24,6 +27,7 @@ interface PhotoImportFlowContextValue {
   lastSavedTripCount: number;
   startPhotoImportAnalysis: () => void;
   requestAccessAndStartAnalysis: () => Promise<void>;
+  runPhotoImportDetection: () => Promise<PhotoImportDetectionState>;
   toggleCandidate: (candidateId: string) => void;
   openPhotoImportResults: () => void;
   deferPhotoImportResults: () => void;
@@ -38,7 +42,12 @@ const PhotoImportFlowContext = React.createContext<PhotoImportFlowContextValue |
 
 export function PhotoImportFlowProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = React.useState<PhotoImportStatus>('not_started');
-  const [candidates] = React.useState<PhotoImportTripCandidate[]>(MOCK_PHOTO_IMPORT_CANDIDATES);
+  const [detectionState, setDetectionState] =
+    React.useState<PhotoImportDetectionState>('idle');
+  const [errorMessage, setErrorMessage] = React.useState<string>();
+  const [candidates, setCandidates] = React.useState<PhotoImportTripCandidate[]>(
+    MOCK_PHOTO_IMPORT_CANDIDATES,
+  );
   const [selectedCandidateIds, setSelectedCandidateIds] = React.useState<string[]>(
     MOCK_PHOTO_IMPORT_CANDIDATES
       .filter((candidate) => candidate.initiallySelected)
@@ -67,22 +76,52 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
 
   const startPhotoImportAnalysis = React.useCallback(() => {
     setStatus('analyzing');
+    setDetectionState('detecting');
+    setErrorMessage(undefined);
     setHasOpenedPhotoImportResults(false);
     setHasDeferredPhotoImportResults(false);
     setHasSavedPhotoImportResults(false);
     setLastSavedTripCount(0);
   }, []);
 
-  const requestAccessAndStartAnalysis = React.useCallback(async () => {
-    const permission = await mockPhotoImportProvider.requestPhotoLibraryAccess();
-
-    if (permission !== 'granted') {
-      return;
-    }
-
-    await mockPhotoImportProvider.startAnalysis();
+  const runPhotoImportDetection = React.useCallback(async () => {
     startPhotoImportAnalysis();
+
+    try {
+      const permission = await mockPhotoImportProvider.requestPhotoLibraryAccess();
+
+      if (permission !== 'granted') {
+        setStatus('not_started');
+        setDetectionState('permissionDenied');
+        return 'permissionDenied';
+      }
+
+      await mockPhotoImportProvider.startAnalysis();
+      const detectedCandidates = await mockPhotoImportProvider.getCandidates();
+      const nextState: PhotoImportDetectionState =
+        detectedCandidates.length > 0 ? 'success' : 'empty';
+
+      setCandidates(detectedCandidates);
+      setSelectedCandidateIds(
+        detectedCandidates
+          .filter((candidate) => candidate.initiallySelected)
+          .map((candidate) => candidate.id),
+      );
+      setStatus('results_ready');
+      setDetectionState(nextState);
+
+      return nextState;
+    } catch (error) {
+      setStatus('not_started');
+      setDetectionState('error');
+      setErrorMessage(error instanceof Error ? error.message : 'Photo import detection failed');
+      return 'error';
+    }
   }, [startPhotoImportAnalysis]);
+
+  const requestAccessAndStartAnalysis = React.useCallback(async () => {
+    await runPhotoImportDetection();
+  }, [runPhotoImportDetection]);
 
   const toggleCandidate = React.useCallback((candidateId: string) => {
     setSelectedCandidateIds((current) => {
@@ -140,8 +179,14 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
   const value = React.useMemo(
     () => ({
       status,
+      detectionState,
+      errorMessage,
       progress:
-        status === 'analyzing' ? MOCK_ANALYSIS_PROGRESS : status === 'results_ready' ? 100 : 0,
+        detectionState === 'detecting'
+          ? MOCK_ANALYSIS_PROGRESS
+          : status === 'results_ready'
+            ? 100
+            : 0,
       candidates,
       selectedCandidateIds,
       hasOpenedPhotoImportResults,
@@ -150,6 +195,7 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
       lastSavedTripCount,
       startPhotoImportAnalysis,
       requestAccessAndStartAnalysis,
+      runPhotoImportDetection,
       toggleCandidate,
       openPhotoImportResults,
       deferPhotoImportResults,
@@ -164,12 +210,15 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
       closePhotoImportCompleteModal,
       deferPhotoImportResults,
       dismissPhotoImportSavedModal,
+      detectionState,
+      errorMessage,
       hasDeferredPhotoImportResults,
       hasOpenedPhotoImportResults,
       hasSavedPhotoImportResults,
       lastSavedTripCount,
       openPhotoImportResults,
       requestAccessAndStartAnalysis,
+      runPhotoImportDetection,
       saveSelectedCandidates,
       saveSelectedPhotoImportResults,
       selectedCandidateIds,

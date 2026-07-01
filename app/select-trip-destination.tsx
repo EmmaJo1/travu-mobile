@@ -590,7 +590,7 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing['3xl'],
   },
   gridRow: {
-    gap: GRID_ROW_GAP,
+    justifyContent: 'space-between',
     marginBottom: GRID_ROW_GAP,
   },
   gridItem: {

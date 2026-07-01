@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
 import AppTextInput from '@/components/common/AppTextInput';
-import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
+import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 
 export type PlaceOption = {
   id: string;

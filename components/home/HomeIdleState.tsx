@@ -376,9 +376,9 @@ export default function HomeIdleState({
 function noop() {}
 
 function formatIdleHeroDate(date: Date) {
-  const day = String(date.getDate()).padStart(2, '0');
+  const day = date.getDate();
 
-  return `${date.getMonth() + 1}.${day} ${WEEKDAY_LABELS[date.getDay()]}`;
+  return `${date.getMonth() + 1}. ${day} ${WEEKDAY_LABELS[date.getDay()]}`;
 }
 
 function getMonthRange(date: Date) {
@@ -792,13 +792,13 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 20,
-    paddingTop: 36,
+    paddingTop: 16,
     gap: 44,
   },
   photoImportResultsCardOffset: {
-    marginTop: 8,
+    marginTop: 0,
   },
   recentTripsWithoutDetected: {
-    marginTop: 16,
+    marginTop: 0,
   },
 });

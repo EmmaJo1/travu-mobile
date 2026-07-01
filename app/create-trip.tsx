@@ -46,14 +46,21 @@ export default function CreateTripScreen() {
   const canCreate = Boolean(destinationName && startDate && endDate);
   const ctaBottom = Math.max(insets.bottom + 32, 64);
 
-  const sharedParams = {
+  const sharedParams = React.useMemo(() => ({
     destinationId,
     destinationName,
     destinationCountry,
     destinationLabel,
     startDate,
     endDate,
-  };
+  }), [
+    destinationCountry,
+    destinationId,
+    destinationLabel,
+    destinationName,
+    endDate,
+    startDate,
+  ]);
 
   const handleOpenDestination = React.useCallback(() => {
     router.push({

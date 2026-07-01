@@ -72,13 +72,6 @@ function formatSummaryDate(date: Date | null) {
   return `${date.getFullYear()}. ${date.getMonth() + 1}. ${date.getDate()}`;
 }
 
-function getHelperText(startDate: Date | null, endDate: Date | null) {
-  if (!startDate) return '여행 시작일을 선택해주세요';
-  if (!endDate) return '여행 종료일을 선택해주세요';
-
-  return '선택한 여행 기간을 확인해주세요';
-}
-
 function getYearOptions(baseYear: number) {
   return Array.from({ length: 21 }, (_, index) => baseYear - 10 + index);
 }

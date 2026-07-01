@@ -26,7 +26,7 @@ import TravelStatsCard from '@/components/trip/TravelStatsCard';
 import TripCard, { type TripCardData } from '@/components/trip/TripCard';
 import TripListCard, { type TripListItem } from '@/components/trip/TripListCard';
 
-import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
+import { Colors, Spacing, Typography } from '@/constants/theme';
 
 // ─── Mock Data ────────────────────────────────────────────────────────────────
 
@@ -111,21 +111,6 @@ const labelStyle: object = {
   letterSpacing: 0.5,
 };
 
-function MissingComponent({ name, path }: { name: string; path: string }) {
-  return (
-    <View style={missingStyles.box}>
-      <Text style={missingStyles.badge}>❌ 미생성</Text>
-      <Text style={missingStyles.name}>{name}</Text>
-      <Text style={missingStyles.path}>{path}</Text>
-    </View>
-  );
-}
-const missingStyles = StyleSheet.create({
-  box:   { borderWidth:1, borderColor:'#E3DBD8', borderStyle:'dashed', borderRadius:Radius.sm, padding:Spacing.lg, backgroundColor:'#FFF8F6', gap:Spacing.xs },
-  badge: { ...Typography.captionEmphasized, color:'#B05A3A' },
-  name:  { ...Typography.body2Emphasized, color:'#333' },
-  path:  { ...Typography.captionRegular, color:'#999' },
-});
 
 // ─── 메인 ────────────────────────────────────────────────────────────────────
 

@@ -7,6 +7,7 @@ import React from 'react';
 import {
   ActivityIndicator,
   Image,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,7 +19,6 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
   runOnJS,
@@ -169,17 +169,18 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
     }
   }, [canSave, isSaving, router, saveSelectedPhotoImportResults, selectedCandidateIds]);
 
-  const panGesture = React.useMemo(
+  const panResponder = React.useMemo(
     () =>
-      Gesture.Pan()
-        .activeOffsetX([-10, 10])
-        .failOffsetY([-12, 12])
-        .onUpdate((event) => {
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          Math.abs(gesture.dx) > 12 &&
+          Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.4,
+        onPanResponderMove: (_, gesture) => {
           const index = currentIndex.value;
           const canSwipeLeft = index === 0;
           const canSwipeRight = index === 1;
-          const isSwipingLeft = event.translationX < 0;
-          const isSwipingRight = event.translationX > 0;
+          const isSwipingLeft = gesture.dx < 0;
+          const isSwipingRight = gesture.dx > 0;
 
           if (index >= 2) {
             translateX.value = -index * pageWidth;
@@ -190,18 +191,18 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
           const isBlockedRightSwipe = isSwipingRight && !canSwipeRight;
           const adjustedTranslationX =
             isBlockedLeftSwipe || isBlockedRightSwipe
-              ? event.translationX * EDGE_RESISTANCE
-              : event.translationX;
+              ? gesture.dx * EDGE_RESISTANCE
+              : gesture.dx;
 
           translateX.value = -index * pageWidth + adjustedTranslationX;
-        })
-        .onEnd((event) => {
+        },
+        onPanResponderRelease: (_, gesture) => {
           const index = currentIndex.value;
           const swipeThreshold = pageWidth * SWIPE_WIDTH_RATIO;
           const didSwipeLeft =
-            event.translationX < -swipeThreshold || event.velocityX < -VELOCITY_THRESHOLD;
+            gesture.dx < -swipeThreshold || gesture.vx < -VELOCITY_THRESHOLD / 1000;
           const didSwipeRight =
-            event.translationX > swipeThreshold || event.velocityX > VELOCITY_THRESHOLD;
+            gesture.dx > swipeThreshold || gesture.vx > VELOCITY_THRESHOLD / 1000;
           let targetIndex = index;
 
           if (index === 0 && didSwipeLeft) {
@@ -210,13 +211,12 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
             targetIndex = 0;
           }
 
-          runOnJS(animateToPage)(targetIndex);
-        })
-        .onFinalize((_event, success) => {
-          if (!success) {
-            translateX.value = withTiming(-currentIndex.value * pageWidth, TIMING_CONFIG);
-          }
-        }),
+          animateToPage(targetIndex);
+        },
+        onPanResponderTerminate: () => {
+          translateX.value = withTiming(-currentIndex.value * pageWidth, TIMING_CONFIG);
+        },
+      }),
     [animateToPage, currentIndex, pageWidth, translateX],
   );
 
@@ -266,28 +266,26 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
         <StatusBar style="dark" />
         <PageIndicator activeIndex={currentPage} />
 
-        <GestureDetector gesture={panGesture}>
-          <View style={styles.pageViewport}>
-            <Animated.View
-              style={[
-                styles.pagesStrip,
-                animatedStripStyle,
-                { width: pageWidth * pages.length },
-              ]}
-            >
-              {pages.map((page, index) => (
-                <AnimatedPageFrame
-                  key={STEPS[index]}
-                  index={index}
-                  pageWidth={pageWidth}
-                  translateX={translateX}
+        <View style={styles.pageViewport} {...panResponder.panHandlers}>
+          <Animated.View
+            style={[
+              styles.pagesStrip,
+              animatedStripStyle,
+              { width: pageWidth * pages.length },
+            ]}
+          >
+            {pages.map((page, index) => (
+              <AnimatedPageFrame
+                key={STEPS[index]}
+                index={index}
+                pageWidth={pageWidth}
+                translateX={translateX}
               >
-                  {page}
-                </AnimatedPageFrame>
-              ))}
-            </Animated.View>
-          </View>
-        </GestureDetector>
+                {page}
+              </AnimatedPageFrame>
+            ))}
+          </Animated.View>
+        </View>
       </View>
     </View>
   );

@@ -7,6 +7,14 @@ export type PhotoImportStatus =
   | 'reviewed'
   | 'skipped';
 
+export type PhotoImportDetectionState =
+  | 'idle'
+  | 'detecting'
+  | 'success'
+  | 'empty'
+  | 'error'
+  | 'permissionDenied';
+
 export type PhotoLibraryPermissionResult = 'granted' | 'denied';
 
 export interface PhotoImportTripCandidate {

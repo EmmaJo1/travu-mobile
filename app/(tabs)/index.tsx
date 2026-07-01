@@ -566,7 +566,7 @@ function getEnglishLocationLabel(destination: DestinationOption): string {
     return destination.displayName;
   }
 
-  const koreanCityLabels: Array<[string, string]> = [
+  const koreanCityLabels: [string, string][] = [
     ['서울', 'Seoul'],
     ['광주', 'Gwangju'],
     ['부산', 'Busan'],

@@ -9,6 +9,7 @@ import Text from '@/components/common/AppText';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import { Colors, Radius, Typography } from '@/constants/theme';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
+import type { PhotoImportDetectionState } from '@/services/photoImport/types';
 
 const BACKGROUND = Colors.light.bgScreen;
 const GREY_700 = '#595959';
@@ -16,9 +17,39 @@ const GREY_700 = '#595959';
 export default function FindTripsLoading() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { status, candidates, requestAccessAndStartAnalysis, deferPhotoImportResults } =
-    usePhotoImportFlow();
+  const {
+    status,
+    detectionState,
+    errorMessage,
+    candidates,
+    runPhotoImportDetection,
+    deferPhotoImportResults,
+  } = usePhotoImportFlow();
   const hasStartedRef = React.useRef(false);
+
+  const routeDetectionResult = React.useCallback(
+    (result: PhotoImportDetectionState) => {
+      if (result === 'success') {
+        router.replace('/detected-trips' as Href);
+        return;
+      }
+
+      if (result === 'empty') {
+        router.replace('/no-detected-trips' as Href);
+        return;
+      }
+
+      if (result === 'permissionDenied') {
+        router.replace('/photo-permission-required' as Href);
+      }
+    },
+    [router],
+  );
+
+  const startDetection = React.useCallback(() => {
+    hasStartedRef.current = true;
+    runPhotoImportDetection().then(routeDetectionResult).catch(() => undefined);
+  }, [routeDetectionResult, runPhotoImportDetection]);
 
   React.useEffect(() => {
     if (hasStartedRef.current) {
@@ -29,11 +60,8 @@ export default function FindTripsLoading() {
       return;
     }
 
-    hasStartedRef.current = true;
-    requestAccessAndStartAnalysis().catch(() => {
-      router.replace('/photo-permission-required' as Href);
-    });
-  }, [requestAccessAndStartAnalysis, router, status]);
+    startDetection();
+  }, [startDetection, status]);
 
   React.useEffect(() => {
     if (status !== 'results_ready') {
@@ -42,6 +70,10 @@ export default function FindTripsLoading() {
 
     router.replace((candidates.length > 0 ? '/detected-trips' : '/no-detected-trips') as Href);
   }, [candidates.length, router, status]);
+
+  const handleRetry = React.useCallback(() => {
+    startDetection();
+  }, [startDetection]);
 
   const handleGoHome = React.useCallback(() => {
     deferPhotoImportResults();
@@ -53,21 +85,48 @@ export default function FindTripsLoading() {
       <StatusBar style="dark" />
       <ScreenHeader onBackPress={() => router.back()} style={styles.header} />
 
-      <View style={styles.centerCopy}>
-        <Text style={styles.title}>사진첩에서{'\n'}여행을 찾고 있어요</Text>
-        <Text style={styles.description}>
-          사진의 시간과 위치를 기준으로{'\n'}여행의 순간을 정리하고 있어요
-        </Text>
-        <Text style={styles.statusText}>사진 1400장을 확인하는 중이에요</Text>
-      </View>
+      {detectionState === 'error' ? (
+        <View style={styles.errorState}>
+          <Feather name="alert-circle" size={44} color={Colors.foundation.black} />
+          <Text style={styles.errorTitle}>여행을 찾지 못했어요</Text>
+          <Text style={styles.errorDescription}>
+            {errorMessage ? '사진 분석 중 문제가 발생했어요.' : '잠시 후 다시 시도해주세요.'}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleRetry}
+            style={({ pressed }) => [styles.retryButton, pressed && styles.buttonPressed]}
+          >
+            <Text style={styles.retryButtonText}>다시 시도</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <>
+          <View style={styles.centerCopy}>
+            <Text style={styles.title}>사진첩에서{'\n'}여행을 찾고 있어요</Text>
+            <Text style={styles.description}>
+              사진의 시간과 위치를 기준으로{'\n'}여행의 시간을 정리하고 있어요
+            </Text>
+            <Text style={styles.statusText}>사진 1400장을 확인하는 중이에요</Text>
+          </View>
 
-      <View style={styles.progressCard}>
-        <ProgressRow state="completed" label="사진 시간 정보 확인" top="16.67%" />
-        <DashConnector active top="31.25%" />
-        <ProgressRow state="loading" label="촬영 위치 후보 정리" top="45.42%" />
-        <DashConnector active={false} top="60%" />
-        <ProgressRow state="pending" label="여행 후보 만들기" top="74.17%" />
-      </View>
+          <View style={styles.progressCard}>
+            <ProgressRow state="completed" label="사진 시간 정보 확인" top="16.67%" />
+            <DashConnector active top="31.25%" />
+            <ProgressRow state="loading" label="촬영 위치 정보 정리" top="45.42%" />
+            <DashConnector active={false} top="60%" />
+            <ProgressRow state="pending" label="여행 후보 만들기" top="74.17%" />
+          </View>
+
+          <View style={[styles.helperRow, { bottom: Math.max(insets.bottom + 88, 112) }]}>
+            <Feather name="info" size={12} color={Colors.foundation.grey400} />
+            <Text style={styles.helperText}>홈으로 돌아가도 분석은 계속됩니다</Text>
+          </View>
+          <Text style={[styles.completeText, { bottom: Math.max(insets.bottom + 68, 92) }]}>
+            완료되면 알려드릴게요
+          </Text>
+        </>
+      )}
 
       <Pressable
         accessibilityRole="button"
@@ -77,14 +136,6 @@ export default function FindTripsLoading() {
       >
         <Text style={styles.homeLinkText}>홈 화면으로 돌아가기</Text>
       </Pressable>
-
-      <View style={[styles.helperRow, { bottom: Math.max(insets.bottom + 88, 112) }]}>
-        <Feather name="info" size={12} color={Colors.foundation.grey400} />
-        <Text style={styles.helperText}>홈으로 돌아가도 분석은 계속됩니다</Text>
-      </View>
-      <Text style={[styles.completeText, { bottom: Math.max(insets.bottom + 68, 92) }]}>
-        완료되면 알려드릴게요
-      </Text>
     </SafeAreaView>
   );
 }
@@ -106,7 +157,9 @@ function ProgressRow({
             <Feather name="check" size={14} color={Colors.foundation.white} />
           </View>
         ) : null}
-        {state === 'loading' ? <ActivityIndicator size={20} color={Colors.foundation.black} /> : null}
+        {state === 'loading' ? (
+          <ActivityIndicator size={20} color={Colors.foundation.black} />
+        ) : null}
         {state === 'pending' ? <PendingCheckIcon /> : null}
       </View>
       <Text style={[styles.progressLabel, state === 'pending' && styles.progressLabelPending]}>
@@ -280,5 +333,40 @@ const styles = StyleSheet.create({
     ...Typography.body2Regular,
     color: Colors.foundation.grey400,
     textAlign: 'center',
+  },
+  errorState: {
+    position: 'absolute',
+    top: 228,
+    left: 35,
+    right: 35,
+    alignItems: 'center',
+  },
+  errorTitle: {
+    marginTop: 28,
+    ...Typography.title2,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+  },
+  errorDescription: {
+    marginTop: 10,
+    ...Typography.body2Regular,
+    color: GREY_700,
+    textAlign: 'center',
+  },
+  retryButton: {
+    width: '100%',
+    height: 48,
+    marginTop: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.foundation.black,
+  },
+  retryButtonText: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.white,
+  },
+  buttonPressed: {
+    opacity: 0.84,
   },
 });

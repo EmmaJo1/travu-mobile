@@ -62,7 +62,7 @@ function makeMonthCells(month: Date) {
   const monthIndex = month.getMonth();
   const firstDate = new Date(year, monthIndex, 1);
   const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-  const cells: Array<Date | null> = [];
+  const cells: (Date | null)[] = [];
 
   for (let i = 0; i < firstDate.getDay(); i += 1) {
     cells.push(null);
