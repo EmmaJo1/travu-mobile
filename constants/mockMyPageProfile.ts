@@ -1,13 +1,11 @@
-import type { ImageSourcePropType } from 'react-native';
-
 import { FIGMA_IMAGES } from '@/constants/figmaImages';
 
 export const MOCK_MY_PAGE_PROFILE = {
   userName: 'User_name',
   profileImage: FIGMA_IMAGES.profile.avatar,
+  basedIn: '',
   recordCount: 11,
   countryCount: 22,
   tripCount: 12,
-  /** 사용자 자기소개/상태 메시지 — ProfileSummary tagline prop으로 전달 */
-  tagline: '여행을 기록하며 나를 만듭니다',
+  tagline: '\uC5EC\uD589\uC744 \uAE30\uB85D\uD558\uBA70 \uB098\uB97C \uB9CC\uB4ED\uB2C8\uB2E4',
 } as const;

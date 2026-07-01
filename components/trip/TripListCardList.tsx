@@ -22,11 +22,17 @@ function chunkRows<T>(items: T[], size: number): T[][] {
 interface TripListCardListProps {
   trips: TripListItem[];
   onPressTrip: (trip: TripListItem) => void;
+  onLongPressTrip?: (trip: TripListItem) => void;
   style?: StyleProp<ViewStyle>;
 }
 
 /** Figma TripListCardList — 3열 카드 row + 바로 아래 shelf */
-export default function TripListCardList({ trips, onPressTrip, style }: TripListCardListProps) {
+export default function TripListCardList({
+  trips,
+  onLongPressTrip,
+  onPressTrip,
+  style,
+}: TripListCardListProps) {
   const rows = chunkRows(trips, CARDS_PER_ROW);
 
   return (
@@ -38,6 +44,7 @@ export default function TripListCardList({ trips, onPressTrip, style }: TripList
               <TripListCard
                 key={trip.id}
                 trip={trip}
+                onLongPress={onLongPressTrip ? () => onLongPressTrip(trip) : undefined}
                 onPress={() => onPressTrip(trip)}
                 style={styles.card}
               />

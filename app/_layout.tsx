@@ -1,4 +1,3 @@
-import 'react-native-gesture-handler';
 import 'react-native-reanimated';
 
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
@@ -12,6 +11,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { PhotoImportFlowProvider } from '@/providers/PhotoImportFlowProvider';
+import { UserProfileProvider } from '@/providers/UserProfileProvider';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -47,8 +47,9 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-          <PhotoImportFlowProvider>
-            <Stack>
+          <UserProfileProvider>
+            <PhotoImportFlowProvider>
+              <Stack>
               <Stack.Screen name="index" options={{ headerShown: false }} />
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
@@ -58,6 +59,7 @@ export default function RootLayout() {
               <Stack.Screen name="auth-start" options={{ headerShown: false }} />
               <Stack.Screen name="onboarding" options={{ headerShown: false }} />
               <Stack.Screen name="settings" options={{ headerShown: false }} />
+              <Stack.Screen name="profile-edit" options={{ headerShown: false }} />
               <Stack.Screen name="day-record-1207-2245" options={{ headerShown: false }} />
               <Stack.Screen name="figma-node-1207-2245" options={{ headerShown: false }} />
               <Stack.Screen name="place-detail" options={{ headerShown: false }} />
@@ -71,8 +73,9 @@ export default function RootLayout() {
               <Stack.Screen name="select-trip-destination" options={{ headerShown: false }} />
               <Stack.Screen name="select-trip-date" options={{ headerShown: false }} />
               <Stack.Screen name="trip-created" options={{ headerShown: false }} />
-            </Stack>
-          </PhotoImportFlowProvider>
+              </Stack>
+            </PhotoImportFlowProvider>
+          </UserProfileProvider>
           <StatusBar style="auto" />
         </ThemeProvider>
       </SafeAreaProvider>

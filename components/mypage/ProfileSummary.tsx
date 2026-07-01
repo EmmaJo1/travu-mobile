@@ -19,6 +19,7 @@ interface ProfileSummaryProps {
   recordCount?: number;
   countryCount: number;
   tripCount: number;
+  basedIn?: string;
   /** 사용자가 직접 작성·수정하는 자기소개/상태 메시지 (mock 또는 Supabase 연동 예정) */
   tagline?: string;
   style?: StyleProp<ViewStyle>;
@@ -44,6 +45,7 @@ export default function ProfileSummary({
   recordCount,
   countryCount,
   tripCount,
+  basedIn,
   tagline,
   style,
 }: ProfileSummaryProps) {
@@ -72,15 +74,23 @@ export default function ProfileSummary({
         </View>
       </View>
 
-      {tagline ? (
-        <Text
-          style={styles.tagline}
-          accessibilityRole="text"
-          accessibilityLabel={`자기소개, ${tagline}`}
-        >
-          {tagline}
-        </Text>
-      ) : null}
+      <View style={styles.profileTextBlock}>
+        {basedIn ? (
+          <Text style={styles.basedIn} accessibilityRole="text">
+            {'Based in '}
+            {basedIn}
+          </Text>
+        ) : null}
+        {tagline ? (
+          <Text
+            style={styles.tagline}
+            accessibilityRole="text"
+            accessibilityLabel={`Bio, ${tagline}`}
+          >
+            {tagline}
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -149,6 +159,15 @@ const styles = StyleSheet.create({
     width: 2,
     height: 40,
     backgroundColor: Colors.foundation.grey100,
+  },
+  profileTextBlock: {
+    gap: 4,
+  },
+  basedIn: {
+    ...Typography.captionRegular,
+    color: Colors.foundation.grey600,
+    textAlign: 'left',
+    alignSelf: 'stretch',
   },
   tagline: {
     ...Typography.body2Regular,

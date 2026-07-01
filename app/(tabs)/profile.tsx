@@ -1,6 +1,7 @@
 import { useRouter, type Href } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import React, { useMemo, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
@@ -20,8 +21,9 @@ import {
     type MyPageTrip,
     type TravelSortOption,
 } from '@/constants/mockMyPageTrips';
-import { useSavedMyPageTrips } from '@/constants/savedMyPageTrips';
+import { removeSavedMyPageTrip, useSavedMyPageTrips } from '@/constants/savedMyPageTrips';
 import { Colors, Spacing, Typography } from '@/constants/theme';
+import { useUserProfile } from '@/providers/UserProfileProvider';
 
 function normalizeCountValue(value?: string | null) {
   return value?.trim() ?? '';
@@ -82,11 +84,16 @@ export default function ProfileScreen() {
   const router = useRouter();
   const [sortOption, setSortOption] = useState<TravelSortOption>('latest');
   const [sortSheetVisible, setSortSheetVisible] = useState(false);
+  const [deletedTripIds, setDeletedTripIds] = useState<string[]>([]);
   const savedTrips = useSavedMyPageTrips();
+  const { profile } = useUserProfile();
 
   const myPageTrips = useMemo(
-    () => mergeSavedAndMockTrips(savedTrips),
-    [savedTrips],
+    () => {
+      const deletedTripIdSet = new Set(deletedTripIds);
+      return mergeSavedAndMockTrips(savedTrips).filter((trip) => !deletedTripIdSet.has(trip.id));
+    },
+    [deletedTripIds, savedTrips],
   );
   const profileStats = useMemo(
     () => ({
@@ -102,8 +109,33 @@ export default function ProfileScreen() {
   );
   const groupedTrips = useMemo(() => groupTripsByYear(sortedTrips), [sortedTrips]);
 
+  const handleRequestDeleteTrip = (tripId: string) => {
+    Alert.alert(
+      '삭제하시겠습니까?',
+      '이 여행 기록은 삭제 후 복구할 수 없어요.',
+      [
+        {
+          text: '취소',
+          style: 'cancel',
+        },
+        {
+          text: '삭제',
+          style: 'destructive',
+          onPress: () => {
+            // TODO: Delete archived trip data from backend when Supabase persistence is connected.
+            removeSavedMyPageTrip(tripId);
+            setDeletedTripIds((current) =>
+              current.includes(tripId) ? current : [...current, tripId],
+            );
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
+      <StatusBar style="dark" />
       <ScreenHeader
         style={styles.header}
         leftSlot={<Text style={styles.headerTitle}>나의 여정</Text>}
@@ -119,12 +151,14 @@ export default function ProfileScreen() {
         <View style={styles.profileBlock}>
           <View style={styles.profileSummarySection}>
             <ProfileSummary
-              userName={MOCK_MY_PAGE_PROFILE.userName}
-              profileImage={MOCK_MY_PAGE_PROFILE.profileImage}
+              userName={profile.name}
+              profileUri={profile.profileImageUri}
+              profileImage={profile.profileImageUri ? undefined : MOCK_MY_PAGE_PROFILE.profileImage}
               cityCount={profileStats.uniqueCityCount}
               countryCount={profileStats.uniqueCountryCount}
               tripCount={profileStats.totalTrips}
-              tagline={MOCK_MY_PAGE_PROFILE.tagline}
+              basedIn={profile.basedIn}
+              tagline={profile.bio}
             />
           </View>
         </View>
@@ -132,10 +166,13 @@ export default function ProfileScreen() {
         <View style={styles.travelContent}>
               <View style={styles.mapSection}>
                 <Text style={styles.sectionTitle}>나의 여행지도</Text>
-                <MapPlaceholderCard
-                  subtitle="다녀온 곳 자동 표시"
-                  align="top"
-                />
+                <View style={styles.mapCardWrap}>
+                  <MapPlaceholderCard
+                    subtitle="다녀온 곳 자동 표시"
+                    align="top"
+                    style={styles.mapCard}
+                  />
+                </View>
               </View>
 
               <View style={styles.tripListSection}>
@@ -167,6 +204,7 @@ export default function ProfileScreen() {
 
                       <TripListCardList
                         trips={yearTrips.map(toTripListItem)}
+                        onLongPressTrip={(trip) => handleRequestDeleteTrip(trip.id)}
                         onPressTrip={(trip) => {
                           router.push({
                             pathname: '/day-archive-detail',
@@ -184,9 +222,11 @@ export default function ProfileScreen() {
 
       <DaySelectorSheet
         visible={sortSheetVisible}
-        title="정렬"
         options={TRAVEL_SORT_OPTIONS}
         selectedId={sortOption}
+        hideTitle
+        hideOptionAccessory
+        compactOptions
         onSelectOption={(option) => {
           setSortOption(option.id as TravelSortOption);
           setSortSheetVisible(false);
@@ -231,6 +271,14 @@ const styles = StyleSheet.create({
   /** Figma 나의 여행지도 → 지도 카드: 12px */
   mapSection: {
     gap: Spacing.md,
+  },
+  mapCardWrap: {
+    width: '100%',
+    paddingHorizontal: Spacing.xl,
+  },
+  mapCard: {
+    maxWidth: '100%',
+    alignSelf: 'stretch',
   },
   /** Figma 여행 리스트 → Frame 187: 24px */
   tripListSection: {

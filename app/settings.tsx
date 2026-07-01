@@ -1,5 +1,5 @@
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import React from 'react';
 import {
   Alert,
@@ -80,8 +80,8 @@ export default function SettingsScreen() {
   const router = useRouter();
 
   const handlePressEditProfile = React.useCallback(() => {
-    // Connect profile edit route when the profile edit screen is added.
-  }, []);
+    router.push('/profile-edit' as Href);
+  }, [router]);
 
   const showLaterAlert = React.useCallback((message: string) => {
     Alert.alert(message);
@@ -98,7 +98,7 @@ export default function SettingsScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader
-        title="설정"
+        title={'\uC124\uC815'}
         onBackPress={() => router.back()}
         style={styles.header}
       />
@@ -108,9 +108,9 @@ export default function SettingsScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        <SettingSection title="계정">
+        <SettingSection title={'\uACC4\uC815'}>
           <SettingRow
-            label="프로필 편집"
+            label={'\uD504\uB85C\uD544 \uD3B8\uC9D1'}
             showChevron
             onPress={handlePressEditProfile}
           />

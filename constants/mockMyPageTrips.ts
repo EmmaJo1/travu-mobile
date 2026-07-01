@@ -174,13 +174,12 @@ export const MOCK_MY_PAGE_TRIPS: MyPageTrip[] = [
   },
 ];
 
-export type TravelSortOption = 'latest' | 'oldest' | 'duration' | 'photos';
+export type TravelSortOption = 'latest' | 'oldest' | 'duration';
 
 export const TRAVEL_SORT_LABELS: Record<TravelSortOption, string> = {
-  latest: '최신순',
-  oldest: '오래된순',
-  duration: '여행 기간 긴 순',
-  photos: '사진 많은 순',
+  latest: '\uCD5C\uC2E0\uC21C',
+  oldest: '\uC624\uB798\uB41C\uC21C',
+  duration: '\uC5EC\uD589\uAE30\uAC04 \uAE34 \uC21C',
 };
 
 function getTripStartTime(dateRangeLabel: string): number {
@@ -202,8 +201,6 @@ export function sortMyPageTrips(trips: MyPageTrip[], sort: TravelSortOption): My
       return copy.sort((a, b) => getTripStartTime(a.dateRangeLabel) - getTripStartTime(b.dateRangeLabel));
     case 'duration':
       return copy.sort((a, b) => b.daysCount - a.daysCount);
-    case 'photos':
-      return copy.sort((a, b) => b.photoCount - a.photoCount);
     case 'latest':
     default:
       return copy.sort((a, b) => getTripStartTime(b.dateRangeLabel) - getTripStartTime(a.dateRangeLabel));
