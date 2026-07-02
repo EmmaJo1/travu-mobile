@@ -71,10 +71,68 @@ type PlaceDetailRouteParams = {
 
 const DESTRUCTIVE = '#EB524D';
 const DATE_LABEL_PATTERN = /^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})(?:\s*(.*))?$/;
+const KOREAN_WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'] as const;
 const RECORD_SWIPE_ACTION_WIDTH = 104;
 const RECORD_SWIPE_OPEN_THRESHOLD = 8;
 const RECORD_SWIPE_DIRECTION_RATIO = 1.6;
 const RECORD_SHEET_DIM_DURATION = 100;
+
+const KOREAN_CITY_LABELS: Record<string, string> = {
+  paris: '파리',
+  '파리': '파리',
+  seoul: '서울',
+  '서울': '서울',
+  tokyo: '도쿄',
+  '도쿄': '도쿄',
+  osaka: '오사카',
+  '오사카': '오사카',
+  kyoto: '교토',
+  '교토': '교토',
+  sydney: '시드니',
+  '시드니': '시드니',
+  singapore: '싱가포르',
+  '싱가포르': '싱가포르',
+};
+
+const KOREAN_COUNTRY_LABELS: Record<string, string> = {
+  france: '프랑스',
+  '프랑스': '프랑스',
+  'south korea': '대한민국',
+  korea: '대한민국',
+  'korea, republic of': '대한민국',
+  'republic of korea': '대한민국',
+  '대한민국': '대한민국',
+  japan: '일본',
+  '일본': '일본',
+  australia: '호주',
+  '오스트레일리아': '호주',
+  '호주': '호주',
+  singapore: '싱가포르',
+  '싱가포르': '싱가포르',
+  'new zealand': '뉴질랜드',
+  '뉴질랜드': '뉴질랜드',
+  'united states': '미국',
+  'usa': '미국',
+  'u.s.a.': '미국',
+  '미국': '미국',
+};
+
+const KOREAN_CATEGORY_LABELS: Record<string, string> = {
+  'tourist attraction': '관광명소',
+  attraction: '관광명소',
+  sightseeing: '관광명소',
+  landmark: '랜드마크',
+  cafe: '카페',
+  café: '카페',
+  restaurant: '음식점',
+  food: '음식점',
+  park: '공원',
+  museum: '박물관',
+  gallery: '미술관',
+  beach: '해변',
+  viewpoint: '전망대',
+  nightscape: '야경명소',
+};
 
 function makePhotoId() {
   return `photo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -84,32 +142,111 @@ function createCurrentTimeLabel() {
   return formatPlaceEntryTime(convertDateToPlaceEntryTime(new Date()));
 }
 
-function formatSpacedDateLabel(label?: string) {
-  const trimmedLabel = label?.trim();
+function normalizeLookupKey(value?: string) {
+  return value
+    ?.trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[()]/g, '');
+}
 
-  if (!trimmedLabel) {
+function containsKorean(value: string) {
+  return /[가-힣]/.test(value);
+}
+
+function getKoreanCityLabel(value?: string) {
+  const trimmedValue = value?.trim();
+  const key = normalizeLookupKey(trimmedValue);
+
+  if (!trimmedValue) {
     return '';
   }
 
-  const matched = trimmedLabel.match(DATE_LABEL_PATTERN);
+  return (key && KOREAN_CITY_LABELS[key])
+    || (containsKorean(trimmedValue) ? trimmedValue : trimmedValue);
+}
 
-  if (!matched) {
-    return trimmedLabel;
+function getKoreanCountryLabel(value?: string) {
+  const trimmedValue = value?.trim();
+  const key = normalizeLookupKey(trimmedValue);
+
+  if (!trimmedValue) {
+    return '';
   }
 
-  const suffix = matched[4]?.trim();
-  return `${matched[1]}. ${Number(matched[2])}. ${Number(matched[3])}${suffix ? ` ${suffix}` : ''}`;
+  return (key && KOREAN_COUNTRY_LABELS[key])
+    || (containsKorean(trimmedValue) ? trimmedValue : trimmedValue);
+}
+
+function getKoreanCategoryLabel(value?: string) {
+  const trimmedValue = value?.trim();
+  const key = normalizeLookupKey(trimmedValue);
+
+  if (!trimmedValue) {
+    return '';
+  }
+
+  return (key && KOREAN_CATEGORY_LABELS[key])
+    || (containsKorean(trimmedValue) ? trimmedValue : '장소');
+}
+
+function parsePlaceDetailDate(value?: string | number | Date | null) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  if (typeof value === 'number') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return null;
+  }
+
+  const compactMatch = trimmedValue.match(/^(\d{4})[-.]\s*(\d{1,2})[-.]\s*(\d{1,2})/);
+  if (compactMatch) {
+    return new Date(Number(compactMatch[1]), Number(compactMatch[2]) - 1, Number(compactMatch[3]));
+  }
+
+  const date = new Date(trimmedValue);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatKoreanPlaceDateLabel(value?: string | number | Date | null) {
+  const date = parsePlaceDetailDate(value);
+
+  if (!date) {
+    const fallbackDate = value?.toString().trim().match(DATE_LABEL_PATTERN);
+    if (!fallbackDate) {
+      return value?.toString().trim() ?? '';
+    }
+
+    return `${fallbackDate[1]}. ${Number(fallbackDate[2])}. ${Number(fallbackDate[3])}`;
+  }
+
+  return [
+    `${date.getFullYear()}.`,
+    `${date.getMonth() + 1}.`,
+    date.getDate(),
+    KOREAN_WEEKDAY_LABELS[date.getDay()],
+  ].join(' ');
 }
 
 function getPlaceDetailDayOption(label?: string): PlaceEntryDayOption | undefined {
-  const matched = label?.trim().match(DATE_LABEL_PATTERN);
+  const parsedDate = parsePlaceDetailDate(label);
 
-  if (!matched) {
+  if (!parsedDate) {
     return undefined;
   }
 
-  const dateLabel = `${matched[1]}.${Number(matched[2])}.${Number(matched[3])}`;
-  const weekdayLabel = matched[4]?.trim() ?? '';
+  const dateLabel = `${parsedDate.getFullYear()}.${parsedDate.getMonth() + 1}.${parsedDate.getDate()}`;
+  const weekdayLabel = KOREAN_WEEKDAY_LABELS[parsedDate.getDay()];
 
   return {
     id: `place-detail-day-${dateLabel}`,
@@ -393,8 +530,6 @@ export default function PlaceDetailScreen() {
   const [isRecordModalOpen, setRecordModalOpen] = React.useState(false);
   const [isPlaceInfoModalOpen, setPlaceInfoModalOpen] = React.useState(false);
   const [recordModalMode, setRecordModalMode] = React.useState<'sheet' | 'screen'>('sheet');
-  const [recordComposerSource, setRecordComposerSource] =
-    React.useState<'placeDetail' | 'photoViewer'>('placeDetail');
   const [selectedRecordPhotoIds, setSelectedRecordPhotoIds] = React.useState<string[]>([]);
   const [recordDraft, setRecordDraft] = React.useState('');
   const [recordTimeLabel, setRecordTimeLabel] = React.useState(initialDetail?.timeLabel ?? '');
@@ -408,6 +543,27 @@ export default function PlaceDetailScreen() {
   const [gridSelectionResetSignal, setGridSelectionResetSignal] = React.useState(0);
   const recordPhotoPickerOpenTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordSheetRestoreTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const prepareRecordComposer = React.useCallback((photoIds: string[]) => {
+    setSelectedRecordPhotoIds(photoIds);
+    setRecordDraft('');
+    const earliestPhotoDate = getEarliestRecordPhotoTakenDate(photoIds, photos);
+    setRecordTimeLabel(
+      earliestPhotoDate
+        ? formatPlaceEntryTime(convertDateToPlaceEntryTime(earliestPhotoDate))
+        : createCurrentTimeLabel(),
+    );
+    setRecordTimeEdited(false);
+  }, [photos]);
+
+  const openRecordComposer = React.useCallback((
+    photoIds: string[],
+    mode: 'sheet' | 'screen',
+  ) => {
+    prepareRecordComposer(photoIds);
+    setRecordModalMode(mode);
+    setRecordModalOpen(true);
+  }, [prepareRecordComposer]);
 
   React.useEffect(() => () => {
     if (recordPhotoPickerOpenTimerRef.current) {
@@ -472,6 +628,18 @@ export default function PlaceDetailScreen() {
       })
       .map(({ record }) => record),
     [records],
+  );
+  const placeMetaLabel = React.useMemo(() => {
+    const category = getKoreanCategoryLabel(placeInfo.categoryLabel);
+    const city = getKoreanCityLabel(placeInfo.cityName);
+    const country = getKoreanCountryLabel(placeInfo.countryName);
+    const location = [city, country].filter(Boolean).join(', ');
+
+    return [category, location].filter(Boolean).join(' · ');
+  }, [placeInfo.categoryLabel, placeInfo.cityName, placeInfo.countryName]);
+  const dateDisplayLabel = React.useMemo(
+    () => formatKoreanPlaceDateLabel(placeInfo.dateLabel),
+    [placeInfo.dateLabel],
   );
   const placeInfoDayOption = React.useMemo(
     () => getPlaceDetailDayOption(placeInfo.dateLabel),
@@ -608,25 +776,6 @@ export default function PlaceDetailScreen() {
     setGridOpen(false);
   };
 
-  const openRecordComposer = (
-    photoIds: string[],
-    mode: 'sheet' | 'screen',
-    source: 'placeDetail' | 'photoViewer' = 'placeDetail',
-  ) => {
-    setSelectedRecordPhotoIds(photoIds);
-    setRecordModalMode(mode);
-    setRecordComposerSource(source);
-    setRecordDraft('');
-    const earliestPhotoDate = getEarliestRecordPhotoTakenDate(photoIds, photos);
-    setRecordTimeLabel(
-      earliestPhotoDate
-        ? formatPlaceEntryTime(convertDateToPlaceEntryTime(earliestPhotoDate))
-        : createCurrentTimeLabel(),
-    );
-    setRecordTimeEdited(false);
-    setRecordModalOpen(true);
-  };
-
   const handleHeroScrollEnd = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     setHeroIndex(Math.round(event.nativeEvent.contentOffset.x / screenWidth));
   };
@@ -681,22 +830,33 @@ export default function PlaceDetailScreen() {
     setRecordTimeLabel(createCurrentTimeLabel());
     setRecordTimeEdited(false);
     setRecordModalOpen(false);
-    setRecordComposerSource('placeDetail');
-
-    if (recordComposerSource !== 'photoViewer') {
-      setViewerOpen(false);
-      setGridOpen(false);
-    }
   };
 
   const handleCloseRecordModal = () => {
     setRecordModalOpen(false);
-    setRecordComposerSource('placeDetail');
   };
 
   const handlePressAddRecord = () => {
     setMoreOpen(false);
     openRecordComposer([], 'sheet');
+  };
+
+  const prepareRecordFromMainViewer = (index: number) => {
+    const targetPhoto = viewerPhotos[index];
+    if (!targetPhoto) {
+      return;
+    }
+
+    prepareRecordComposer([targetPhoto.id]);
+  };
+
+  const prepareRecordFromGridViewer = (index: number) => {
+    const targetPhoto = photos[index];
+    if (!targetPhoto) {
+      return;
+    }
+
+    prepareRecordComposer([targetPhoto.id]);
   };
 
   const handleOpenRecordPhotoPicker = () => {
@@ -948,12 +1108,10 @@ export default function PlaceDetailScreen() {
 
           <View style={styles.placeInfo}>
             <Text style={styles.placeTitle}>{placeInfo.placeName}</Text>
-            <View style={styles.metaRow}>
-              <Text style={styles.placeMeta}>{placeInfo.cityName}</Text>
-              <View style={styles.metaDot} />
-              <Text style={styles.placeMeta}>{placeInfo.countryName}</Text>
-            </View>
-            <Text style={styles.dateText}>{formatSpacedDateLabel(placeInfo.dateLabel)}</Text>
+            {placeMetaLabel ? (
+              <Text style={styles.placeMeta}>{placeMetaLabel}</Text>
+            ) : null}
+            <Text style={styles.dateText}>{dateDisplayLabel}</Text>
           </View>
         </View>
 
@@ -1084,7 +1242,7 @@ export default function PlaceDetailScreen() {
               : 'default'
         }
         photos={photos}
-        transitionDuration={gridSelectionPurpose === 'linkRecord' ? 200 : 400}
+        transitionDuration={gridSelectionPurpose === 'linkRecord' ? 200 : 300}
         viewerActionLabel={isGridViewOnly ? undefined : '\uAE30\uB85D \uCD94\uAC00\uD558\uAE30'}
         viewerActions={isGridViewOnly ? [] : [
           {
@@ -1116,12 +1274,27 @@ export default function PlaceDetailScreen() {
             },
           },
         ]}
-        onPressViewerAction={isGridViewOnly ? undefined : (index) => {
-          const targetPhoto = photos[index];
-          if (targetPhoto) {
-            openRecordComposer([targetPhoto.id], 'sheet', 'photoViewer');
-          }
-        }}
+        onPressViewerAction={isGridViewOnly ? undefined : prepareRecordFromGridViewer}
+        renderViewerActionSheet={isGridViewOnly ? undefined : ({ closeSheet }) => (
+          <RecordCreateModal
+            allowPhotoPicker={false}
+            draft={recordDraft}
+            mode="sheet"
+            onChangeDraft={setRecordDraft}
+            onChangeTime={handleChangeRecordTime}
+            onClose={closeSheet}
+            onOpenPhotoPicker={() => undefined}
+            onRemovePhoto={handleUnlinkRecordPhoto}
+            onSave={() => {
+              handleSaveRecord();
+              closeSheet();
+            }}
+            photos={selectedRecordPhotos}
+            presentation="inline"
+            timeLabel={recordTimeLabel}
+            visible
+          />
+        )}
         visible={isGridOpen}
       />
 
@@ -1174,12 +1347,27 @@ export default function PlaceDetailScreen() {
           setViewerPhotoIds(null);
           setViewerViewOnly(false);
         }}
-        onPressAction={isViewerViewOnly ? undefined : (index) => {
-          const targetPhoto = viewerPhotos[index];
-          if (targetPhoto) {
-            openRecordComposer([targetPhoto.id], 'sheet', 'photoViewer');
-          }
-        }}
+        onPressAction={isViewerViewOnly ? undefined : prepareRecordFromMainViewer}
+        renderActionSheet={isViewerViewOnly ? undefined : ({ closeSheet }) => (
+          <RecordCreateModal
+            allowPhotoPicker={false}
+            draft={recordDraft}
+            mode="sheet"
+            onChangeDraft={setRecordDraft}
+            onChangeTime={handleChangeRecordTime}
+            onClose={closeSheet}
+            onOpenPhotoPicker={() => undefined}
+            onRemovePhoto={handleUnlinkRecordPhoto}
+            onSave={() => {
+              handleSaveRecord();
+              closeSheet();
+            }}
+            photos={selectedRecordPhotos}
+            presentation="inline"
+            timeLabel={recordTimeLabel}
+            visible
+          />
+        )}
         visible={isViewerOpen}
       />
 
@@ -1484,6 +1672,7 @@ interface PhotoGridModalProps {
   viewerActionLabel?: string;
   viewerActions?: FullScreenImageViewerAction[];
   onPressViewerAction?: (index: number) => void;
+  renderViewerActionSheet?: (params: { currentIndex: number; closeSheet: () => void }) => React.ReactNode;
 }
 
 function PhotoGridModal({
@@ -1503,6 +1692,7 @@ function PhotoGridModal({
   viewerActionLabel,
   viewerActions = [],
   onPressViewerAction,
+  renderViewerActionSheet,
 }: PhotoGridModalProps) {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -1595,7 +1785,12 @@ function PhotoGridModal({
   }
 
   return (
-    <Modal animationType="none" onRequestClose={handleRequestClose} visible={isPresented}>
+    <Modal
+      animationType="none"
+      onRequestClose={handleRequestClose}
+      transparent
+      visible={isPresented}
+    >
       <Animated.View
         style={[
           styles.modalScreen,
@@ -1730,6 +1925,7 @@ function PhotoGridModal({
           onClose={() => setInlineViewerOpen(false)}
           onPressAction={onPressViewerAction}
           presentation="inline"
+          renderActionSheet={renderViewerActionSheet}
           visible={isInlineViewerOpen}
         />
       </Animated.View>
@@ -1743,6 +1939,8 @@ interface RecordCreateModalProps {
   mode: 'sheet' | 'screen';
   photos: PlaceDetailPhoto[];
   timeLabel?: string;
+  presentation?: 'modal' | 'inline';
+  allowPhotoPicker?: boolean;
   onChangeDraft: (value: string) => void;
   onChangeTime: (value: string) => void;
   onClose: () => void;
@@ -1757,6 +1955,8 @@ function RecordCreateModal({
   mode,
   photos,
   timeLabel,
+  presentation = 'modal',
+  allowPhotoPicker = true,
   onChangeDraft,
   onChangeTime,
   onClose,
@@ -1770,6 +1970,7 @@ function RecordCreateModal({
   const dimOpacity = React.useRef(new Animated.Value(0)).current;
   const sheetTranslateY = React.useRef(new Animated.Value(320)).current;
   const isScreenMode = mode === 'screen';
+  const isInlinePresentation = presentation === 'inline';
   const saveDisabled = !draft.trim();
   const showMemoPlaceholder = draft.length === 0;
 
@@ -1842,14 +2043,16 @@ function RecordCreateModal({
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <View style={styles.selectedPhotoRow}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={onOpenPhotoPicker}
-              style={[styles.selectedPhotoThumb, styles.linkPhotoButton]}
-            >
-              <Feather name="plus" size={20} color={Colors.foundation.grey600} />
-              <Text style={styles.linkPhotoButtonText}>{'\uC0AC\uC9C4 \uCD94\uAC00'}</Text>
-            </Pressable>
+            {allowPhotoPicker ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={onOpenPhotoPicker}
+                style={[styles.selectedPhotoThumb, styles.linkPhotoButton]}
+              >
+                <Feather name="plus" size={20} color={Colors.foundation.grey600} />
+                <Text style={styles.linkPhotoButtonText}>{'\uC0AC\uC9C4 \uCD94\uAC00'}</Text>
+              </Pressable>
+            ) : null}
             {photos.map((photo) => (
               <View key={photo.id} style={styles.linkedPhotoThumbWrap}>
                 <Image resizeMode="cover" source={photo.source} style={styles.selectedPhotoThumb} />
@@ -1928,25 +2131,37 @@ function RecordCreateModal({
     );
   }
 
+  const sheetContent = (
+    <View style={styles.sheetOverlay}>
+      <Animated.View style={[styles.sheetDim, { opacity: dimOpacity }]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      </Animated.View>
+      <Animated.View
+        style={[
+          styles.recordSheet,
+          {
+            paddingBottom: insets.bottom + Spacing.xl,
+            transform: [{ translateY: sheetTranslateY }],
+          },
+        ]}
+      >
+        <View style={styles.sheetHandle} />
+        {content}
+      </Animated.View>
+    </View>
+  );
+
+  if (isInlinePresentation) {
+    if (!visible && !isSheetPresented) {
+      return null;
+    }
+
+    return <View style={styles.inlineRecordSheetOverlay}>{sheetContent}</View>;
+  }
+
   return (
     <Modal animationType="none" transparent visible={visible || isSheetPresented} onRequestClose={onClose}>
-      <View style={styles.sheetOverlay}>
-        <Animated.View style={[styles.sheetDim, { opacity: dimOpacity }]}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        </Animated.View>
-        <Animated.View
-          style={[
-            styles.recordSheet,
-            {
-              paddingBottom: insets.bottom + Spacing.xl,
-              transform: [{ translateY: sheetTranslateY }],
-            },
-          ]}
-        >
-          <View style={styles.sheetHandle} />
-          {content}
-        </Animated.View>
-      </View>
+      {sheetContent}
     </Modal>
   );
 }
@@ -2141,17 +2356,6 @@ const styles = StyleSheet.create({
     fontSize: 20,
     lineHeight: 24,
     color: Colors.foundation.black,
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-  },
-  metaDot: {
-    width: 2,
-    height: 2,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.foundation.grey600,
   },
   placeMeta: {
     ...Typography.body2Emphasized,
@@ -2470,6 +2674,10 @@ const styles = StyleSheet.create({
   sheetOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
+  },
+  inlineRecordSheetOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 60,
   },
   sheetDim: {
     ...StyleSheet.absoluteFillObject,

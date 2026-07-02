@@ -35,6 +35,7 @@ interface FullScreenImageViewerProps {
   onPressAction?: (index: number) => void;
   actions?: FullScreenImageViewerAction[];
   leadingAction?: FullScreenImageViewerAction;
+  renderActionSheet?: (params: { currentIndex: number; closeSheet: () => void }) => React.ReactNode;
   presentation?: 'modal' | 'inline';
 }
 
@@ -51,6 +52,7 @@ export default function FullScreenImageViewer({
   onPressAction,
   actions = [],
   leadingAction,
+  renderActionSheet,
   presentation = 'modal',
 }: FullScreenImageViewerProps) {
   const listRef = useRef<FlatList<ImageSourcePropType>>(null);
@@ -59,6 +61,7 @@ export default function FullScreenImageViewer({
   const selectedIndex = clampIndex(initialIndex, images.length);
   const [currentIndex, setCurrentIndex] = useState(selectedIndex);
   const [isActionMenuOpen, setActionMenuOpen] = useState(false);
+  const [isActionSheetOpen, setActionSheetOpen] = useState(false);
 
   useEffect(() => {
     if (!visible || images.length === 0) {
@@ -67,6 +70,7 @@ export default function FullScreenImageViewer({
 
     setCurrentIndex(selectedIndex);
     setActionMenuOpen(false);
+    setActionSheetOpen(false);
     const animationFrameId = requestAnimationFrame(() => {
       listRef.current?.scrollToOffset({
         animated: false,
@@ -87,6 +91,25 @@ export default function FullScreenImageViewer({
     );
   };
 
+  const closeActionSheet = () => setActionSheetOpen(false);
+
+  const handleClose = () => {
+    if (isActionSheetOpen) {
+      closeActionSheet();
+      return;
+    }
+
+    onClose();
+  };
+
+  const handlePressBottomAction = () => {
+    onPressAction?.(currentIndex);
+
+    if (renderActionSheet) {
+      setActionSheetOpen(true);
+    }
+  };
+
   const viewerContent = (
     <View style={styles.viewer}>
         <FlatList
@@ -103,7 +126,7 @@ export default function FullScreenImageViewer({
           onMomentumScrollEnd={handleMomentumScrollEnd}
           pagingEnabled
           renderItem={({ item }) => (
-            <Pressable accessibilityRole="button" onPress={onClose} style={[styles.page, { width }]}>
+            <Pressable accessibilityRole="button" onPress={handleClose} style={[styles.page, { width }]}>
               <Image resizeMode="contain" source={item} style={styles.image} />
             </Pressable>
           )}
@@ -133,7 +156,7 @@ export default function FullScreenImageViewer({
             accessibilityRole="button"
             activeOpacity={0.7}
             hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-            onPress={onClose}
+            onPress={handleClose}
             style={[
               styles.closeButton,
               actions.length > 0 && !leadingAction ? styles.closeButtonLeft : styles.closeButtonRight,
@@ -190,16 +213,20 @@ export default function FullScreenImageViewer({
             </Text>
           ) : null}
 
-          {actionLabel && onPressAction ? (
+          {actionLabel && (onPressAction || renderActionSheet) ? (
             <Pressable
               accessibilityRole="button"
-              onPress={() => onPressAction(currentIndex)}
+              onPress={handlePressBottomAction}
               style={[styles.bottomAction, { bottom: insets.bottom + 24 }]}
             >
               <Ionicons color={Colors.foundation.white} name="create-outline" size={18} />
               <Text style={styles.bottomActionText}>{actionLabel}</Text>
             </Pressable>
           ) : null}
+
+          {isActionSheetOpen && renderActionSheet
+            ? renderActionSheet({ currentIndex, closeSheet: closeActionSheet })
+            : null}
     </View>
     </View>
   );
@@ -209,7 +236,7 @@ export default function FullScreenImageViewer({
   }
 
   return (
-    <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
+    <Modal animationType="fade" onRequestClose={handleClose} transparent visible={visible}>
       {viewerContent}
     </Modal>
   );
