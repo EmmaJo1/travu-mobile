@@ -20,6 +20,7 @@ export const FIGMA_IMAGES = {
   },
   onboarding: {
     firstFlight: require('../assets/images/onboarding-first-flight.jpg') as ImageSourcePropType,
+    photoLibraryMain: require('../assets/images/onboarding-photo-library-main.jpg') as ImageSourcePropType,
   },
   record: RECORD_TRIP_IMAGES,
   dayEntry: RECORD_DAY_ENTRY_IMAGES,

@@ -463,7 +463,7 @@ function PhotoLibraryPage({
             variant="right"
           />
           <PhotoMemoryCard
-            coverImage={FIGMA_IMAGES.record.sydney.cover}
+            coverImage={FIGMA_IMAGES.onboarding.photoLibraryMain}
             thumbnails={FIGMA_IMAGES.record.sydney.dayThumbnails}
             scale={layoutScale}
             style={[
