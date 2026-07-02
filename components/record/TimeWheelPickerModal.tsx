@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import * as Haptics from 'expo-haptics';
 import {
   Animated,
   FlatList,
@@ -21,10 +22,16 @@ const VISIBLE_ITEM_COUNT = 5;
 const WHEEL_HEIGHT = ITEM_HEIGHT * VISIBLE_ITEM_COUNT;
 const SHEET_ANIM_DURATION = 180;
 const SHEET_OFFSCREEN_Y = 420;
+const HAPTIC_MIN_INTERVAL_MS = 28;
+const INTERACTION_RESET_DELAY_MS = 120;
 
 const HOURS = Array.from({ length: 12 }, (_, index) => index + 1);
 const MINUTES = Array.from({ length: 60 }, (_, index) => index);
 const MERIDIEMS: PlaceEntryMeridiem[] = ['AM', 'PM'];
+
+function triggerSelectionHaptic() {
+  Haptics.selectionAsync().catch(() => undefined);
+}
 
 interface WheelColumnProps<T> {
   accessibilityLabel: string;
@@ -42,7 +49,25 @@ function WheelColumn<T>({
   onChange,
 }: WheelColumnProps<T>) {
   const listRef = useRef<FlatList<T>>(null);
+  const lastEmittedValueRef = useRef(selectedValue);
+  const lastHapticIndexRef = useRef(Math.max(0, items.indexOf(selectedValue)));
+  const lastHapticAtRef = useRef(0);
+  const isUserScrollingRef = useRef(false);
+  const interactionResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedIndex = Math.max(0, items.indexOf(selectedValue));
+
+  useEffect(() => {
+    lastEmittedValueRef.current = selectedValue;
+    lastHapticIndexRef.current = selectedIndex;
+  }, [selectedIndex, selectedValue]);
+
+  useEffect(() => {
+    return () => {
+      if (interactionResetTimeoutRef.current) {
+        clearTimeout(interactionResetTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const timeoutId = setTimeout(() => {
@@ -55,13 +80,70 @@ function WheelColumn<T>({
     return () => clearTimeout(timeoutId);
   }, [selectedIndex]);
 
-  const handleScrollEnd = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const nextIndex = Math.max(
-      0,
-      Math.min(items.length - 1, Math.round(event.nativeEvent.contentOffset.y / ITEM_HEIGHT)),
-    );
+  const clearInteractionReset = () => {
+    if (interactionResetTimeoutRef.current) {
+      clearTimeout(interactionResetTimeoutRef.current);
+      interactionResetTimeoutRef.current = null;
+    }
+  };
 
-    onChange(items[nextIndex]);
+  const scheduleInteractionReset = () => {
+    clearInteractionReset();
+    interactionResetTimeoutRef.current = setTimeout(() => {
+      isUserScrollingRef.current = false;
+      interactionResetTimeoutRef.current = null;
+    }, INTERACTION_RESET_DELAY_MS);
+  };
+
+  const getIndexFromOffset = (offsetY: number) => (
+    Math.max(0, Math.min(items.length - 1, Math.round(offsetY / ITEM_HEIGHT)))
+  );
+
+  const handleScrollBeginDrag = () => {
+    clearInteractionReset();
+    isUserScrollingRef.current = true;
+    lastHapticIndexRef.current = selectedIndex;
+    lastHapticAtRef.current = 0;
+  };
+
+  const handleMomentumScrollBegin = () => {
+    clearInteractionReset();
+    isUserScrollingRef.current = true;
+  };
+
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (!isUserScrollingRef.current) {
+      return;
+    }
+
+    const nextIndex = getIndexFromOffset(event.nativeEvent.contentOffset.y);
+
+    if (nextIndex === lastHapticIndexRef.current) {
+      return;
+    }
+
+    lastHapticIndexRef.current = nextIndex;
+
+    const now = Date.now();
+
+    if (now - lastHapticAtRef.current < HAPTIC_MIN_INTERVAL_MS) {
+      return;
+    }
+
+    lastHapticAtRef.current = now;
+    triggerSelectionHaptic();
+  };
+
+  const handleScrollEnd = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const nextIndex = getIndexFromOffset(event.nativeEvent.contentOffset.y);
+    const nextValue = items[nextIndex];
+
+    if (Object.is(nextValue, lastEmittedValueRef.current)) {
+      return;
+    }
+
+    lastEmittedValueRef.current = nextValue;
+    onChange(nextValue);
   };
 
   return (
@@ -77,8 +159,17 @@ function WheelColumn<T>({
         offset: ITEM_HEIGHT * index,
       })}
       keyExtractor={(item) => String(item)}
-      onMomentumScrollEnd={handleScrollEnd}
-      onScrollEndDrag={handleScrollEnd}
+      onMomentumScrollBegin={handleMomentumScrollBegin}
+      onMomentumScrollEnd={(event) => {
+        handleScrollEnd(event);
+        isUserScrollingRef.current = false;
+      }}
+      onScroll={handleScroll}
+      onScrollBeginDrag={handleScrollBeginDrag}
+      onScrollEndDrag={(event) => {
+        handleScrollEnd(event);
+        scheduleInteractionReset();
+      }}
       renderItem={({ item, index }) => {
         const distance = Math.abs(index - selectedIndex);
 
@@ -97,6 +188,7 @@ function WheelColumn<T>({
           </View>
         );
       }}
+      scrollEventThrottle={16}
       showsVerticalScrollIndicator={false}
       snapToAlignment="start"
       snapToInterval={ITEM_HEIGHT}
