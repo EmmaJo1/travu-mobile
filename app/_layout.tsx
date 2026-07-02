@@ -59,6 +59,7 @@ export default function RootLayout() {
               <Stack.Screen name="auth-start" options={{ headerShown: false }} />
               <Stack.Screen name="onboarding" options={{ headerShown: false }} />
               <Stack.Screen name="settings" options={{ headerShown: false }} />
+              <Stack.Screen name="legal/[document]" options={{ headerShown: false }} />
               <Stack.Screen name="profile-edit" options={{ headerShown: false }} />
               <Stack.Screen name="day-record-1207-2245" options={{ headerShown: false }} />
               <Stack.Screen name="figma-node-1207-2245" options={{ headerShown: false }} />

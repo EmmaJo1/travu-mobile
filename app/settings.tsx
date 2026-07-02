@@ -1,8 +1,12 @@
 import { Feather } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { useRouter, type Href } from 'expo-router';
 import React from 'react';
 import {
   Alert,
+  AppState,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,6 +17,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Text from '@/components/common/AppText';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import { Colors, Spacing, Typography } from '@/constants/theme';
+
+type PermissionStatusLabel = '허용됨' | '제한됨' | '허용 안 됨' | '확인 필요';
 
 interface SettingRowProps {
   label: string;
@@ -76,8 +82,70 @@ function SettingRow({
   );
 }
 
+function getPhotoPermissionLabel(
+  permission: ImagePicker.MediaLibraryPermissionResponse,
+): PermissionStatusLabel {
+  if (permission.status === 'granted') {
+    return permission.accessPrivileges === 'limited' ? '제한됨' : '허용됨';
+  }
+
+  if (permission.status === 'denied') {
+    return '허용 안 됨';
+  }
+
+  return '확인 필요';
+}
+
+function getLocationPermissionLabel(
+  permission: Location.LocationPermissionResponse,
+): PermissionStatusLabel {
+  if (permission.status === 'granted') {
+    return '허용됨';
+  }
+
+  if (permission.status === 'denied') {
+    return '허용 안 됨';
+  }
+
+  return '확인 필요';
+}
+
 export default function SettingsScreen() {
   const router = useRouter();
+  const [photoPermissionLabel, setPhotoPermissionLabel] =
+    React.useState<PermissionStatusLabel>('확인 필요');
+  const [locationPermissionLabel, setLocationPermissionLabel] =
+    React.useState<PermissionStatusLabel>('확인 필요');
+
+  const refreshPermissionStatus = React.useCallback(async () => {
+    const [photoPermission, locationPermission] = await Promise.allSettled([
+      ImagePicker.getMediaLibraryPermissionsAsync(),
+      Location.getForegroundPermissionsAsync(),
+    ]);
+
+    setPhotoPermissionLabel(
+      photoPermission.status === 'fulfilled'
+        ? getPhotoPermissionLabel(photoPermission.value)
+        : '확인 필요',
+    );
+    setLocationPermissionLabel(
+      locationPermission.status === 'fulfilled'
+        ? getLocationPermissionLabel(locationPermission.value)
+        : '확인 필요',
+    );
+  }, []);
+
+  React.useEffect(() => {
+    refreshPermissionStatus().catch(() => undefined);
+
+    const appStateSubscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        refreshPermissionStatus().catch(() => undefined);
+      }
+    });
+
+    return () => appStateSubscription.remove();
+  }, [refreshPermissionStatus]);
 
   const handlePressEditProfile = React.useCallback(() => {
     router.push('/profile-edit' as Href);
@@ -88,12 +156,22 @@ export default function SettingsScreen() {
   }, []);
 
   const handlePressPermissions = React.useCallback(() => {
-    showLaterAlert('권한 설정 연결은 추후 구현 예정입니다.');
-  }, [showLaterAlert]);
+    Linking.openSettings().catch(() => {
+      Alert.alert('설정 화면을 열 수 없어요.');
+    });
+  }, []);
 
   const handlePressInfoLink = React.useCallback(() => {
     showLaterAlert('외부 링크 연결은 추후 구현 예정입니다.');
   }, [showLaterAlert]);
+
+  const handlePressPrivacyPolicy = React.useCallback(() => {
+    router.push('/legal/privacy-policy' as Href);
+  }, [router]);
+
+  const handlePressTermsOfService = React.useCallback(() => {
+    router.push('/legal/terms-of-service' as Href);
+  }, [router]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -130,14 +208,14 @@ export default function SettingsScreen() {
         <SettingSection title="권한 및 앱 설정">
           <SettingRow
             label="사진 접근 권한"
-            value="허용됨"
+            value={photoPermissionLabel}
             showChevron
             onPress={handlePressPermissions}
           />
           <View style={styles.divider} />
           <SettingRow
             label="위치 정보 권한"
-            value="허용됨"
+            value={locationPermissionLabel}
             showChevron
             onPress={handlePressPermissions}
           />
@@ -147,13 +225,13 @@ export default function SettingsScreen() {
           <SettingRow
             label="개인정보 처리방침"
             showChevron
-            onPress={handlePressInfoLink}
+            onPress={handlePressPrivacyPolicy}
           />
           <View style={styles.divider} />
           <SettingRow
             label="서비스 이용약관"
             showChevron
-            onPress={handlePressInfoLink}
+            onPress={handlePressTermsOfService}
           />
           <View style={styles.divider} />
           <SettingRow

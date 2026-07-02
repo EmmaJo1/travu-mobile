@@ -5,6 +5,16 @@ import { MOCK_MY_PAGE_PROFILE } from '@/constants/mockMyPageProfile';
 export type UserProfile = {
   name: string;
   basedIn: string;
+  basedInPlace?: {
+    displayName: string;
+    city: string;
+    region?: string;
+    country: string;
+    countryCode?: string;
+    latitude?: number;
+    longitude?: number;
+    placeId?: string;
+  };
   bio: string;
   travelStyles: string[];
   profileImageUri?: string;
