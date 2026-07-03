@@ -10,6 +10,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { AuthProvider } from '@/providers/AuthProvider';
 import { PhotoImportFlowProvider } from '@/providers/PhotoImportFlowProvider';
 import QueryProvider from '@/providers/QueryProvider';
 import { UserProfileProvider } from '@/providers/UserProfileProvider';
@@ -49,9 +50,10 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
           <QueryProvider>
-            <UserProfileProvider>
-              <PhotoImportFlowProvider>
-                <Stack>
+            <AuthProvider>
+              <UserProfileProvider>
+                <PhotoImportFlowProvider>
+                  <Stack>
               <Stack.Screen name="index" options={{ headerShown: false }} />
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
@@ -76,9 +78,10 @@ export default function RootLayout() {
               <Stack.Screen name="select-trip-destination" options={{ headerShown: false }} />
               <Stack.Screen name="select-trip-date" options={{ headerShown: false }} />
               <Stack.Screen name="trip-created" options={{ headerShown: false }} />
-                </Stack>
-              </PhotoImportFlowProvider>
-            </UserProfileProvider>
+                  </Stack>
+                </PhotoImportFlowProvider>
+              </UserProfileProvider>
+            </AuthProvider>
           </QueryProvider>
           <StatusBar style="auto" />
         </ThemeProvider>
