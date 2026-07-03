@@ -11,6 +11,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { PhotoImportFlowProvider } from '@/providers/PhotoImportFlowProvider';
+import QueryProvider from '@/providers/QueryProvider';
 import { UserProfileProvider } from '@/providers/UserProfileProvider';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -47,9 +48,10 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-          <UserProfileProvider>
-            <PhotoImportFlowProvider>
-              <Stack>
+          <QueryProvider>
+            <UserProfileProvider>
+              <PhotoImportFlowProvider>
+                <Stack>
               <Stack.Screen name="index" options={{ headerShown: false }} />
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
@@ -74,9 +76,10 @@ export default function RootLayout() {
               <Stack.Screen name="select-trip-destination" options={{ headerShown: false }} />
               <Stack.Screen name="select-trip-date" options={{ headerShown: false }} />
               <Stack.Screen name="trip-created" options={{ headerShown: false }} />
-              </Stack>
-            </PhotoImportFlowProvider>
-          </UserProfileProvider>
+                </Stack>
+              </PhotoImportFlowProvider>
+            </UserProfileProvider>
+          </QueryProvider>
           <StatusBar style="auto" />
         </ThemeProvider>
       </SafeAreaProvider>

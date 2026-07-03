@@ -53,3 +53,4 @@ assets/images/alignment-check-qr.png
 .expo-tmp-export2/
 .expo-tmp-export3/
 debug-*.log
+.env
