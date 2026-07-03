@@ -27,8 +27,8 @@ type AuthContextValue = {
   profile: AuthProfile | null;
   refreshProfile: () => Promise<AuthProfile | null>;
   session: Session | null;
-  signInWithApple: () => Promise<void>;
-  signInWithGoogle: () => Promise<void>;
+  signInWithApple: () => Promise<boolean>;
+  signInWithGoogle: () => Promise<boolean>;
   signOut: () => Promise<void>;
   user: User | null;
 };
@@ -77,6 +77,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setUser(result.user);
         setProfile(result.profile);
       }
+
+      return Boolean(result.session?.user);
     } finally {
       if (isMountedRef.current) {
         setIsLoading(false);
@@ -95,6 +97,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setUser(result.user);
         setProfile(result.profile);
       }
+
+      return Boolean(result.session?.user);
     } finally {
       if (isMountedRef.current) {
         setIsLoading(false);

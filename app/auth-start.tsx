@@ -20,7 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { type Href, router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Animated, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+  Alert, Animated, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import Text from '@/components/common/AppText';
 
 import { Path, Svg } from 'react-native-svg';
@@ -28,8 +28,10 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import SheetActionButton from '@/components/common/SheetActionButton';
 import { LEGAL_DOCUMENTS } from '@/constants/legalDocuments';
 import { Colors, FontFamily, Typography } from '@/constants/theme';
+import { useAuth } from '@/providers/AuthProvider';
 
 type SheetType = 'none' | 'terms' | 'privacy' | 'consent';
+type PendingAuthProvider = 'google' | 'apple' | null;
 
 /** 공식 Google G 로고 — 18×18 viewBox 기반 4색 SVG 경로 */
 function GoogleLogo() {
@@ -266,16 +268,55 @@ function DetailContent({ title, body, onClose }: { title: string; body: string; 
 
 export default function AuthStartScreen() {
   const insets = useSafeAreaInsets();
+  const { signInWithApple, signInWithGoogle } = useAuth();
   const [sheet, setSheet] = useState<SheetType>('none');
   const [agreedTerms, setAgreedTerms] = useState(true);
   const [agreedPrivacy, setAgreedPrivacy] = useState(true);
+  const [pendingAuthProvider, setPendingAuthProvider] = useState<PendingAuthProvider>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   const canProceed = agreedTerms && agreedPrivacy;
 
-  const handleAgree = () => {
-    if (!canProceed) return;
+  const openConsentSheet = (provider: Exclude<PendingAuthProvider, null>) => {
+    if (isSubmitting) return;
+
+    setPendingAuthProvider(provider);
+    setSheet('consent');
+  };
+
+  const closeSheet = () => {
     setSheet('none');
-    router.replace('/onboarding' as Href);
+    setPendingAuthProvider(null);
+  };
+
+  const handleAgree = async () => {
+    if (!canProceed) return;
+    if (!pendingAuthProvider || isSubmittingRef.current) return;
+
+    const provider = pendingAuthProvider;
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+
+    try {
+      setSheet('none');
+      const didSignIn = provider === 'google'
+        ? await signInWithGoogle()
+        : await signInWithApple();
+
+      if (didSignIn) {
+        router.replace('/onboarding' as Href);
+      }
+    } catch {
+      Alert.alert(
+        '\uB85C\uADF8\uC778\uC744 \uC644\uB8CC\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694.',
+        '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+      );
+    } finally {
+      isSubmittingRef.current = false;
+      setPendingAuthProvider(null);
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -294,7 +335,7 @@ export default function AuthStartScreen() {
           <TouchableOpacity
             style={[styles.socialBtn, styles.appleBtn]}
             activeOpacity={0.85}
-            onPress={() => setSheet('consent')}
+            onPress={() => openConsentSheet('apple')}
           >
             <Ionicons name="logo-apple" size={24} color="#FFFFFF" style={styles.appleIcon} />
             <Text style={[styles.socialLabel, styles.appleBtnLabel]}>Apple로 시작하기</Text>
@@ -303,7 +344,7 @@ export default function AuthStartScreen() {
           <TouchableOpacity
             style={[styles.socialBtn, styles.googleBtn]}
             activeOpacity={0.85}
-            onPress={() => setSheet('consent')}
+            onPress={() => openConsentSheet('google')}
           >
             <View style={styles.googleIcon}>
               <GoogleLogo />
@@ -316,7 +357,7 @@ export default function AuthStartScreen() {
       {/* ── 단일 Modal — 모든 시트를 하나의 Modal 안에서 처리 ── */}
       <SheetModal
         sheet={sheet}
-        onClose={() => setSheet('none')}
+        onClose={closeSheet}
         onOpenTerms={() => setSheet('terms')}
         onOpenPrivacy={() => setSheet('privacy')}
         onBackToConsent={() => setSheet('consent')}
