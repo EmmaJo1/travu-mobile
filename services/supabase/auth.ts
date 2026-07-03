@@ -1,6 +1,7 @@
-import * as Linking from 'expo-linking';
-import * as WebBrowser from 'expo-web-browser';
-import type { AuthError, Provider, Session, User } from '@supabase/supabase-js';
+import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import type { AuthError, Session, User } from '@supabase/supabase-js';
+import { Platform } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
 import type { Tables, TablesInsert } from '@/types/supabase';
@@ -10,11 +11,9 @@ import {
   upsertUserProfile as upsertUserProfileRow,
 } from '@/services/supabase/users';
 
-WebBrowser.maybeCompleteAuthSession();
-
 export type AuthProfile = Tables<'users'>;
 
-type OAuthResult = {
+type NativeSignInResult = {
   profile: AuthProfile | null;
   session: Session | null;
   user: User | null;
@@ -27,7 +26,10 @@ type UserMetadata = {
   picture?: unknown;
 };
 
-const AUTH_CALLBACK_PATH = 'auth/callback';
+const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
+
+let hasConfiguredGoogleSignIn = false;
 
 function throwIfError(error: AuthError | Error | null) {
   if (error) {
@@ -64,82 +66,67 @@ function getDefaultProfileImageUrl(user: User) {
   );
 }
 
-function getRedirectTo() {
-  return Linking.createURL(AUTH_CALLBACK_PATH);
-}
-
-function getAuthCodeFromUrl(url: string) {
-  const parsedUrl = new URL(url);
-  return parsedUrl.searchParams.get('code');
-}
-
-function getSessionTokensFromUrl(url: string) {
-  const [, hashParams = ''] = url.split('#');
-  const searchParams = new URLSearchParams(hashParams);
-  const accessToken = searchParams.get('access_token');
-  const refreshToken = searchParams.get('refresh_token');
-
-  if (!accessToken || !refreshToken) {
-    return null;
-  }
-
+function createEmptySignInResult(): NativeSignInResult {
   return {
-    access_token: accessToken,
-    refresh_token: refreshToken,
+    profile: null,
+    session: null,
+    user: null,
   };
 }
 
-async function exchangeOAuthCallback(url: string) {
-  const tokens = getSessionTokensFromUrl(url);
-
-  if (tokens) {
-    const { data, error } = await supabase.auth.setSession(tokens);
-    throwIfError(error);
-    return data.session;
-  }
-
-  const code = getAuthCodeFromUrl(url);
-
-  if (!code) {
-    return null;
-  }
-
-  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-  throwIfError(error);
-  return data.session;
+function isGoogleSignInCancel(error: unknown) {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (
+      error.code === statusCodes.SIGN_IN_CANCELLED ||
+      error.code === statusCodes.IN_PROGRESS
+    )
+  );
 }
 
-async function signInWithOAuthProvider(provider: Provider): Promise<OAuthResult> {
-  const redirectTo = getRedirectTo();
-  const { data, error } = await supabase.auth.signInWithOAuth({
+function isAppleSignInCancel(error: unknown) {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'ERR_REQUEST_CANCELED'
+  );
+}
+
+function configureGoogleSignIn() {
+  if (hasConfiguredGoogleSignIn) {
+    return true;
+  }
+
+  if (!GOOGLE_WEB_CLIENT_ID) {
+    console.warn('Missing EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID for Google native sign-in.');
+    return false;
+  }
+
+  GoogleSignin.configure({
+    iosClientId: GOOGLE_IOS_CLIENT_ID,
+    scopes: ['email', 'profile'],
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+  });
+  hasConfiguredGoogleSignIn = true;
+
+  return true;
+}
+
+async function signInWithNativeIdToken(
+  provider: 'google' | 'apple',
+  token: string,
+): Promise<NativeSignInResult> {
+  const { data, error } = await supabase.auth.signInWithIdToken({
     provider,
-    options: {
-      redirectTo,
-      skipBrowserRedirect: true,
-    },
+    token,
   });
 
   throwIfError(error);
 
-  if (!data.url) {
-    return {
-      profile: null,
-      session: null,
-      user: null,
-    };
-  }
-
-  const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-
-  if (result.type !== 'success') {
-    return {
-      profile: null,
-      session: null,
-      user: null,
-    };
-  }
-
-  const session = await exchangeOAuthCallback(result.url);
+  const session = data.session;
   const user = session?.user ?? null;
   const profile = user ? await ensureUserProfile(user) : null;
 
@@ -162,15 +149,71 @@ export async function getCurrentUser(): Promise<User | null> {
   return data.user;
 }
 
-export function signInWithGoogle() {
-  return signInWithOAuthProvider('google');
+export async function signInWithGoogle() {
+  if (!configureGoogleSignIn()) {
+    return createEmptySignInResult();
+  }
+
+  try {
+    if (Platform.OS === 'android') {
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+    }
+
+    const result = await GoogleSignin.signIn();
+
+    if (result.type !== 'success' || !result.data.idToken) {
+      return createEmptySignInResult();
+    }
+
+    return signInWithNativeIdToken('google', result.data.idToken);
+  } catch (error) {
+    if (isGoogleSignInCancel(error)) {
+      return createEmptySignInResult();
+    }
+
+    throw error;
+  }
 }
 
-export function signInWithApple() {
-  return signInWithOAuthProvider('apple');
+export async function signInWithApple() {
+  if (Platform.OS !== 'ios') {
+    console.warn('Apple sign-in is only available on iOS.');
+    return createEmptySignInResult();
+  }
+
+  const isAvailable = await AppleAuthentication.isAvailableAsync();
+
+  if (!isAvailable) {
+    return createEmptySignInResult();
+  }
+
+  try {
+    const credential = await AppleAuthentication.signInAsync({
+      requestedScopes: [
+        AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+        AppleAuthentication.AppleAuthenticationScope.EMAIL,
+      ],
+    });
+
+    if (!credential.identityToken) {
+      return createEmptySignInResult();
+    }
+
+    return signInWithNativeIdToken('apple', credential.identityToken);
+  } catch (error) {
+    if (isAppleSignInCancel(error)) {
+      return createEmptySignInResult();
+    }
+
+    throw error;
+  }
 }
 
 export async function signOut() {
+  if (hasConfiguredGoogleSignIn) {
+    await GoogleSignin.signOut().catch(() => {});
+  }
+
   const { error } = await supabase.auth.signOut();
   throwIfError(error);
 }

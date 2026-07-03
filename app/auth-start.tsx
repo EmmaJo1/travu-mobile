@@ -20,7 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { type Href, router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Alert, Animated, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+  Alert, Animated, Modal, Platform, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import Text from '@/components/common/AppText';
 
 import { Path, Svg } from 'react-native-svg';
@@ -299,6 +299,11 @@ export default function AuthStartScreen() {
     setIsSubmitting(true);
 
     try {
+      if (provider === 'apple' && Platform.OS !== 'ios') {
+        Alert.alert('\uC548\uB0B4', 'Apple \uB85C\uADF8\uC778\uC740 iOS\uC5D0\uC11C\uB9CC \uC0AC\uC6A9\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.');
+        return;
+      }
+
       setSheet('none');
       const didSignIn = provider === 'google'
         ? await signInWithGoogle()
