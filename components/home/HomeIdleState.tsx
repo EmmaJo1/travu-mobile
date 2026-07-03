@@ -592,7 +592,7 @@ const styles = StyleSheet.create({
     backgroundColor: WARM_WHITE,
   },
   scrollContent: {
-    paddingBottom: 120,
+    paddingBottom: 48,
     backgroundColor: WARM_WHITE,
   },
   fixedHeroArea: {
@@ -793,7 +793,7 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 20,
     paddingTop: 16,
-    gap: 44,
+    gap: 32,
   },
   photoImportResultsCardOffset: {
     marginTop: 0,
