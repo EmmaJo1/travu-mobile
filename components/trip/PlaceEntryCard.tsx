@@ -1,5 +1,5 @@
 import { Feather } from '@expo/vector-icons';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Image,
   Modal,
@@ -84,6 +84,7 @@ const LABEL_ADD_PHOTO = '\uC0AC\uC9C4 \uCD94\uAC00';
 const LABEL_DELETE_PLACE = '\uC7A5\uC18C \uC0AD\uC81C';
 const LABEL_PHOTO_GRID_TITLE = '\uC0AC\uC9C4';
 const LABEL_PLACE_MORE = '\uC7A5\uC18C \uBA54\uB274';
+const QUICK_MENU_TOP_OFFSET = 34;
 
 function getPhotoSources(entry: PlaceEntry): ImageSourcePropType[] {
   return [
@@ -142,7 +143,12 @@ export default function PlaceEntryCard({
   const insets = useSafeAreaInsets();
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(null);
   const [isQuickMenuOpen, setQuickMenuOpen] = useState(false);
+  const [quickMenuAnchor, setQuickMenuAnchor] = useState<{ right: number; top: number }>({
+    right: Spacing.xl,
+    top: 0,
+  });
   const [isPhotoGridOpen, setPhotoGridOpen] = useState(false);
+  const moreButtonRef = useRef<View>(null);
   const photoSources = getPhotoSources(entry);
   const isArchive = variant === 'archive';
   const isPhotoReview = variant === 'recordPhotoReview';
@@ -157,6 +163,52 @@ export default function PlaceEntryCard({
   const remainingPhotoCount = Math.max(photoSources.length - visiblePhotoSources.length, 0);
 
   const closeQuickMenu = () => setQuickMenuOpen(false);
+
+  const toggleQuickMenu = () => {
+    if (isQuickMenuOpen) {
+      closeQuickMenu();
+      return;
+    }
+
+    moreButtonRef.current?.measureInWindow((x, y, measuredWidth) => {
+      setQuickMenuAnchor({
+        right: Math.max(Spacing.xl, width - x - measuredWidth),
+        top: Math.max(insets.top, y + QUICK_MENU_TOP_OFFSET),
+      });
+    });
+    setQuickMenuOpen(true);
+  };
+
+  const renderQuickMenuRows = () => (
+    <>
+      <QuickMenuRow
+        icon="image"
+        label={LABEL_ADD_PHOTO}
+        onPress={() => {
+          closeQuickMenu();
+          onQuickAddPhoto?.();
+        }}
+      />
+      <View style={styles.quickMenuDivider} />
+      <QuickMenuRow
+        icon="edit-3"
+        label={LABEL_EDIT_PLACE_INFO}
+        onPress={() => {
+          closeQuickMenu();
+          onQuickEdit?.();
+        }}
+      />
+      <QuickMenuRow
+        destructive
+        icon="trash-2"
+        label={LABEL_DELETE_PLACE}
+        onPress={() => {
+          closeQuickMenu();
+          onQuickDelete?.();
+        }}
+      />
+    </>
+  );
 
   const handlePressPlaceInfo = () => {
     closeQuickMenu();
@@ -249,53 +301,15 @@ export default function PlaceEntryCard({
               </Pressable>
 
               <Pressable
+                ref={moreButtonRef}
                 accessibilityRole="button"
                 accessibilityLabel={LABEL_PLACE_MORE}
                 hitSlop={8}
-                onPress={() => setQuickMenuOpen((open) => !open)}
+                onPress={toggleQuickMenu}
                 style={styles.moreButton}
               >
                 <Feather name="more-horizontal" size={20} color={Colors.foundation.grey800} />
               </Pressable>
-
-              {hasQuickMenuActions && isQuickMenuOpen ? (
-                <>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={LABEL_CLOSE_PLACE_MENU}
-                    onPress={closeQuickMenu}
-                    style={styles.quickMenuDismiss}
-                  />
-                  <View style={styles.quickMenu}>
-                    <QuickMenuRow
-                      icon="image"
-                      label={LABEL_ADD_PHOTO}
-                      onPress={() => {
-                        closeQuickMenu();
-                        onQuickAddPhoto?.();
-                      }}
-                    />
-                    <View style={styles.quickMenuDivider} />
-                    <QuickMenuRow
-                      icon="edit-3"
-                      label={LABEL_EDIT_PLACE_INFO}
-                      onPress={() => {
-                        closeQuickMenu();
-                        onQuickEdit?.();
-                      }}
-                    />
-                    <QuickMenuRow
-                      destructive
-                      icon="trash-2"
-                      label={LABEL_DELETE_PLACE}
-                      onPress={() => {
-                        closeQuickMenu();
-                        onQuickDelete?.();
-                      }}
-                    />
-                  </View>
-                </>
-              ) : null}
             </View>
           ) : (
             <Pressable
@@ -339,11 +353,12 @@ export default function PlaceEntryCard({
 
               {hasQuickMenuActions ? (
                 <Pressable
+                  ref={moreButtonRef}
                   accessibilityRole="button"
                   hitSlop={8}
                   onPress={(event) => {
                     event.stopPropagation();
-                    setQuickMenuOpen((open) => !open);
+                    toggleQuickMenu();
                   }}
                   style={styles.moreButton}
                 >
@@ -357,47 +372,6 @@ export default function PlaceEntryCard({
                 <Feather name="chevron-right" size={24} color={Colors.foundation.grey700} />
               ) : null}
 
-              {hasQuickMenuActions && isQuickMenuOpen ? (
-                <>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={LABEL_CLOSE_PLACE_MENU}
-                    onPress={(event) => {
-                      event.stopPropagation();
-                      closeQuickMenu();
-                    }}
-                    style={styles.quickMenuDismiss}
-                  />
-                  <View style={styles.quickMenu}>
-                    <QuickMenuRow
-                      icon="image"
-                      label={LABEL_ADD_PHOTO}
-                      onPress={() => {
-                        closeQuickMenu();
-                        onQuickAddPhoto?.();
-                      }}
-                    />
-                    <View style={styles.quickMenuDivider} />
-                    <QuickMenuRow
-                      icon="edit-3"
-                      label={LABEL_EDIT_PLACE_INFO}
-                      onPress={() => {
-                        closeQuickMenu();
-                        onQuickEdit?.();
-                      }}
-                    />
-                    <QuickMenuRow
-                      destructive
-                      icon="trash-2"
-                      label={LABEL_DELETE_PLACE}
-                      onPress={() => {
-                        closeQuickMenu();
-                        onQuickDelete?.();
-                      }}
-                    />
-                  </View>
-                </>
-              ) : null}
             </Pressable>
           )}
 
@@ -460,6 +434,35 @@ export default function PlaceEntryCard({
         onClose={() => setSelectedPhotoIndex(null)}
         visible={selectedPhotoIndex != null}
       />
+
+      {hasQuickMenuActions ? (
+        <Modal
+          animationType="none"
+          onRequestClose={closeQuickMenu}
+          transparent
+          visible={isQuickMenuOpen}
+        >
+          <View style={styles.quickMenuOverlay}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={LABEL_CLOSE_PLACE_MENU}
+              onPress={closeQuickMenu}
+              style={StyleSheet.absoluteFill}
+            />
+            <View
+              style={[
+                styles.quickMenu,
+                {
+                  right: quickMenuAnchor.right,
+                  top: quickMenuAnchor.top,
+                },
+              ]}
+            >
+              {renderQuickMenuRows()}
+            </View>
+          </View>
+        </Modal>
+      ) : null}
 
       <Modal
         animationType="slide"
@@ -724,9 +727,8 @@ const styles = StyleSheet.create({
     ...Typography.body2Regular,
     color: Colors.foundation.black,
   },
-  quickMenuDismiss: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 5,
+  quickMenuOverlay: {
+    flex: 1,
   },
   quickMenu: {
     position: 'absolute',
