@@ -1,6 +1,7 @@
 import React from 'react';
 
 import { MOCK_MY_PAGE_PROFILE } from '@/constants/mockMyPageProfile';
+import { useAuth } from '@/providers/AuthProvider';
 
 export type UserProfile = {
   name: string;
@@ -36,18 +37,46 @@ const UserProfileContext = React.createContext<UserProfileContextValue | null>(n
 
 export function UserProfileProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = React.useState<UserProfile>(DEFAULT_PROFILE);
+  const { profile: authProfile } = useAuth();
 
   const updateProfile = React.useCallback((nextProfile: UserProfile) => {
     // TODO: Replace this in-memory update with Supabase or durable local persistence.
     setProfile(nextProfile);
   }, []);
 
+  const resolvedProfile = React.useMemo<UserProfile>(() => {
+    if (!authProfile) {
+      return profile;
+    }
+
+    return {
+      name: authProfile.name || profile.name,
+      basedIn: authProfile.based_in || profile.basedIn,
+      basedInPlace: authProfile.based_in
+        ? {
+            displayName: authProfile.based_in,
+            city: authProfile.based_in_city ?? '',
+            country: authProfile.based_in_country ?? '',
+            countryCode: authProfile.based_in_country_code ?? undefined,
+            latitude: authProfile.based_in_latitude ?? undefined,
+            longitude: authProfile.based_in_longitude ?? undefined,
+            placeId: authProfile.based_in_google_place_id ?? undefined,
+          }
+        : profile.basedInPlace,
+      bio: authProfile.bio || profile.bio,
+      travelStyles: authProfile.travel_styles.length > 0
+        ? authProfile.travel_styles
+        : profile.travelStyles,
+      profileImageUri: authProfile.profile_image_url || profile.profileImageUri,
+    };
+  }, [authProfile, profile]);
+
   const value = React.useMemo(
     () => ({
-      profile,
+      profile: resolvedProfile,
       updateProfile,
     }),
-    [profile, updateProfile],
+    [resolvedProfile, updateProfile],
   );
 
   return (

@@ -23,7 +23,9 @@ import {
 } from '@/constants/mockMyPageTrips';
 import { removeSavedMyPageTrip, useSavedMyPageTrips } from '@/constants/savedMyPageTrips';
 import { Colors, Spacing, Typography } from '@/constants/theme';
+import { useMyTrips } from '@/hooks/useMyTrips';
 import { useUserProfile } from '@/providers/UserProfileProvider';
+import { mapSupabaseTripsToMyPageTrips } from '@/utils/supabaseTripMappers';
 
 function normalizeCountValue(value?: string | null) {
   return value?.trim() ?? '';
@@ -87,13 +89,19 @@ export default function ProfileScreen() {
   const [deletedTripIds, setDeletedTripIds] = useState<string[]>([]);
   const savedTrips = useSavedMyPageTrips();
   const { profile } = useUserProfile();
+  const { data: supabaseTrips } = useMyTrips();
 
   const myPageTrips = useMemo(
     () => {
       const deletedTripIdSet = new Set(deletedTripIds);
-      return mergeSavedAndMockTrips(savedTrips).filter((trip) => !deletedTripIdSet.has(trip.id));
+      const hasSupabaseTrips = Array.isArray(supabaseTrips) && supabaseTrips.length > 0;
+      const sourceTrips = hasSupabaseTrips
+        ? mapSupabaseTripsToMyPageTrips(supabaseTrips)
+        : mergeSavedAndMockTrips(savedTrips);
+
+      return sourceTrips.filter((trip) => !deletedTripIdSet.has(trip.id));
     },
-    [deletedTripIds, savedTrips],
+    [deletedTripIds, savedTrips, supabaseTrips],
   );
   const profileStats = useMemo(
     () => ({

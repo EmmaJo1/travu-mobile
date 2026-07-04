@@ -22,7 +22,9 @@ import {
 } from '@/services/supabase/auth';
 
 type AuthContextValue = {
+  canUseSupabaseUserData: boolean;
   isAuthenticated: boolean;
+  isDevBypass: boolean;
   isLoading: boolean;
   profile: AuthProfile | null;
   refreshProfile: () => Promise<AuthProfile | null>;
@@ -41,8 +43,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<AuthProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDevBypass, setIsDevBypass] = useState(false);
 
   const setAuthState = useCallback(async (nextSession: Session | null) => {
+    setIsDevBypass(false);
     setSession(nextSession);
     setUser(nextSession?.user ?? null);
 
@@ -72,13 +76,25 @@ export function AuthProvider({ children }: PropsWithChildren) {
     try {
       const result = await signInWithGoogleService();
 
+      if (result.devBypass) {
+        if (isMountedRef.current) {
+          setIsDevBypass(true);
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+        }
+
+        return true;
+      }
+
       if (isMountedRef.current && (result.session || result.user || result.profile)) {
+        setIsDevBypass(false);
         setSession(result.session);
         setUser(result.user);
         setProfile(result.profile);
       }
 
-      return Boolean(result.session?.user);
+      return Boolean(result.session?.user || result.devBypass);
     } finally {
       if (isMountedRef.current) {
         setIsLoading(false);
@@ -92,13 +108,25 @@ export function AuthProvider({ children }: PropsWithChildren) {
     try {
       const result = await signInWithAppleService();
 
+      if (result.devBypass) {
+        if (isMountedRef.current) {
+          setIsDevBypass(true);
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+        }
+
+        return true;
+      }
+
       if (isMountedRef.current && (result.session || result.user || result.profile)) {
+        setIsDevBypass(false);
         setSession(result.session);
         setUser(result.user);
         setProfile(result.profile);
       }
 
-      return Boolean(result.session?.user);
+      return Boolean(result.session?.user || result.devBypass);
     } finally {
       if (isMountedRef.current) {
         setIsLoading(false);
@@ -116,6 +144,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setSession(null);
         setUser(null);
         setProfile(null);
+        setIsDevBypass(false);
       }
     } finally {
       if (isMountedRef.current) {
@@ -159,7 +188,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const value = useMemo<AuthContextValue>(
     () => ({
+      canUseSupabaseUserData: Boolean(session?.user && !isDevBypass),
       isAuthenticated: Boolean(session?.user),
+      isDevBypass,
       isLoading,
       profile,
       refreshProfile,
@@ -170,6 +201,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       user,
     }),
     [
+      isDevBypass,
       isLoading,
       profile,
       refreshProfile,

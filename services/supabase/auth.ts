@@ -1,5 +1,6 @@
-import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import * as AppleAuthentication from 'expo-apple-authentication';
+import Constants from 'expo-constants';
+import * as WebBrowser from 'expo-web-browser';
 import type { AuthError, Session, User } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 
@@ -14,6 +15,7 @@ import {
 export type AuthProfile = Tables<'users'>;
 
 type NativeSignInResult = {
+  devBypass?: boolean;
   profile: AuthProfile | null;
   session: Session | null;
   user: User | null;
@@ -28,8 +30,35 @@ type UserMetadata = {
 
 const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
 const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
+const AUTH_MODE = process.env.EXPO_PUBLIC_AUTH_MODE;
+const AUTH_CALLBACK_URL = 'travumobile://auth/callback';
 
 let hasConfiguredGoogleSignIn = false;
+
+WebBrowser.maybeCompleteAuthSession();
+
+type GoogleSignInResponse =
+  | {
+      type: 'success';
+      data: {
+        idToken: string | null;
+      };
+    }
+  | {
+      type: 'cancelled';
+      data: null;
+    };
+
+type GoogleSignInModule = {
+  configure: (options: {
+    iosClientId?: string;
+    scopes?: string[];
+    webClientId: string;
+  }) => void;
+  hasPlayServices: (options: { showPlayServicesUpdateDialog: boolean }) => Promise<boolean>;
+  signIn: () => Promise<GoogleSignInResponse>;
+  signOut: () => Promise<null>;
+};
 
 function throwIfError(error: AuthError | Error | null) {
   if (error) {
@@ -80,8 +109,8 @@ function isGoogleSignInCancel(error: unknown) {
     error !== null &&
     'code' in error &&
     (
-      error.code === statusCodes.SIGN_IN_CANCELLED ||
-      error.code === statusCodes.IN_PROGRESS
+      error.code === 'SIGN_IN_CANCELLED' ||
+      error.code === 'IN_PROGRESS'
     )
   );
 }
@@ -95,7 +124,27 @@ function isAppleSignInCancel(error: unknown) {
   );
 }
 
-function configureGoogleSignIn() {
+function isExpoGo() {
+  return Constants.appOwnership === 'expo';
+}
+
+function shouldUseOAuthInExpoGo() {
+  if (AUTH_MODE === 'native') {
+    return false;
+  }
+
+  return isExpoGo();
+}
+
+async function loadGoogleSignInModule(): Promise<GoogleSignInModule> {
+  const { GoogleSignin } = await import(
+    '@react-native-google-signin/google-signin/lib/module/signIn/GoogleSignin'
+  );
+
+  return GoogleSignin;
+}
+
+async function configureGoogleSignIn(googleSignIn: GoogleSignInModule) {
   if (hasConfiguredGoogleSignIn) {
     return true;
   }
@@ -105,7 +154,7 @@ function configureGoogleSignIn() {
     return false;
   }
 
-  GoogleSignin.configure({
+  googleSignIn.configure({
     iosClientId: GOOGLE_IOS_CLIENT_ID,
     scopes: ['email', 'profile'],
     webClientId: GOOGLE_WEB_CLIENT_ID,
@@ -137,6 +186,80 @@ async function signInWithNativeIdToken(
   };
 }
 
+function getUrlParam(url: string, key: string) {
+  const parsedUrl = new URL(url);
+  const hashParams = new URLSearchParams(parsedUrl.hash.replace(/^#/, ''));
+  return parsedUrl.searchParams.get(key) ?? hashParams.get(key);
+}
+
+async function completeOAuthSession(callbackUrl: string): Promise<NativeSignInResult> {
+  const code = getUrlParam(callbackUrl, 'code');
+
+  if (code) {
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    throwIfError(error);
+
+    const session = data.session;
+    const user = session?.user ?? null;
+    const profile = user ? await ensureUserProfile(user) : null;
+
+    return {
+      profile,
+      session,
+      user,
+    };
+  }
+
+  const accessToken = getUrlParam(callbackUrl, 'access_token');
+  const refreshToken = getUrlParam(callbackUrl, 'refresh_token');
+
+  if (!accessToken || !refreshToken) {
+    return createEmptySignInResult();
+  }
+
+  const { data, error } = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
+  throwIfError(error);
+
+  const session = data.session;
+  const user = session?.user ?? null;
+  const profile = user ? await ensureUserProfile(user) : null;
+
+  return {
+    profile,
+    session,
+    user,
+  };
+}
+
+async function signInWithGoogleOAuth(): Promise<NativeSignInResult> {
+  const redirectTo = AUTH_CALLBACK_URL;
+  console.info(`Expo Go OAuth redirectTo: ${redirectTo}`);
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    options: {
+      redirectTo,
+      skipBrowserRedirect: true,
+    },
+    provider: 'google',
+  });
+  throwIfError(error);
+
+  if (!data.url) {
+    return createEmptySignInResult();
+  }
+
+  const result = await WebBrowser.openAuthSessionAsync(data.url, AUTH_CALLBACK_URL);
+
+  if (result.type !== 'success') {
+    return createEmptySignInResult();
+  }
+
+  return completeOAuthSession(result.url);
+}
+
 export async function getCurrentSession(): Promise<Session | null> {
   const { data, error } = await supabase.auth.getSession();
   throwIfError(error);
@@ -150,16 +273,23 @@ export async function getCurrentUser(): Promise<User | null> {
 }
 
 export async function signInWithGoogle() {
-  if (!configureGoogleSignIn()) {
+  if (shouldUseOAuthInExpoGo()) {
+    console.info('Expo Go OAuth mode: starting Supabase Google OAuth sign-in.');
+    return signInWithGoogleOAuth();
+  }
+
+  const googleSignIn = await loadGoogleSignInModule();
+
+  if (!(await configureGoogleSignIn(googleSignIn))) {
     return createEmptySignInResult();
   }
 
   try {
     if (Platform.OS === 'android') {
-      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      await googleSignIn.hasPlayServices({ showPlayServicesUpdateDialog: true });
     }
 
-    const result = await GoogleSignin.signIn();
+    const result = await googleSignIn.signIn();
 
     if (result.type !== 'success' || !result.data.idToken) {
       return createEmptySignInResult();
@@ -176,6 +306,11 @@ export async function signInWithGoogle() {
 }
 
 export async function signInWithApple() {
+  if (isExpoGo()) {
+    console.info('Apple native login is skipped in Expo Go. Use Google OAuth for Supabase session testing.');
+    return createEmptySignInResult();
+  }
+
   if (Platform.OS !== 'ios') {
     console.warn('Apple sign-in is only available on iOS.');
     return createEmptySignInResult();
@@ -211,7 +346,8 @@ export async function signInWithApple() {
 
 export async function signOut() {
   if (hasConfiguredGoogleSignIn) {
-    await GoogleSignin.signOut().catch(() => {});
+    const googleSignIn = await loadGoogleSignInModule().catch(() => null);
+    await googleSignIn?.signOut().catch(() => {});
   }
 
   const { error } = await supabase.auth.signOut();

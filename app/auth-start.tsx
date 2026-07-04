@@ -17,10 +17,11 @@
  *   - Google 아이콘: 16×16 4색 G
  */
 import { Ionicons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import { type Href, router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Alert, Animated, Modal, Platform, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+  Alert, Animated, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import Text from '@/components/common/AppText';
 
 import { Path, Svg } from 'react-native-svg';
@@ -299,8 +300,12 @@ export default function AuthStartScreen() {
     setIsSubmitting(true);
 
     try {
-      if (provider === 'apple' && Platform.OS !== 'ios') {
-        Alert.alert('\uC548\uB0B4', 'Apple \uB85C\uADF8\uC778\uC740 iOS\uC5D0\uC11C\uB9CC \uC0AC\uC6A9\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.');
+      if (provider === 'apple' && Constants.appOwnership === 'expo') {
+        setSheet('none');
+        Alert.alert(
+          '개발 빌드가 필요해요',
+          'Apple 로그인은 development build에서 테스트할 수 있어요.',
+        );
         return;
       }
 
