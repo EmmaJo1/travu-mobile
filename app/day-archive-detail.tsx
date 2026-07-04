@@ -58,6 +58,10 @@ import {
   isPlaceDetailDeleted,
   markPlaceDetailDeleted,
 } from '@/services/placeDetailDeletionRegistry';
+import { useTripDays } from '@/hooks/useTripDays';
+import { useTripDetail } from '@/hooks/useTripDetail';
+import type { TripDayRow } from '@/services/supabase/tripDays';
+import { mapSupabaseTripToMyPageTrip } from '@/utils/supabaseTripMappers';
 
 /** Figma 506:704 - scroll content starts below status bar(59) + header(40). */
 const SCROLL_ORIGIN_Y = 99;
@@ -446,6 +450,34 @@ function formatArchiveDateLabelFromDate(date: Date) {
   return `${date.getFullYear()}. ${date.getMonth() + 1}. ${date.getDate()}`;
 }
 
+function formatArchiveDateLabelFromDateKey(dateKey: string) {
+  const date = dateKeyToArchiveDate(dateKey);
+
+  if (!date) {
+    return dateKey;
+  }
+
+  return formatArchiveDateLabelFromDate(date);
+}
+
+function createArchiveDayOptionsFromTripDays(tripDays?: TripDayRow[]): DaySelectorItem[] {
+  if (!tripDays || tripDays.length === 0) {
+    return [];
+  }
+
+  return tripDays.map((day) => {
+    const date = dateKeyToArchiveDate(day.date);
+
+    return {
+      id: day.id,
+      dayNumber: day.day_index,
+      dateLabel: formatArchiveDateLabelFromDateKey(day.date),
+      weekdayLabel: date ? date.toLocaleDateString('en-US', { weekday: 'short' }) : '',
+      photoCount: 0,
+    };
+  });
+}
+
 function formatArchiveStickyHeaderDate(day: DaySelectorItem) {
   const koreanWeekday =
     {
@@ -712,7 +744,7 @@ function ArchiveHeaderMenu({
 }
 export default function DayArchiveDetailScreen() {
   const router = useRouter();
-  const { tripId } = useLocalSearchParams<{
+  const { dayId, dayNumber, tripId } = useLocalSearchParams<{
     tripId?: string;
     dayId?: string;
     dayNumber?: string;
@@ -721,6 +753,8 @@ export default function DayArchiveDetailScreen() {
   const { width: screenWidth } = useWindowDimensions();
   const savedTrips = useSavedMyPageTrips();
   const routeTripId = getArchiveDetailTripId(tripId);
+  const { data: supabaseTrip } = useTripDetail(routeTripId);
+  const { data: supabaseTripDays } = useTripDays(routeTripId);
   const tripFromSaved = savedTrips.find((trip) => trip.id === routeTripId);
   const fallbackTrip =
     tripFromSaved ??
@@ -731,11 +765,24 @@ export default function DayArchiveDetailScreen() {
   const [isTripInfoEditorVisible, setTripInfoEditorVisible] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const activeTrip = useMemo(
-    () => (fallbackTrip ? { ...fallbackTrip, ...localTripPatch } : undefined),
-    [fallbackTrip, localTripPatch],
+    () => {
+      const sourceTrip = supabaseTrip ? mapSupabaseTripToMyPageTrip(supabaseTrip) : fallbackTrip;
+      return sourceTrip ? { ...sourceTrip, ...localTripPatch } : undefined;
+    },
+    [fallbackTrip, localTripPatch, supabaseTrip],
   );
   const detail = useMemo(() => createArchiveDetailFromTrip(activeTrip), [activeTrip]);
-  const baseDayOptions = useMemo(() => createArchiveDayOptionsFromTrip(activeTrip), [activeTrip]);
+  const supabaseDayOptions = useMemo(
+    () => createArchiveDayOptionsFromTripDays(supabaseTripDays),
+    [supabaseTripDays],
+  );
+  const baseDayOptions = useMemo(
+    () =>
+      supabaseDayOptions.length > 0
+        ? supabaseDayOptions
+        : createArchiveDayOptionsFromTrip(activeTrip),
+    [activeTrip, supabaseDayOptions],
+  );
   const [customArchiveDays, setCustomArchiveDays] = useState<DaySelectorItem[]>([]);
   const dayOptions = useMemo(
     () =>
@@ -749,7 +796,10 @@ export default function DayArchiveDetailScreen() {
     [activeTrip, detail],
   );
   const [selectedDay, setSelectedDay] = useState<DaySelectorItem>(() =>
-    dayOptions[0] ?? resolveInitialArchiveDay(),
+    dayOptions.find((day) => day.id === dayId) ??
+    resolveInitialArchiveDay(dayId, dayNumber) ??
+    dayOptions[0] ??
+    resolveInitialArchiveDay(),
   );
   const [addedPlacesByDay, setAddedPlacesByDay] = useState<Record<string, ArchiveDetailPlace[]>>(
     {},
@@ -796,6 +846,25 @@ export default function DayArchiveDetailScreen() {
 
   const photoFrameLeft = (screenWidth - PHOTO_FRAME_WIDTH) / 2;
 
+  React.useEffect(() => {
+    if (dayOptions.length === 0) {
+      return;
+    }
+
+    setSelectedDay((current) => {
+      if (dayOptions.some((day) => day.id === current.id)) {
+        return current;
+      }
+
+      const parsedDayNumber = dayNumber ? Number(dayNumber) : undefined;
+      const nextDay =
+        dayOptions.find((day) => day.id === dayId) ??
+        dayOptions.find((day) => day.dayNumber === parsedDayNumber) ??
+        dayOptions[0];
+
+      return nextDay ?? current;
+    });
+  }, [dayId, dayNumber, dayOptions]);
 
   const triggerSelectionHaptic = React.useCallback(() => {
     void Haptics.selectionAsync();
@@ -852,6 +921,8 @@ export default function DayArchiveDetailScreen() {
       params: {
         tripId: detail.id,
         dayId: selectedDay.id,
+        dayIndex: String(selectedDay.dayNumber),
+        date: formatPlaceCreateDateLabel(selectedDay.dateLabel),
         placeId: getEntryPlaceId(entry),
         entryPoint: 'archiveDayDetail',
         placeName: entry.placeName ?? entry.place,
@@ -871,6 +942,8 @@ export default function DayArchiveDetailScreen() {
       params: {
         tripId: detail.id,
         dayId: selectedDay.id,
+        dayIndex: String(selectedDay.dayNumber),
+        date: formatPlaceCreateDateLabel(selectedDay.dateLabel),
         placeId: getEntryPlaceId(entry),
         entryPoint: 'archiveDayDetail',
         openPhotoGrid: '1',

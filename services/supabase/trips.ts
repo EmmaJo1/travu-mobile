@@ -68,7 +68,22 @@ export async function fetchMyTrips(): Promise<TripRow[]> {
 }
 
 export async function fetchTripById(tripId: string): Promise<TripRow | null> {
-  const { data, error } = await getTripById(tripId);
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  throwIfError(authError);
+
+  if (!authData.user) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from('trips')
+    .select('*')
+    .eq('id', tripId)
+    .eq('user_id', authData.user.id)
+    .neq('status', 'ignored')
+    .is('deleted_at', null)
+    .maybeSingle();
+
   throwIfError(error);
   return data;
 }

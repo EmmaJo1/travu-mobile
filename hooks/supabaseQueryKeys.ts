@@ -6,4 +6,8 @@ export const supabaseQueryKeys = {
     ['supabase', 'trips', 'recent', userId ?? 'no-user', limit] as const,
   recentTripsRoot: (userId?: string | null) =>
     ['supabase', 'trips', 'recent', userId ?? 'no-user'] as const,
+  tripDetail: (userId?: string | null, tripId?: string | null) =>
+    ['supabase', 'trips', 'detail', userId ?? 'no-user', tripId ?? 'no-trip'] as const,
+  tripDays: (userId?: string | null, tripId?: string | null) =>
+    ['supabase', 'trip-days', userId ?? 'no-user', tripId ?? 'no-trip'] as const,
 };

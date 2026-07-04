@@ -66,6 +66,10 @@ export async function fetchTripDays(tripId: string): Promise<TripDayRow[]> {
   return data ?? [];
 }
 
+export async function fetchTripDaysByTripId(tripId: string): Promise<TripDayRow[]> {
+  return fetchTripDays(tripId);
+}
+
 export async function fetchTripDayByDate(
   tripId: string,
   date: string,
