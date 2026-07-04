@@ -2,6 +2,7 @@ import { MOCK_MY_PAGE_TRIPS, type MyPageTrip } from '@/constants/mockMyPageTrips
 import type { TripRow } from '@/services/supabase/trips';
 
 const FALLBACK_TRIP_COVER = MOCK_MY_PAGE_TRIPS[0].coverImage;
+const FALLBACK_TRIP_TITLE = MOCK_MY_PAGE_TRIPS[0].title || 'TRAVEL';
 
 function normalizeText(value?: string | null) {
   return value?.trim() ?? '';
@@ -72,10 +73,20 @@ function getInclusiveDayCount(startDate?: string | null, endDate?: string | null
 
 function getDisplayCity(trip: TripRow) {
   return (
-    normalizeText(trip.destination_city_ko) ||
     normalizeText(trip.destination_city) ||
     normalizeText(trip.title) ||
-    'Travel'
+    normalizeText(trip.destination_city_ko) ||
+    FALLBACK_TRIP_TITLE
+  );
+}
+
+function getTripBookTitle(trip: TripRow) {
+  return (
+    normalizeText(trip.destination_city) ||
+    normalizeText(trip.title) ||
+    normalizeText(trip.destination_city_ko) ||
+    FALLBACK_TRIP_TITLE ||
+    'TRAVEL'
   );
 }
 
@@ -86,7 +97,7 @@ function getDisplayCountry(trip: TripRow) {
 export function mapSupabaseTripToMyPageTrip(trip: TripRow): MyPageTrip {
   const city = getDisplayCity(trip);
   const country = getDisplayCountry(trip);
-  const safeTitle = normalizeText(trip.title) || city || country || 'Travel';
+  const safeTitle = getTripBookTitle(trip);
 
   return {
     id: trip.id,

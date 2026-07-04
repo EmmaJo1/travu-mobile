@@ -30,6 +30,7 @@ export default function TripCreatedScreen() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const destinationLabel = firstParam(params.destinationLabel) ?? '선택한 여행지';
+  const tripId = firstParam(params.tripId);
   const dateLabel = formatDateLabel(firstParam(params.startDate), firstParam(params.endDate));
   const ctaBottom = Math.max(insets.bottom + 32, 64);
   const homeLinkBottom = ctaBottom + CTA_HEIGHT + Spacing['2xl'];
@@ -42,11 +43,11 @@ export default function TripCreatedScreen() {
     router.replace({
       pathname: '/day-archive-detail',
       params: {
-        tripId: `manual-${Date.now()}`,
+        tripId: tripId ?? `manual-${Date.now()}`,
         entryPoint: 'manualCreate',
       },
     } as Href);
-  }, [router]);
+  }, [router, tripId]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

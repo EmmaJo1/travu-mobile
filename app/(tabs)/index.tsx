@@ -2,9 +2,15 @@
  * Home based on Figma Home_Component / node 1941:2308.
  */
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
+import {
+  setStatusBarBackgroundColor,
+  setStatusBarStyle,
+  setStatusBarTranslucent,
+  StatusBar,
+} from 'expo-status-bar';
 import React from 'react';
 import {
   Alert,
@@ -51,7 +57,10 @@ import {
 import type { DestinationOption } from '@/constants/mockTripDestinations';
 import { addSavedCompletedTrip } from '@/constants/savedMyPageTrips';
 import { Colors, Spacing, Typography } from '@/constants/theme';
+import { useCreateTrip } from '@/hooks/useCreateTrip';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
+import { useAuth } from '@/providers/AuthProvider';
+import { ActiveTripExistsError } from '@/services/supabase/trips';
 
 const HERO_HEIGHT = 336;
 const HERO_IMAGE_FRAME_TOP = -139;
@@ -591,6 +600,16 @@ function getEnglishLocationLabel(destination: DestinationOption): string {
   return 'Travel';
 }
 
+function getEnglishCountryLabel(countryName: string): string {
+  const normalized = countryName.trim().toLowerCase();
+
+  if (!normalized) {
+    return '';
+  }
+
+  return ENGLISH_DESTINATION_LABELS[normalized] ?? ENGLISH_DESTINATION_LABELS[countryName] ?? countryName;
+}
+
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -599,6 +618,8 @@ export default function HomeScreen() {
     action?: string;
     actionId?: string;
   }>();
+  const { canUseSupabaseUserData } = useAuth();
+  const createTripMutation = useCreateTrip();
   const { currentTrip, todaySummary } = HOME_MOCK_DATA;
   const {
     status: photoImportStatus,
@@ -1116,7 +1137,7 @@ export default function HomeScreen() {
     setIsTraveling(true);
   }, []);
 
-  const startTripWithSetup = React.useCallback((setup: StartTripSetupValue) => {
+  const startTripWithSetup = React.useCallback(async (setup: StartTripSetupValue) => {
     const now = new Date().toISOString();
     const hasSetupDestination = setup.destinationName.trim().length > 0;
     const setupDestination: DestinationOption = hasSetupDestination
@@ -1134,11 +1155,39 @@ export default function HomeScreen() {
       : hasSetupDestination
         ? [setupDestination]
         : [];
+    const primaryDestination = setupDestinations[0] ?? setupDestination;
+    const destinationCity = getEnglishLocationLabel(primaryDestination);
+    const destinationCountry = getEnglishCountryLabel(primaryDestination.countryName);
+
+    if (canUseSupabaseUserData) {
+      try {
+        await createTripMutation.mutateAsync({
+          destinationCity,
+          destinationCityKo: primaryDestination.displayName,
+          destinationCountry,
+          destinationCountryKo: primaryDestination.countryName,
+          endDate: setup.endDate,
+          isEndDateUndecided: setup.isEndDateUndecided ?? false,
+          startDate: setup.startDate,
+          status: 'active',
+          title: `${destinationCity} 여행`,
+        });
+      } catch (error) {
+        if (error instanceof ActiveTripExistsError) {
+          Alert.alert('이미 진행 중인 여행이 있어요.', '기존 여행을 종료한 뒤 새 여행을 시작해주세요.');
+          return;
+        }
+
+        console.warn('Failed to create trip in Supabase.', error);
+        Alert.alert('여행을 저장하지 못했어요.', '잠시 후 다시 시도해주세요.');
+        return;
+      }
+    }
 
     setStartTripSetupVisible(false);
     setActiveTrip((prev) => ({
       ...prev,
-      destination: setupDestinations[0] ?? setupDestination,
+      destination: primaryDestination,
       visitedDestinations: mergeVisitedDestinations(
         [],
         setupDestinations.filter((destination) => destination.type !== 'country'),
@@ -1156,7 +1205,7 @@ export default function HomeScreen() {
       updatedAt: now,
     }));
     setIsTraveling(true);
-  }, []);
+  }, [canUseSupabaseUserData, createTripMutation]);
 
   const handleCancelStartTripSetup = React.useCallback(() => {
     setStartTripSetupVisible(false);
@@ -1247,6 +1296,18 @@ export default function HomeScreen() {
       hasDismissedPhotoImportCompleteModal ||
       hasDeferredPhotoImportResults ||
       hasOpenedPhotoImportResults);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!isTraveling) {
+        return;
+      }
+
+      setStatusBarStyle('light');
+      setStatusBarTranslucent(true);
+      setStatusBarBackgroundColor('transparent');
+    }, [isTraveling]),
+  );
 
   if (!isTraveling) {
     return (

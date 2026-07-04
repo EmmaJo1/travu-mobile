@@ -2,12 +2,15 @@ import { Feather } from '@expo/vector-icons';
 import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
+import { useCreateTrip } from '@/hooks/useCreateTrip';
+import { useAuth } from '@/providers/AuthProvider';
+import { ActiveTripExistsError } from '@/services/supabase/trips';
 
 const BACKGROUND = Colors.light.bgScreen;
 const GREY_700 = '#595959';
@@ -34,6 +37,8 @@ export default function CreateTripScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
+  const { canUseSupabaseUserData } = useAuth();
+  const createTripMutation = useCreateTrip();
 
   const destinationId = firstParam(params.destinationId);
   const destinationName = firstParam(params.destinationName);
@@ -76,8 +81,44 @@ export default function CreateTripScreen() {
     } as Href);
   }, [router, sharedParams]);
 
-  const handleCreate = React.useCallback(() => {
+  const handleCreate = React.useCallback(async () => {
     if (!canCreate) return;
+
+    const nextDestinationName = destinationName;
+    const nextStartDate = startDate;
+    const nextEndDate = endDate;
+
+    if (!nextDestinationName || !nextStartDate || !nextEndDate) {
+      return;
+    }
+
+    let createdTripId: string | undefined;
+
+    if (canUseSupabaseUserData) {
+      try {
+        const trip = await createTripMutation.mutateAsync({
+          destinationCity: nextDestinationName,
+          destinationCityKo: nextDestinationName,
+          destinationCountry,
+          destinationCountryKo: destinationCountry,
+          endDate: nextEndDate,
+          isEndDateUndecided: false,
+          startDate: nextStartDate,
+          status: 'draft',
+          title: `${nextDestinationName} 여행`,
+        });
+        createdTripId = trip.id;
+      } catch (error) {
+        if (error instanceof ActiveTripExistsError) {
+          Alert.alert('이미 진행 중인 여행이 있어요.', '기존 여행을 종료한 뒤 새 여행을 시작해주세요.');
+          return;
+        }
+
+        console.warn('Failed to create trip in Supabase.', error);
+        Alert.alert('여행을 저장하지 못했어요.', '잠시 후 다시 시도해주세요.');
+        return;
+      }
+    }
 
     router.replace({
       pathname: '/trip-created',
@@ -86,12 +127,15 @@ export default function CreateTripScreen() {
         destinationName,
         destinationCountry,
         destinationLabel,
-        startDate,
-        endDate,
+        startDate: nextStartDate,
+        endDate: nextEndDate,
+        tripId: createdTripId,
       },
     } as Href);
   }, [
     canCreate,
+    canUseSupabaseUserData,
+    createTripMutation,
     destinationCountry,
     destinationId,
     destinationLabel,
