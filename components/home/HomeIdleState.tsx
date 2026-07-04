@@ -37,6 +37,7 @@ import {
 } from '@/constants/mockIdleHomeData';
 import { addSavedIdleDetectedTrip, useSavedMyPageTrips } from '@/constants/savedMyPageTrips';
 import { Colors, FontFamily, Typography } from '@/constants/theme';
+import type { HomeSummaryTripInput } from '@/utils/supabaseTripMappers';
 
 const HERO_HEIGHT = 299;
 const MONTHLY_SUMMARY_TOP = 223;
@@ -60,7 +61,16 @@ const MONTH_LABELS = [
   'DECEMBER',
 ] as const;
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
-const DAY_MS = 24 * 60 * 60 * 1000;
+const MULTI_WORD_CITY_NAMES = new Set([
+  'ho chi minh',
+  'hong kong',
+  'kuala lumpur',
+  'las vegas',
+  'los angeles',
+  'new york',
+  'san francisco',
+  'sao paulo',
+]);
 
 type MonthlySummary = {
   travelDays: number;
@@ -77,6 +87,8 @@ type MonthlySummaryTrip = {
   cityName?: string | null;
   city?: string | null;
   photoCount?: number | null;
+  status?: string | null;
+  isEndDateUndecided?: boolean | null;
 };
 
 type MonthlySummaryDateRange = {
@@ -98,6 +110,7 @@ interface HomeIdleStateProps {
   onCloseImportCompleteModal?: () => void;
   onPressViewImportResults?: () => void;
   supabaseRecentTrips?: IdleRecentTrip[];
+  supabaseSummaryTrips?: HomeSummaryTripInput[];
 }
 
 export default function HomeIdleState({
@@ -114,6 +127,7 @@ export default function HomeIdleState({
   onCloseImportCompleteModal,
   onPressViewImportResults,
   supabaseRecentTrips,
+  supabaseSummaryTrips,
 }: HomeIdleStateProps) {
   const router = useRouter();
   const savedMyPageTrips = useSavedMyPageTrips();
@@ -121,9 +135,13 @@ export default function HomeIdleState({
   const [isRefreshing, setRefreshing] = React.useState(false);
   const today = React.useMemo(() => new Date(), []);
   const heroDateLabel = React.useMemo(() => formatIdleHeroDate(today), [today]);
+  const summaryTrips =
+    supabaseSummaryTrips && supabaseSummaryTrips.length > 0
+      ? supabaseSummaryTrips
+      : savedMyPageTrips;
   const monthlySummary = React.useMemo(
-    () => getMonthlySummary(today, savedMyPageTrips),
-    [today, savedMyPageTrips],
+    () => getMonthlySummary(today, summaryTrips),
+    [today, summaryTrips],
   );
   const monthlySummaryTitle = `${MONTH_LABELS[today.getMonth()]} SUMMARY`;
 
@@ -400,6 +418,14 @@ function getMonthRange(date: Date) {
   };
 }
 
+function createLocalDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
 function parseDateKeyToLocalDate(dateKey?: string | null) {
   if (!dateKey) {
     return null;
@@ -437,12 +463,25 @@ function parseMonthlySummaryDateRange(dateRangeLabel?: string | null): MonthlySu
   };
 }
 
-function getTripDateRange(trip: MonthlySummaryTrip) {
+function getTripDateRange(
+  trip: MonthlySummaryTrip,
+  currentDate: Date,
+  monthEnd: Date,
+) {
   const startDate = parseDateKeyToLocalDate(trip.startDate);
-  const endDate = parseDateKeyToLocalDate(trip.endDate) ?? startDate;
+  const explicitEndDate = parseDateKeyToLocalDate(trip.endDate);
+  const isOpenEndedActiveTrip = trip.status === 'active' && (trip.isEndDateUndecided || !trip.endDate);
+  const openEndedActiveEndDate =
+    isOpenEndedActiveTrip
+      ? new Date(Math.min(currentDate.getTime(), monthEnd.getTime()))
+      : null;
+  const endDate = explicitEndDate ?? openEndedActiveEndDate ?? startDate;
 
   if (startDate) {
-    return { startDate, endDate: endDate ?? startDate };
+    return {
+      startDate,
+      endDate: endDate && endDate.getTime() >= startDate.getTime() ? endDate : startDate,
+    };
   }
 
   const parsedDateRange = parseMonthlySummaryDateRange(trip.dateRangeLabel);
@@ -457,7 +496,8 @@ function getTripDateRange(trip: MonthlySummaryTrip) {
   };
 }
 
-function getOverlappedDayCount(
+function addOverlappedDayKeys(
+  dayKeys: Set<string>,
   tripStartDate: Date,
   tripEndDate: Date,
   monthStart: Date,
@@ -467,10 +507,53 @@ function getOverlappedDayCount(
   const end = new Date(Math.min(tripEndDate.getTime(), monthEnd.getTime()));
 
   if (start.getTime() > end.getTime()) {
-    return 0;
+    return false;
   }
 
-  return Math.floor((end.getTime() - start.getTime()) / DAY_MS) + 1;
+  const cursor = new Date(start);
+
+  while (cursor.getTime() <= end.getTime()) {
+    dayKeys.add(createLocalDateKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return true;
+}
+
+function normalizeCityName(value: string) {
+  return value
+    .replace(/\s+travel$/i, '')
+    .replace(/\s*여행$/g, '')
+    .trim();
+}
+
+function isValidSummaryCity(value: string) {
+  const normalized = value.trim().toLowerCase();
+
+  return Boolean(normalized) && !['travel', 'unknown', 'travu', 'set location'].includes(normalized);
+}
+
+function splitCityValue(value: string) {
+  const primaryParts = value
+    .split(/[,/·•|、，]+/g)
+    .flatMap((part) => {
+      const trimmedPart = part.trim();
+      const normalizedPart = trimmedPart.toLowerCase();
+
+      if (MULTI_WORD_CITY_NAMES.has(normalizedPart)) {
+        return [trimmedPart];
+      }
+
+      if (!/[가-힣]/.test(trimmedPart)) {
+        return trimmedPart.split(/\s+/g);
+      }
+
+      return trimmedPart.split(/\s+/g);
+    });
+
+  return primaryParts
+    .map(normalizeCityName)
+    .filter(isValidSummaryCity);
 }
 
 function collectTripCities(trip: MonthlySummaryTrip) {
@@ -479,49 +562,51 @@ function collectTripCities(trip: MonthlySummaryTrip) {
       ? trip.visitedCities
       : [trip.destinationName ?? trip.cityName ?? trip.city ?? ''];
 
-  return cities.map((city) => city.trim()).filter(Boolean);
+  return cities.flatMap(splitCityValue);
 }
 
 function getMonthlySummary(date: Date, trips: MonthlySummaryTrip[]): MonthlySummary {
   const { monthStart, monthEnd } = getMonthRange(date);
+  const travelDayKeys = new Set<string>();
   const cityKeys = new Set<string>();
+  let photoCount = 0;
 
-  return trips.reduce<MonthlySummary>(
-    (summary, trip) => {
-      const { startDate, endDate } = getTripDateRange(trip);
+  trips.forEach((trip) => {
+    if (trip.status === 'ignored') {
+      return;
+    }
 
-      if (!startDate || !endDate) {
-        return summary;
-      }
+    const { startDate, endDate } = getTripDateRange(trip, date, monthEnd);
 
-      const overlappedDayCount = getOverlappedDayCount(
-        startDate,
-        endDate,
-        monthStart,
-        monthEnd,
-      );
+    if (!startDate || !endDate) {
+      return;
+    }
 
-      if (overlappedDayCount <= 0) {
-        return summary;
-      }
+    const hasMonthlyOverlap = addOverlappedDayKeys(
+      travelDayKeys,
+      startDate,
+      endDate,
+      monthStart,
+      monthEnd,
+    );
 
-      collectTripCities(trip).forEach((city) => {
-        cityKeys.add(city.toLowerCase());
-      });
+    if (!hasMonthlyOverlap) {
+      return;
+    }
 
-      // TODO: Split photo counts by photo metadata dates when monthly media data is connected.
-      return {
-        travelDays: summary.travelDays + overlappedDayCount,
-        cityCount: cityKeys.size,
-        photoCount: summary.photoCount + (trip.photoCount ?? 0),
-      };
-    },
-    {
-      cityCount: 0,
-      photoCount: 0,
-      travelDays: 0,
-    },
-  );
+    collectTripCities(trip).forEach((city) => {
+      cityKeys.add(city.toLowerCase());
+    });
+
+    // TODO: Split photo counts by photo metadata dates when monthly media data is connected.
+    photoCount += trip.photoCount ?? 0;
+  });
+
+  return {
+    cityCount: cityKeys.size,
+    photoCount,
+    travelDays: travelDayKeys.size,
+  };
 }
 
 function MonthlySummaryCard({

@@ -5,6 +5,19 @@ import type { TripRow } from '@/services/supabase/trips';
 const FALLBACK_TRIP_COVER = MOCK_MY_PAGE_TRIPS[0].coverImage;
 const FALLBACK_TRIP_TITLE = MOCK_MY_PAGE_TRIPS[0].title || 'TRAVEL';
 
+export type HomeSummaryTripInput = {
+  city?: string | null;
+  cityName?: string | null;
+  dateRangeLabel?: string | null;
+  destinationName?: string | null;
+  endDate?: string | null;
+  isEndDateUndecided?: boolean | null;
+  photoCount?: number | null;
+  startDate?: string | null;
+  status?: string | null;
+  visitedCities?: string[] | null;
+};
+
 function normalizeText(value?: string | null) {
   return value?.trim() ?? '';
 }
@@ -139,4 +152,28 @@ export function mapSupabaseTripToIdleRecentTrip(trip: TripRow): IdleRecentTrip {
 
 export function mapSupabaseTripsToIdleRecentTrips(trips: TripRow[]): IdleRecentTrip[] {
   return trips.map(mapSupabaseTripToIdleRecentTrip);
+}
+
+export function mapSupabaseTripToHomeSummaryTrip(trip: TripRow): HomeSummaryTripInput {
+  const city = getDisplayCity(trip);
+
+  return {
+    city,
+    cityName: trip.destination_city_ko,
+    dateRangeLabel: formatTripDateRange(trip),
+    destinationName: city,
+    endDate: trip.end_date,
+    isEndDateUndecided: trip.is_end_date_undecided,
+    // TODO: Replace with photos table counts after Supabase photo/storage sync is connected.
+    photoCount: 0,
+    startDate: trip.start_date,
+    status: trip.status,
+    visitedCities: city ? [city] : [],
+  };
+}
+
+export function mapSupabaseTripsToHomeSummaryTrips(trips: TripRow[]): HomeSummaryTripInput[] {
+  return trips
+    .filter((trip) => trip.status !== 'ignored')
+    .map(mapSupabaseTripToHomeSummaryTrip);
 }

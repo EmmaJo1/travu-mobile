@@ -59,11 +59,14 @@ import { addSavedCompletedTrip } from '@/constants/savedMyPageTrips';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useCompleteTrip } from '@/hooks/useCompleteTrip';
 import { useCreateTrip } from '@/hooks/useCreateTrip';
-import { useActiveTrip, useRecentTrips } from '@/hooks/useMyTrips';
+import { useActiveTrip, useMyTrips, useRecentTrips } from '@/hooks/useMyTrips';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
 import { useAuth } from '@/providers/AuthProvider';
 import { ActiveTripExistsError, type TripRow } from '@/services/supabase/trips';
-import { mapSupabaseTripsToIdleRecentTrips } from '@/utils/supabaseTripMappers';
+import {
+  mapSupabaseTripsToHomeSummaryTrips,
+  mapSupabaseTripsToIdleRecentTrips,
+} from '@/utils/supabaseTripMappers';
 
 const HERO_HEIGHT = 336;
 const HERO_IMAGE_FRAME_TOP = -139;
@@ -656,6 +659,7 @@ export default function HomeScreen() {
   const createTripMutation = useCreateTrip();
   const completeTripMutation = useCompleteTrip();
   const { data: supabaseActiveTrip } = useActiveTrip();
+  const { data: supabaseTrips } = useMyTrips();
   const { data: supabaseRecentTrips } = useRecentTrips(3);
   const { currentTrip, todaySummary } = HOME_MOCK_DATA;
   const {
@@ -1349,6 +1353,12 @@ export default function HomeScreen() {
       : undefined,
     [supabaseRecentTrips],
   );
+  const idleSummaryTrips = React.useMemo(
+    () => supabaseTrips && supabaseTrips.length > 0
+      ? mapSupabaseTripsToHomeSummaryTrips(supabaseTrips)
+      : undefined,
+    [supabaseTrips],
+  );
   const shouldShowPhotoTripDetectionProgressCard =
     !hasSavedPhotoImportResults &&
     photoImportStatus === 'analyzing' &&
@@ -1394,6 +1404,7 @@ export default function HomeScreen() {
           onCloseImportCompleteModal={handleClosePhotoImportCompleteModal}
           onPressViewImportResults={handlePressViewCompletedImportResults}
           supabaseRecentTrips={idleRecentTrips}
+          supabaseSummaryTrips={idleSummaryTrips}
         />
         <PhotoImportSavedModal
           visible={lastSavedTripCount > 0}
