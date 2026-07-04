@@ -57,10 +57,13 @@ import {
 import type { DestinationOption } from '@/constants/mockTripDestinations';
 import { addSavedCompletedTrip } from '@/constants/savedMyPageTrips';
 import { Colors, Spacing, Typography } from '@/constants/theme';
+import { useCompleteTrip } from '@/hooks/useCompleteTrip';
 import { useCreateTrip } from '@/hooks/useCreateTrip';
+import { useActiveTrip, useRecentTrips } from '@/hooks/useMyTrips';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
 import { useAuth } from '@/providers/AuthProvider';
-import { ActiveTripExistsError } from '@/services/supabase/trips';
+import { ActiveTripExistsError, type TripRow } from '@/services/supabase/trips';
+import { mapSupabaseTripsToIdleRecentTrips } from '@/utils/supabaseTripMappers';
 
 const HERO_HEIGHT = 336;
 const HERO_IMAGE_FRAME_TOP = -139;
@@ -610,6 +613,37 @@ function getEnglishCountryLabel(countryName: string): string {
   return ENGLISH_DESTINATION_LABELS[normalized] ?? ENGLISH_DESTINATION_LABELS[countryName] ?? countryName;
 }
 
+function createDestinationFromTrip(trip: TripRow): DestinationOption {
+  const displayName = trip.destination_city ?? trip.destination_city_ko ?? trip.title;
+  const countryName = trip.destination_country ?? trip.destination_country_ko ?? '';
+
+  return {
+    id: trip.id,
+    name: displayName,
+    country: countryName,
+    displayName,
+    countryName,
+    type: 'city',
+  };
+}
+
+function createActiveTripStateFromSupabaseTrip(trip: TripRow): ActiveTripState {
+  const destination = createDestinationFromTrip(trip);
+
+  return {
+    ...INITIAL_ACTIVE_TRIP,
+    destination,
+    visitedDestinations: [destination],
+    startDate: trip.start_date ?? getTodayDateKey(),
+    endDate: trip.end_date,
+    openEnded: trip.is_end_date_undecided,
+    isEndDateUndecided: trip.is_end_date_undecided,
+    isRecording: true,
+    createdAt: trip.created_at,
+    updatedAt: trip.updated_at,
+  };
+}
+
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -620,6 +654,9 @@ export default function HomeScreen() {
   }>();
   const { canUseSupabaseUserData } = useAuth();
   const createTripMutation = useCreateTrip();
+  const completeTripMutation = useCompleteTrip();
+  const { data: supabaseActiveTrip } = useActiveTrip();
+  const { data: supabaseRecentTrips } = useRecentTrips(3);
   const { currentTrip, todaySummary } = HOME_MOCK_DATA;
   const {
     status: photoImportStatus,
@@ -704,6 +741,15 @@ export default function HomeScreen() {
   React.useEffect(() => {
     setActiveTraveling(isTraveling);
   }, [isTraveling]);
+
+  React.useEffect(() => {
+    if (isTraveling || !supabaseActiveTrip) {
+      return;
+    }
+
+    setActiveTrip(createActiveTripStateFromSupabaseTrip(supabaseActiveTrip));
+    setIsTraveling(true);
+  }, [isTraveling, supabaseActiveTrip]);
 
   React.useEffect(() => {
     if (photoImportHomeFlowStatus !== 'analyzing') {
@@ -1028,7 +1074,7 @@ export default function HomeScreen() {
     setPlaceCreateModalVisible(false);
   }, [activeTrip.destination.displayName, activeTrip.destination.id, currentTrip.heroImage, selectedDateKey]);
 
-  const handleConfirmEndTrip = React.useCallback(() => {
+  const handleConfirmEndTrip = React.useCallback(async () => {
     const destinationName = getEnglishLocationLabel(activeTrip.destination);
     const completedEndDate = activeTrip.endDate ?? getTodayDateKey();
     const visitedCities = getUniqueTravelValues(
@@ -1040,6 +1086,16 @@ export default function HomeScreen() {
       ...activeTrip.visitedDestinations.map(getDestinationCountryName),
       activeTrip.destination.countryName,
     ]);
+
+    if (canUseSupabaseUserData) {
+      try {
+        await completeTripMutation.mutateAsync();
+      } catch (error) {
+        console.warn('Failed to complete active trip in Supabase.', error);
+        Alert.alert('여행을 종료하지 못했어요.', '잠시 후 다시 시도해주세요.');
+        return;
+      }
+    }
 
     addSavedCompletedTrip({
       id: `${activeTrip.destination.id}-${activeTrip.startDate}-${completedEndDate}`,
@@ -1060,7 +1116,13 @@ export default function HomeScreen() {
     setEndTripConfirmVisible(false);
     setTravelStatusSheetVisible(false);
     setEndTripCompleteVisible(true);
-  }, [activeTrip, currentTrip.heroImage, tripTotalStats.photoCount]);
+  }, [
+    activeTrip,
+    canUseSupabaseUserData,
+    completeTripMutation,
+    currentTrip.heroImage,
+    tripTotalStats.photoCount,
+  ]);
 
   const handleCloseEndTripComplete = React.useCallback(() => {
     setEndTripCompleteVisible(false);
@@ -1281,6 +1343,12 @@ export default function HomeScreen() {
   const headerLocationLabel = getEnglishLocationLabel(activeTrip.destination);
   const homeHeaderTop = getHomeHeaderTop(insets.top);
   const photoImportResultCount = photoImportCandidates.length;
+  const idleRecentTrips = React.useMemo(
+    () => supabaseRecentTrips && supabaseRecentTrips.length > 0
+      ? mapSupabaseTripsToIdleRecentTrips(supabaseRecentTrips)
+      : undefined,
+    [supabaseRecentTrips],
+  );
   const shouldShowPhotoTripDetectionProgressCard =
     !hasSavedPhotoImportResults &&
     photoImportStatus === 'analyzing' &&
@@ -1325,6 +1393,7 @@ export default function HomeScreen() {
           showImportCompleteModal={showPhotoImportCompleteModal && !hasSavedPhotoImportResults}
           onCloseImportCompleteModal={handleClosePhotoImportCompleteModal}
           onPressViewImportResults={handlePressViewCompletedImportResults}
+          supabaseRecentTrips={idleRecentTrips}
         />
         <PhotoImportSavedModal
           visible={lastSavedTripCount > 0}

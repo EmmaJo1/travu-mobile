@@ -33,6 +33,7 @@ import {
   MOCK_RECENT_TRIPS,
   type DetectedTrip,
   type IdlePastMoment,
+  type IdleRecentTrip,
 } from '@/constants/mockIdleHomeData';
 import { addSavedIdleDetectedTrip, useSavedMyPageTrips } from '@/constants/savedMyPageTrips';
 import { Colors, FontFamily, Typography } from '@/constants/theme';
@@ -96,6 +97,7 @@ interface HomeIdleStateProps {
   showImportCompleteModal?: boolean;
   onCloseImportCompleteModal?: () => void;
   onPressViewImportResults?: () => void;
+  supabaseRecentTrips?: IdleRecentTrip[];
 }
 
 export default function HomeIdleState({
@@ -111,6 +113,7 @@ export default function HomeIdleState({
   showImportCompleteModal = false,
   onCloseImportCompleteModal,
   onPressViewImportResults,
+  supabaseRecentTrips,
 }: HomeIdleStateProps) {
   const router = useRouter();
   const savedMyPageTrips = useSavedMyPageTrips();
@@ -130,11 +133,17 @@ export default function HomeIdleState({
   );
 
   const recentTrips = React.useMemo(
-    () => getRecentTrips([
-      ...MOCK_RECENT_TRIPS,
-      ...savedMyPageTrips.map(toIdleRecentTripFromSavedTrip),
-    ]),
-    [savedMyPageTrips],
+    () => {
+      if (supabaseRecentTrips && supabaseRecentTrips.length > 0) {
+        return getRecentTrips(supabaseRecentTrips);
+      }
+
+      return getRecentTrips([
+        ...MOCK_RECENT_TRIPS,
+        ...savedMyPageTrips.map(toIdleRecentTripFromSavedTrip),
+      ]);
+    },
+    [savedMyPageTrips, supabaseRecentTrips],
   );
 
   const recentTripIds = React.useMemo(

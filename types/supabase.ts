@@ -101,7 +101,7 @@ export interface Database {
           start_date: string | null;
           end_date: string | null;
           is_end_date_undecided: boolean;
-          status: 'detected' | 'draft' | 'active' | 'archived' | 'ignored';
+          status: 'detected' | 'draft' | 'active' | 'archived' | 'ignored' | 'completed';
           cover_photo_id: string | null;
           photo_import_job_id: string | null;
           created_at: string;

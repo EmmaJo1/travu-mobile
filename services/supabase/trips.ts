@@ -93,6 +93,30 @@ export async function fetchActiveTrip(): Promise<TripRow | null> {
   return data;
 }
 
+export async function completeActiveTrip(): Promise<TripRow | null> {
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  throwIfError(authError);
+
+  if (!authData.user) {
+    throw new Error('A Supabase session is required to complete a trip.');
+  }
+
+  const { data, error } = await supabase
+    .from('trips')
+    .update({
+      status: 'completed',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('user_id', authData.user.id)
+    .eq('status', 'active')
+    .is('deleted_at', null)
+    .select()
+    .maybeSingle();
+
+  throwIfError(error);
+  return data;
+}
+
 export async function fetchRecentTrips(limit = 12): Promise<TripRow[]> {
   const { data: authData, error: authError } = await supabase.auth.getUser();
   throwIfError(authError);

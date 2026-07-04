@@ -1,4 +1,5 @@
 import { MOCK_MY_PAGE_TRIPS, type MyPageTrip } from '@/constants/mockMyPageTrips';
+import type { IdleRecentTrip } from '@/constants/mockIdleHomeData';
 import type { TripRow } from '@/services/supabase/trips';
 
 const FALLBACK_TRIP_COVER = MOCK_MY_PAGE_TRIPS[0].coverImage;
@@ -115,4 +116,27 @@ export function mapSupabaseTripToMyPageTrip(trip: TripRow): MyPageTrip {
 
 export function mapSupabaseTripsToMyPageTrips(trips: TripRow[]): MyPageTrip[] {
   return trips.map(mapSupabaseTripToMyPageTrip);
+}
+
+export function mapSupabaseTripToIdleRecentTrip(trip: TripRow): IdleRecentTrip {
+  const city = getDisplayCity(trip);
+  const country = getDisplayCountry(trip);
+
+  return {
+    id: `supabase-recent-${trip.id}`,
+    tripId: trip.id,
+    city,
+    country,
+    dateRange: formatTripDateRange(trip),
+    image: FALLBACK_TRIP_COVER,
+    photoCount: 0,
+    placeCount: 0,
+    startDate: trip.start_date ?? undefined,
+    endDate: trip.end_date ?? trip.start_date ?? undefined,
+    status: 'saved',
+  };
+}
+
+export function mapSupabaseTripsToIdleRecentTrips(trips: TripRow[]): IdleRecentTrip[] {
+  return trips.map(mapSupabaseTripToIdleRecentTrip);
 }
