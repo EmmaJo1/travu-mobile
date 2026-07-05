@@ -3,6 +3,7 @@ import type { Tables, TablesInsert, TablesUpdate } from '@/types/supabase';
 import { createTripDaysForRange } from '@/services/supabase/tripDays';
 
 export type TripRow = Tables<'trips'>;
+export type SoftDeletedTrip = Pick<TripRow, 'deleted_at' | 'id' | 'updated_at'>;
 
 export class ActiveTripExistsError extends Error {
   constructor() {
@@ -239,6 +240,100 @@ export function updateTrip(tripId: string, patch: TablesUpdate<'trips'>) {
     .single();
 }
 
-export function softDeleteTrip(tripId: string) {
-  return updateTrip(tripId, { deleted_at: new Date().toISOString() });
+export async function softDeleteTrip(tripId: string): Promise<SoftDeletedTrip> {
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  throwIfError(sessionError);
+
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  throwIfError(authError);
+
+  const sessionUserId = sessionData.session?.user.id;
+  const authUserId = authData.user?.id;
+
+  console.warn('[softDeleteTrip] session check', {
+    getSessionUserId: sessionUserId,
+    getUserUserId: authUserId,
+    idsMatch: Boolean(sessionUserId && authUserId && sessionUserId === authUserId),
+    tripId,
+  });
+
+  if (!sessionData.session || !sessionUserId) {
+    throw new Error('Login session is required.');
+  }
+
+  if (!authData.user || !authUserId) {
+    throw new Error('Login user is required.');
+  }
+
+  if (sessionUserId !== authUserId) {
+    throw new Error('Login session user does not match current user.');
+  }
+
+  if (!authData.user) {
+    throw new Error('로그인이 필요합니다.');
+  }
+
+  const { data: targetTrip, error: targetError } = await supabase
+    .from('trips')
+    .select('id,user_id,deleted_at')
+    .eq('id', tripId)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  if (targetError) {
+    console.warn('[softDeleteTrip] target lookup failed', {
+      code: targetError.code,
+      details: targetError.details,
+      hint: targetError.hint,
+      message: targetError.message,
+      tripId,
+      userId: authUserId,
+    });
+    throw new Error(targetError.message);
+  }
+
+  if (!targetTrip) {
+    throw new Error('Could not find a deletable trip for the current user.');
+  }
+
+  const timestamp = new Date().toISOString();
+  const payload = {
+    deleted_at: timestamp,
+    updated_at: timestamp,
+  };
+
+  console.warn('[softDeleteTrip] target and payload check', {
+    payloadFields: Object.keys(payload),
+    targetDeletedAt: targetTrip.deleted_at,
+    targetTripId: targetTrip.id,
+    targetUserId: targetTrip.user_id,
+    tripId,
+    userId: authUserId,
+    userIdMatchesTarget: targetTrip.user_id === authUserId,
+  });
+
+  const { error } = await supabase
+    .from('trips')
+    .update(payload)
+    .eq('id', tripId)
+    .eq('user_id', authUserId)
+    .is('deleted_at', null);
+
+  if (error) {
+    console.warn('[softDeleteTrip] update failed', {
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      message: error.message,
+      tripId,
+      userId: authUserId,
+    });
+    throw new Error(error.message);
+  }
+
+  return {
+    deleted_at: timestamp,
+    id: tripId,
+    updated_at: timestamp,
+  };
 }

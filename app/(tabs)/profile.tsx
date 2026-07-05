@@ -23,7 +23,9 @@ import {
 } from '@/constants/mockMyPageTrips';
 import { removeSavedMyPageTrip, useSavedMyPageTrips } from '@/constants/savedMyPageTrips';
 import { Colors, Spacing, Typography } from '@/constants/theme';
+import { useDeleteTrip } from '@/hooks/useDeleteTrip';
 import { useMyTrips } from '@/hooks/useMyTrips';
+import { useAuth } from '@/providers/AuthProvider';
 import { useUserProfile } from '@/providers/UserProfileProvider';
 import { mapSupabaseTripsToMyPageTrips } from '@/utils/supabaseTripMappers';
 
@@ -82,6 +84,10 @@ function mergeSavedAndMockTrips(savedTrips: MyPageTrip[]) {
   return mergedTrips;
 }
 
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export default function ProfileScreen() {
   const router = useRouter();
   const [sortOption, setSortOption] = useState<TravelSortOption>('latest');
@@ -89,7 +95,13 @@ export default function ProfileScreen() {
   const [deletedTripIds, setDeletedTripIds] = useState<string[]>([]);
   const savedTrips = useSavedMyPageTrips();
   const { profile } = useUserProfile();
+  const { user } = useAuth();
   const { data: supabaseTrips } = useMyTrips();
+  const deleteTripMutation = useDeleteTrip();
+  const supabaseTripIds = useMemo(
+    () => new Set((supabaseTrips ?? []).map((trip) => trip.id)),
+    [supabaseTrips],
+  );
 
   const myPageTrips = useMemo(
     () => {
@@ -117,7 +129,7 @@ export default function ProfileScreen() {
   );
   const groupedTrips = useMemo(() => groupTripsByYear(sortedTrips), [sortedTrips]);
 
-  const handleRequestDeleteTrip = (tripId: string) => {
+  const handleRequestDeleteTrip = (tripId: string, tripTitle?: string) => {
     Alert.alert(
       '삭제하시겠습니까?',
       '이 여행 기록은 삭제 후 복구할 수 없어요.',
@@ -130,7 +142,39 @@ export default function ProfileScreen() {
           text: '삭제',
           style: 'destructive',
           onPress: () => {
-            // TODO: Delete archived trip data from backend when Supabase persistence is connected.
+            const isSupabaseTrip = supabaseTripIds.has(tripId);
+
+            console.warn('[ProfileScreen] delete trip requested', {
+              isSupabaseTrip,
+              tripTitle,
+              tripId,
+              userId: user?.id,
+            });
+
+            if (isSupabaseTrip) {
+              deleteTripMutation.mutate(tripId, {
+                onError: (error) => {
+                  const message = getErrorMessage(error);
+                  console.warn('[ProfileScreen] delete trip mutation failed', {
+                    message,
+                    tripTitle,
+                    tripId,
+                    userId: user?.id,
+                  });
+                  Alert.alert(
+                    '여행을 삭제하지 못했어요',
+                    `잠시 후 다시 시도해주세요.\n개발 정보: ${message}`,
+                  );
+                },
+                onSuccess: () => {
+                  setDeletedTripIds((current) =>
+                    current.includes(tripId) ? current : [...current, tripId],
+                  );
+                },
+              });
+              return;
+            }
+
             removeSavedMyPageTrip(tripId);
             setDeletedTripIds((current) =>
               current.includes(tripId) ? current : [...current, tripId],
@@ -212,7 +256,7 @@ export default function ProfileScreen() {
 
                       <TripListCardList
                         trips={yearTrips.map(toTripListItem)}
-                        onLongPressTrip={(trip) => handleRequestDeleteTrip(trip.id)}
+                        onLongPressTrip={(trip) => handleRequestDeleteTrip(trip.id, trip.title)}
                         onPressTrip={(trip) => {
                           router.push({
                             pathname: '/day-archive-detail',
