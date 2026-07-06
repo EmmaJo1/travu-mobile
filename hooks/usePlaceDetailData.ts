@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 
+import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
 import { useAuth } from '@/providers/AuthProvider';
 import { fetchPlaceById } from '@/services/supabase/places';
 import { fetchRecordsByPlaceId } from '@/services/supabase/records';
@@ -25,6 +26,6 @@ export function usePlaceDetailData(placeId?: string | null) {
       const records = await fetchRecordsByPlaceId(place.id);
       return { place, records };
     },
-    queryKey: ['supabase', 'place-detail', user?.id ?? 'no-user', placeId ?? 'no-place'],
+    queryKey: supabaseQueryKeys.placeDetail(user?.id, placeId),
   });
 }

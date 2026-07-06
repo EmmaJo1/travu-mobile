@@ -8,6 +8,8 @@ export const supabaseQueryKeys = {
     ['supabase', 'trips', 'recent', userId ?? 'no-user'] as const,
   tripDetail: (userId?: string | null, tripId?: string | null) =>
     ['supabase', 'trips', 'detail', userId ?? 'no-user', tripId ?? 'no-trip'] as const,
+  placeDetail: (userId?: string | null, placeId?: string | null) =>
+    ['supabase', 'places', 'detail', userId ?? 'no-user', placeId ?? 'no-place'] as const,
   tripDays: (userId?: string | null, tripId?: string | null) =>
     ['supabase', 'trip-days', userId ?? 'no-user', tripId ?? 'no-trip'] as const,
   tripDayPlaces: (userId?: string | null, tripDayId?: string | null) =>

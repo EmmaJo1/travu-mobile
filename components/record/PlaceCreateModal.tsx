@@ -68,7 +68,7 @@ export interface PlaceEntryDayOption {
 interface PlaceCreateModalProps {
   visible: boolean;
   onClose: () => void;
-  onSubmit: (place: PlaceCreateInput) => void;
+  onSubmit: (place: PlaceCreateInput) => Promise<void> | void;
   onDelete?: (entryId: string) => void;
   initialValue?: Partial<PlaceCreateInput> & { id?: string };
   mode?: PlaceEntryFormMode;
@@ -378,6 +378,7 @@ export default function PlaceCreateModal({
   const [selectedPlace, setSelectedPlace] = useState<SelectedPlace>();
   const [timeWheelVisible, setTimeWheelVisible] = useState(false);
   const [hasUserEditedTime, setHasUserEditedTime] = useState(false);
+  const [isSubmitting, setSubmitting] = useState(false);
   const [deleteConfirmationVisible, setDeleteConfirmationVisible] = useState(false);
   const [customDayOptions, setCustomDayOptions] = useState<PlaceEntryDayOption[]>([]);
   const [selectedDay, setSelectedDay] = useState<PlaceEntryDayOption>();
@@ -418,6 +419,7 @@ export default function PlaceCreateModal({
     setPhotoSources(initialValue?.photoSources ?? []);
     setTimeWheelVisible(false);
     setHasUserEditedTime(false);
+    setSubmitting(false);
     setDeleteConfirmationVisible(false);
     setCustomDayOptions([]);
     setSelectedDay(nextDay);
@@ -427,7 +429,7 @@ export default function PlaceCreateModal({
   };
 
   useEffect(() => {
-    if (visible) {
+    if (visible && !isSubmitting) {
       const nextPlace = getInitialSelectedPlace(initialValue);
       const nextDay = getInitialSelectedDay();
       setSelectedPlace(nextPlace);
@@ -447,7 +449,7 @@ export default function PlaceCreateModal({
       setCalendarView('days');
       setPickerPage('form');
     }
-  }, [visible, initialValue, dayOptions, selectedDayId, getInitialSelectedDay]);
+  }, [visible, initialValue, dayOptions, selectedDayId, getInitialSelectedDay, isSubmitting]);
 
   useEffect(() => {
     if (pickerPage !== 'date-picker' || calendarView !== 'years' || yearSelectorHeight <= 0) {
@@ -472,7 +474,11 @@ export default function PlaceCreateModal({
     onClose();
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    if (isSubmitting) {
+      return;
+    }
+
     const trimmedPlace = (selectedPlace?.placeName ?? place).trim();
 
     if (!trimmedPlace || (availableDayOptions.length > 0 && !selectedDay)) {
@@ -485,25 +491,31 @@ export default function PlaceCreateModal({
       cityName: city.trim() || undefined,
     };
 
-    onSubmit({
-      ...resolvedPlace,
-      place: trimmedPlace,
-      time: time.trim() || undefined,
-      category: category.trim() || undefined,
-      city: resolvedPlace.cityName,
-      text: text.trim() || undefined,
-      photoUris: photoUris.length > 0 ? photoUris : undefined,
-      photoSources: photoSources.length > 0 ? photoSources : undefined,
-      dayId: selectedDay?.id,
-      dayNumber: selectedDay?.dayNumber,
-      dateKey: selectedDay ? getDayOptionDateKey(selectedDay) ?? undefined : undefined,
-      dateLabel: selectedDay?.dateLabel,
-      weekdayLabel: selectedDay?.weekdayLabel,
-    });
-    resetFields();
+    setSubmitting(true);
+
+    try {
+      await onSubmit({
+        ...resolvedPlace,
+        place: trimmedPlace,
+        time: time.trim() || undefined,
+        category: category.trim() || undefined,
+        city: resolvedPlace.cityName,
+        text: text.trim() || undefined,
+        photoUris: photoUris.length > 0 ? photoUris : undefined,
+        photoSources: photoSources.length > 0 ? photoSources : undefined,
+        dayId: selectedDay?.id,
+        dayNumber: selectedDay?.dayNumber,
+        dateKey: selectedDay ? getDayOptionDateKey(selectedDay) ?? undefined : undefined,
+        dateLabel: selectedDay?.dateLabel,
+        weekdayLabel: selectedDay?.weekdayLabel,
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const canSubmit =
+    !isSubmitting &&
     (selectedPlace?.placeName ?? place).trim().length > 0 &&
     (availableDayOptions.length === 0 || Boolean(selectedDay));
 

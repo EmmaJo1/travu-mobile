@@ -37,7 +37,7 @@ export function mapSupabasePlacesToPlaceEntries(
   return places.map((place) => {
     const placeRecords = recordsByPlaceId.get(place.id) ?? [];
     const firstRecord = placeRecords[0];
-    const time = formatTimeLabel(firstRecord?.visited_at ?? place.visited_at);
+    const time = formatTimeLabel(place.visited_at ?? firstRecord?.visited_at);
     const text = firstRecord?.text ?? place.memo ?? undefined;
 
     return {
@@ -45,7 +45,7 @@ export function mapSupabasePlacesToPlaceEntries(
       cityName: place.city ?? undefined,
       countryName: place.country ?? fallbackCountryName,
       dataSource: 'supabase',
-      dateKey: firstRecord?.visited_at?.slice(0, 10) ?? place.visited_at?.slice(0, 10),
+      dateKey: place.visited_at?.slice(0, 10) ?? firstRecord?.visited_at?.slice(0, 10),
       formattedAddress: place.address ?? undefined,
       googlePlaceId: place.google_place_id ?? undefined,
       id: place.id,

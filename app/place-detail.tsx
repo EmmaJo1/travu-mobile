@@ -1,4 +1,5 @@
 import { Feather } from '@expo/vector-icons';
+import { useQueryClient } from '@tanstack/react-query';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -51,7 +52,12 @@ import {
   parsePlaceEntryTime,
 } from '@/utils/placeEntryTime';
 import { isSupabaseUuid, usePlaceDetailData } from '@/hooks/usePlaceDetailData';
-import type { PlaceRow } from '@/services/supabase/places';
+import { useDeletePlaceRecord } from '@/hooks/useDeletePlaceRecord';
+import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
+import { useTripDays } from '@/hooks/useTripDays';
+import { useAuth } from '@/providers/AuthProvider';
+import { updatePlace, type PlaceRow, type UpdatePlacePatch } from '@/services/supabase/places';
+import type { TripDayRow } from '@/services/supabase/tripDays';
 import type { RecordRow } from '@/services/supabase/records';
 
 type PlaceDetailRouteParams = {
@@ -259,6 +265,26 @@ function getPlaceDetailDayOption(label?: string): PlaceEntryDayOption | undefine
   };
 }
 
+function createPlaceDetailDayOptionFromTripDay(day: TripDayRow): PlaceEntryDayOption {
+  const parsedDate = parsePlaceDetailDate(day.date);
+
+  if (!parsedDate) {
+    return {
+      id: day.id,
+      dayNumber: day.day_index,
+      dateLabel: day.date,
+      weekdayLabel: '',
+    };
+  }
+
+  return {
+    id: day.id,
+    dayNumber: day.day_index,
+    dateLabel: `${parsedDate.getFullYear()}.${parsedDate.getMonth() + 1}.${parsedDate.getDate()}`,
+    weekdayLabel: KOREAN_WEEKDAY_LABELS[parsedDate.getDay()],
+  };
+}
+
 function getRecordSortValue(record: PlaceDetailRecord) {
   return new Date(record.createdAt).getTime();
 }
@@ -391,10 +417,14 @@ function formatSupabaseVisitedTime(value?: string | null) {
   }
 
   return formatPlaceEntryTime({
-    hour: date.getHours() % 12 || 12,
-    minute: date.getMinutes(),
-    meridiem: date.getHours() >= 12 ? 'PM' : 'AM',
+    hour: date.getUTCHours() % 12 || 12,
+    minute: date.getUTCMinutes(),
+    meridiem: date.getUTCHours() >= 12 ? 'PM' : 'AM',
   });
+}
+
+function hasDisplayableRecordContent(record: RecordRow) {
+  return Boolean(record.text?.trim());
 }
 
 function createSupabasePlaceDetail(
@@ -403,7 +433,8 @@ function createSupabasePlaceDetail(
   params: PlaceDetailRouteParams,
 ): PlaceDetailData {
   const firstRecord = placeRecords[0];
-  const visitedAt = firstRecord?.visited_at ?? place.visited_at;
+  const visitedAt = place.visited_at ?? firstRecord?.visited_at;
+  const displayableRecords = placeRecords.filter(hasDisplayableRecordContent);
 
   return {
     categoryLabel: getParamValue(params.categoryLabel),
@@ -414,14 +445,14 @@ function createSupabasePlaceDetail(
     photos: [],
     placeId: place.id,
     placeName: place.custom_name ?? place.name,
-    records: placeRecords.map((record) => ({
+    records: displayableRecords.map((record) => ({
       createdAt: record.created_at,
       dayId: record.trip_day_id ?? place.trip_day_id ?? getParamValue(params.dayId) ?? '',
       id: record.id,
       photoIds: [],
       placeId: record.place_id,
       text: record.text ?? undefined,
-      time: formatSupabaseVisitedTime(record.visited_at),
+      time: formatSupabaseVisitedTime(place.visited_at ?? record.visited_at),
       tripId: record.trip_id,
       updatedAt: record.updated_at,
     })),
@@ -540,16 +571,239 @@ function createRecordDayFallbackDetail(params: PlaceDetailRouteParams): PlaceDet
   };
 }
 
+type PlaceInfoState = {
+  placeName: string;
+  cityName: string;
+  countryName: string;
+  dateLabel: string;
+  timeLabel: string;
+  categoryLabel: string;
+};
+
+type DetailSyncSnapshot = {
+  key: string;
+  photos: PlaceDetailPhoto[];
+  placeInfo: PlaceInfoState;
+  records: PlaceDetailRecord[];
+  recordTimeLabel: string;
+};
+
+function createPlaceInfoState(detail?: PlaceDetailData): PlaceInfoState {
+  return {
+    categoryLabel: detail?.categoryLabel ?? '',
+    cityName: detail?.cityName ?? '',
+    countryName: detail?.countryName ?? '',
+    dateLabel: detail?.dateLabel ?? '',
+    placeName: detail?.placeName ?? '',
+    timeLabel: detail?.timeLabel ?? '',
+  };
+}
+
+function sortPlaceDetailRecords(records?: PlaceDetailRecord[]) {
+  return [...(records ?? [])].sort((a, b) => getRecordSortValue(a) - getRecordSortValue(b));
+}
+
+function getPhotoSyncKey(photo: PlaceDetailPhoto) {
+  const sourceUri = typeof photo.source === 'object' && photo.source && 'uri' in photo.source
+    ? photo.source.uri
+    : '';
+
+  return [
+    photo.id,
+    sourceUri,
+    photo.takenAt ?? '',
+    photo.photoTakenAt ?? '',
+    photo.exifDateTimeOriginal ?? '',
+    photo.timestamp ?? '',
+    photo.createdAt ?? '',
+  ].join(':');
+}
+
+function getRecordSyncKey(record: PlaceDetailRecord) {
+  return [
+    record.id,
+    record.tripId,
+    record.dayId,
+    record.placeId,
+    record.time ?? '',
+    record.text ?? '',
+    record.createdAt,
+    record.updatedAt ?? '',
+    (record.photoIds ?? []).join(','),
+  ].join(':');
+}
+
+function buildDetailSyncKey(
+  detail: PlaceDetailData | undefined,
+  placeId: string | undefined,
+  hasFetchedSupabasePlaceDetail: boolean,
+) {
+  if (!detail) {
+    return [
+      'empty',
+      placeId ?? '',
+      hasFetchedSupabasePlaceDetail ? 'fetched' : 'pending',
+    ].join(':');
+  }
+
+  return [
+    'detail',
+    detail.tripId,
+    detail.dayId,
+    detail.placeId,
+    detail.placeName,
+    detail.cityName,
+    detail.countryName,
+    detail.dateLabel,
+    detail.timeLabel ?? '',
+    detail.categoryLabel ?? '',
+    detail.tripName,
+    detail.tripDateRange,
+    (detail.photos ?? []).map(getPhotoSyncKey).join('|'),
+    sortPlaceDetailRecords(detail.records).map(getRecordSyncKey).join('|'),
+  ].join('::');
+}
+
+function createDetailSyncSnapshot(
+  detail: PlaceDetailData | undefined,
+  placeId: string | undefined,
+  hasFetchedSupabasePlaceDetail: boolean,
+): DetailSyncSnapshot {
+  return {
+    key: buildDetailSyncKey(detail, placeId, hasFetchedSupabasePlaceDetail),
+    photos: detail?.photos ?? [],
+    placeInfo: createPlaceInfoState(detail),
+    records: sortPlaceDetailRecords(detail?.records),
+    recordTimeLabel: detail?.timeLabel ?? '',
+  };
+}
+
+function arePlaceInfoStatesEqual(a: PlaceInfoState, b: PlaceInfoState) {
+  return (
+    a.placeName === b.placeName &&
+    a.cityName === b.cityName &&
+    a.countryName === b.countryName &&
+    a.dateLabel === b.dateLabel &&
+    a.timeLabel === b.timeLabel &&
+    a.categoryLabel === b.categoryLabel
+  );
+}
+
+function arePhotoListsEqual(a: PlaceDetailPhoto[], b: PlaceDetailPhoto[]) {
+  return a.length === b.length && a.every((photo, index) => getPhotoSyncKey(photo) === getPhotoSyncKey(b[index]));
+}
+
+function areRecordListsEqual(a: PlaceDetailRecord[], b: PlaceDetailRecord[]) {
+  return a.length === b.length && a.every((record, index) => getRecordSyncKey(record) === getRecordSyncKey(b[index]));
+}
+
+function getDateKeyFromPlaceDetailLabel(value?: string) {
+  const parsedDate = parsePlaceDetailDate(value);
+
+  if (!parsedDate) {
+    return undefined;
+  }
+
+  return [
+    parsedDate.getFullYear(),
+    String(parsedDate.getMonth() + 1).padStart(2, '0'),
+    String(parsedDate.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function buildVisitedAtForPlaceUpdate(input: PlaceCreateInput, fallbackDateLabel?: string) {
+  const dateKey =
+    input.dateKey ??
+    getDateKeyFromPlaceDetailLabel(input.dateLabel) ??
+    getDateKeyFromPlaceDetailLabel(fallbackDateLabel);
+
+  if (!dateKey) {
+    return undefined;
+  }
+
+  const parsedTime = input.time ? parsePlaceEntryTime(input.time) : null;
+
+  if (!parsedTime) {
+    return `${dateKey}T00:00:00.000Z`;
+  }
+
+  const hour = parsedTime.meridiem === 'AM'
+    ? parsedTime.hour % 12
+    : (parsedTime.hour % 12) + 12;
+
+  return `${dateKey}T${String(hour).padStart(2, '0')}:${String(parsedTime.minute).padStart(
+    2,
+    '0',
+  )}:00.000Z`;
+}
+
 export default function PlaceDetailScreen() {
   const params = useLocalSearchParams<PlaceDetailRouteParams>();
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const screenWidth = Math.max(320, width);
+  const routeTripId = getParamValue(params.tripId);
+  const routeDayId = getParamValue(params.dayId);
   const routePlaceId = getParamValue(params.placeId);
+  const routeEntryPoint = getParamValue(params.entryPoint) as PlaceDetailRouteParams['entryPoint'];
+  const routeOpenPhotoGrid = getParamValue(params.openPhotoGrid);
+  const routePhotoGridMode = getParamValue(params.photoGridMode) as PlaceDetailRouteParams['photoGridMode'];
+  const routePhotoSourceIndexes = getParamValue(params.photoSourceIndexes);
+  const routePlaceName = getParamValue(params.placeName);
+  const routeCityName = getParamValue(params.cityName);
+  const routeCountryName = getParamValue(params.countryName);
+  const routeCategoryLabel = getParamValue(params.categoryLabel);
+  const routeDateLabel = getParamValue(params.dateLabel);
+  const routeTimeLabel = getParamValue(params.timeLabel);
+  const routeRecordText = getParamValue(params.recordText);
+  const routePhotoUris = getParamValue(params.photoUris);
+  const stableParams = React.useMemo<PlaceDetailRouteParams>(
+    () => ({
+      categoryLabel: routeCategoryLabel,
+      cityName: routeCityName,
+      countryName: routeCountryName,
+      dateLabel: routeDateLabel,
+      dayId: routeDayId,
+      entryPoint: routeEntryPoint,
+      openPhotoGrid: routeOpenPhotoGrid,
+      photoGridMode: routePhotoGridMode,
+      photoSourceIndexes: routePhotoSourceIndexes,
+      photoUris: routePhotoUris,
+      placeId: routePlaceId,
+      placeName: routePlaceName,
+      recordText: routeRecordText,
+      timeLabel: routeTimeLabel,
+      tripId: routeTripId,
+    }),
+    [
+      routeCategoryLabel,
+      routeCityName,
+      routeCountryName,
+      routeDateLabel,
+      routeDayId,
+      routeEntryPoint,
+      routeOpenPhotoGrid,
+      routePhotoGridMode,
+      routePhotoSourceIndexes,
+      routePhotoUris,
+      routePlaceId,
+      routePlaceName,
+      routeRecordText,
+      routeTimeLabel,
+      routeTripId,
+    ],
+  );
   const shouldUseSupabasePlaceDetail = isSupabaseUuid(routePlaceId);
-  const { data: supabasePlaceDetailData, isFetched: hasFetchedSupabasePlaceDetail } =
+  const {
+    data: supabasePlaceDetailData,
+    isFetched: hasFetchedSupabasePlaceDetail,
+    refetch: refetchPlaceDetailData,
+  } =
     usePlaceDetailData(routePlaceId);
+  const deletePlaceRecordMutation = useDeletePlaceRecord();
 
   const initialDetail = React.useMemo(
     () => {
@@ -557,7 +811,7 @@ export default function PlaceDetailScreen() {
         return createSupabasePlaceDetail(
           supabasePlaceDetailData.place,
           supabasePlaceDetailData.records,
-          params,
+          stableParams,
         );
       }
 
@@ -570,13 +824,21 @@ export default function PlaceDetailScreen() {
       }
 
       return (
-        isPlaceDetailDeleted(params.placeId)
+        isPlaceDetailDeleted(routePlaceId)
         ? undefined
-        : getMockPlaceDetail(params.tripId, params.dayId, params.placeId)
-      ?? createRecordDayFallbackDetail(params)
+        : getMockPlaceDetail(routeTripId, routeDayId, routePlaceId)
+      ?? createRecordDayFallbackDetail(stableParams)
       );
     },
-    [hasFetchedSupabasePlaceDetail, params, shouldUseSupabasePlaceDetail, supabasePlaceDetailData],
+    [
+      hasFetchedSupabasePlaceDetail,
+      routeDayId,
+      routePlaceId,
+      routeTripId,
+      shouldUseSupabasePlaceDetail,
+      stableParams,
+      supabasePlaceDetailData,
+    ],
   );
 
   const [placeInfo, setPlaceInfo] = React.useState(() => ({
@@ -620,22 +882,31 @@ export default function PlaceDetailScreen() {
   const [gridSelectionResetSignal, setGridSelectionResetSignal] = React.useState(0);
   const recordPhotoPickerOpenTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordSheetRestoreTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const supabaseTripIdForPlace = shouldUseSupabasePlaceDetail && isSupabaseUuid(initialDetail?.tripId)
+    ? initialDetail?.tripId
+    : undefined;
+  const { data: placeTripDays } = useTripDays(supabaseTripIdForPlace);
+  const detailSyncSnapshot = createDetailSyncSnapshot(
+    initialDetail,
+    routePlaceId,
+    hasFetchedSupabasePlaceDetail,
+  );
+  const detailSyncSnapshotRef = React.useRef(detailSyncSnapshot);
+  detailSyncSnapshotRef.current = detailSyncSnapshot;
+  const detailSyncKey = detailSyncSnapshot.key;
 
   React.useEffect(() => {
-    setPlaceInfo({
-      placeName: initialDetail?.placeName ?? '',
-      cityName: initialDetail?.cityName ?? '',
-      countryName: initialDetail?.countryName ?? '',
-      dateLabel: initialDetail?.dateLabel ?? '',
-      timeLabel: initialDetail?.timeLabel ?? '',
-      categoryLabel: initialDetail?.categoryLabel ?? '',
-    });
-    setPhotos(initialDetail?.photos ?? []);
-    setRecords(
-      [...(initialDetail?.records ?? [])].sort((a, b) => getRecordSortValue(a) - getRecordSortValue(b)),
-    );
-    setRecordTimeLabel(initialDetail?.timeLabel ?? '');
-  }, [initialDetail]);
+    const snapshot = detailSyncSnapshotRef.current;
+
+    setPlaceInfo((current) => (
+      arePlaceInfoStatesEqual(current, snapshot.placeInfo) ? current : snapshot.placeInfo
+    ));
+    setPhotos((current) => (arePhotoListsEqual(current, snapshot.photos) ? current : snapshot.photos));
+    setRecords((current) => (areRecordListsEqual(current, snapshot.records) ? current : snapshot.records));
+    setRecordTimeLabel((current) => (
+      current === snapshot.recordTimeLabel ? current : snapshot.recordTimeLabel
+    ));
+  }, [detailSyncKey]);
 
   const prepareRecordComposer = React.useCallback((photoIds: string[]) => {
     setSelectedRecordPhotoIds(photoIds);
@@ -668,13 +939,15 @@ export default function PlaceDetailScreen() {
     }
   }, []);
 
+  const initialDetailPlaceId = initialDetail?.placeId;
+
   React.useEffect(() => {
-    if (params.openPhotoGrid === '1' && initialDetail) {
-      setGridViewOnly(params.photoGridMode !== 'recordCreate');
+    if (routeOpenPhotoGrid === '1' && initialDetailPlaceId) {
+      setGridViewOnly(routePhotoGridMode !== 'recordCreate');
       setGridSelectionInitiallyEnabled(false);
       setGridOpen(true);
     }
-  }, [initialDetail, params.openPhotoGrid, params.photoGridMode]);
+  }, [initialDetailPlaceId, routeOpenPhotoGrid, routePhotoGridMode]);
 
   const viewerPhotos = React.useMemo<PlaceDetailPhoto[]>(() => {
     if (!viewerPhotoIds) {
@@ -738,6 +1011,22 @@ export default function PlaceDetailScreen() {
     () => getPlaceDetailDayOption(placeInfo.dateLabel),
     [placeInfo.dateLabel],
   );
+  const placeInfoDayOptions = React.useMemo(() => {
+    if (shouldUseSupabasePlaceDetail && placeTripDays && placeTripDays.length > 0) {
+      return placeTripDays.map(createPlaceDetailDayOptionFromTripDay);
+    }
+
+    return placeInfoDayOption ? [placeInfoDayOption] : [];
+  }, [placeInfoDayOption, placeTripDays, shouldUseSupabasePlaceDetail]);
+  const selectedPlaceInfoDayId = React.useMemo(() => {
+    if (shouldUseSupabasePlaceDetail) {
+      return initialDetail?.dayId && placeInfoDayOptions.some((day) => day.id === initialDetail.dayId)
+        ? initialDetail.dayId
+        : placeInfoDayOptions[0]?.id;
+    }
+
+    return placeInfoDayOption?.id;
+  }, [initialDetail?.dayId, placeInfoDayOption?.id, placeInfoDayOptions, shouldUseSupabasePlaceDetail]);
 
   const handleCloseSwipeRecord = React.useCallback(() => {
     setOpenSwipeRecordId(null);
@@ -762,6 +1051,40 @@ export default function PlaceDetailScreen() {
     );
     setPendingDeleteRecordId(null);
   }, [pendingDeleteRecordId]);
+
+  const handleConfirmDeletePlace = React.useCallback(async () => {
+    if (!initialDetail) {
+      return;
+    }
+
+    try {
+      if (shouldUseSupabasePlaceDetail) {
+        await deletePlaceRecordMutation.mutateAsync({
+          placeId: initialDetail.placeId,
+          tripDayId: initialDetail.dayId || routeDayId || '',
+          tripId: initialDetail.tripId || routeTripId || '',
+        });
+      }
+
+      markPlaceDetailDeleted(initialDetail.placeId);
+      setDeleteConfirmOpen(false);
+      router.back();
+    } catch (error) {
+      console.warn('[place-detail] delete place failed', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      Alert.alert(
+        '\uC7A5\uC18C\uB97C \uC0AD\uC81C\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+        `\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.\n\uAC1C\uBC1C \uC815\uBCF4: ${errorMessage}`,
+      );
+    }
+  }, [
+    deletePlaceRecordMutation,
+    initialDetail,
+    routeDayId,
+    routeTripId,
+    router,
+    shouldUseSupabasePlaceDetail,
+  ]);
 
   if (!initialDetail) {
     return (
@@ -995,20 +1318,129 @@ export default function PlaceDetailScreen() {
     setPlaceInfoModalOpen(true);
   };
 
-  const handleSubmitPlaceInfo = (input: PlaceCreateInput) => {
-    const nextDateLabel = input.dateLabel
-      ? `${input.dateLabel}${input.weekdayLabel ? ` ${input.weekdayLabel}` : ''}`
+  const handleSubmitPlaceInfo = async (input: PlaceCreateInput) => {
+    const selectedInputDay = input.dayId
+      ? placeInfoDayOptions.find((day) => day.id === input.dayId)
+      : undefined;
+    const nextDateLabelSource = input.dateLabel ?? selectedInputDay?.dateLabel;
+    const nextWeekdayLabel = input.weekdayLabel ?? selectedInputDay?.weekdayLabel;
+    const nextDateLabel = nextDateLabelSource
+      ? `${nextDateLabelSource}${nextWeekdayLabel ? ` ${nextWeekdayLabel}` : ''}`
       : placeInfo.dateLabel;
-
-    setPlaceInfo((current) => ({
-      ...current,
+    const nextPlaceInfo = {
+      ...placeInfo,
       placeName: input.placeName ?? input.place,
-      cityName: input.cityName ?? input.city ?? current.cityName,
-      countryName: input.countryName ?? current.countryName,
+      cityName: input.cityName ?? input.city ?? placeInfo.cityName,
+      countryName: input.countryName ?? placeInfo.countryName,
       dateLabel: nextDateLabel,
-      timeLabel: input.time ?? current.timeLabel,
-      categoryLabel: input.category ?? current.categoryLabel,
-    }));
+      timeLabel: input.time ?? placeInfo.timeLabel,
+      categoryLabel: input.category ?? placeInfo.categoryLabel,
+    };
+
+    if (shouldUseSupabasePlaceDetail) {
+      try {
+        const previousTripDayId = initialDetail.dayId || routeDayId || '';
+        const nextTripDayId = input.dayId ?? previousTripDayId;
+        const patch: UpdatePlacePatch = {
+          city: nextPlaceInfo.cityName || null,
+          country: nextPlaceInfo.countryName || null,
+          name: nextPlaceInfo.placeName.trim() || placeInfo.placeName,
+        };
+        const visitedAt = buildVisitedAtForPlaceUpdate(
+          {
+            ...input,
+            dateLabel: nextDateLabelSource ?? input.dateLabel,
+            weekdayLabel: nextWeekdayLabel,
+          },
+          placeInfo.dateLabel,
+        );
+
+        if (input.formattedAddress !== undefined) {
+          patch.address = input.formattedAddress || null;
+        }
+
+        if (typeof input.latitude === 'number') {
+          patch.latitude = input.latitude;
+        }
+
+        if (typeof input.longitude === 'number') {
+          patch.longitude = input.longitude;
+        }
+
+        if (visitedAt !== undefined) {
+          patch.visited_at = visitedAt;
+        }
+
+        if (nextTripDayId && nextTripDayId !== previousTripDayId) {
+          patch.trip_day_id = nextTripDayId;
+        }
+
+        await updatePlace(initialDetail.placeId, patch);
+        queryClient.setQueryData(
+          supabaseQueryKeys.placeDetail(user?.id, initialDetail.placeId),
+          (
+            current:
+              | { place: PlaceRow | null; records: RecordRow[] }
+              | undefined,
+          ) => {
+            if (!current?.place) {
+              return current;
+            }
+
+            return {
+              ...current,
+              place: {
+                ...current.place,
+                ...patch,
+                id: current.place.id,
+                updated_at: new Date().toISOString(),
+              },
+            };
+          },
+        );
+        setPlaceInfo(nextPlaceInfo);
+        setPlaceInfoModalOpen(false);
+        void refetchPlaceDetailData();
+
+        void Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, previousTripDayId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDayRecords(user?.id, previousTripDayId),
+          }),
+          nextTripDayId !== previousTripDayId
+            ? queryClient.invalidateQueries({
+              queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, nextTripDayId),
+            })
+            : Promise.resolve(),
+          nextTripDayId !== previousTripDayId
+            ? queryClient.invalidateQueries({
+              queryKey: supabaseQueryKeys.tripDayRecords(user?.id, nextTripDayId),
+            })
+            : Promise.resolve(),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.placeDetail(user?.id, initialDetail.placeId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDays(user?.id, initialDetail.tripId || routeTripId || ''),
+          }),
+        ]).catch((error: unknown) => {
+          console.warn('[place-detail] invalidate after place update failed', error);
+        });
+      } catch (error) {
+        console.warn('[place-detail] update place failed', error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        Alert.alert(
+          '\uC7A5\uC18C \uC815\uBCF4\uB97C \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          `\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.\n\uAC1C\uBC1C \uC815\uBCF4: ${errorMessage}`,
+        );
+      }
+
+      return;
+    }
+
+    setPlaceInfo(nextPlaceInfo);
     setPlaceInfoModalOpen(false);
   };
 
@@ -1469,8 +1901,8 @@ export default function PlaceDetailScreen() {
         mode="edit"
         tripId={initialDetail.tripId}
         dayId={initialDetail.dayId}
-        dayOptions={placeInfoDayOption ? [placeInfoDayOption] : []}
-        selectedDayId={placeInfoDayOption?.id}
+        dayOptions={placeInfoDayOptions}
+        selectedDayId={selectedPlaceInfoDayId}
         showPhotoSection={false}
         initialValue={{
           id: initialDetail.placeId,
@@ -1481,9 +1913,9 @@ export default function PlaceDetailScreen() {
           countryName: placeInfo.countryName,
           time: placeInfo.timeLabel,
           category: placeInfo.categoryLabel,
-          dayId: placeInfoDayOption?.id,
-          dateLabel: placeInfoDayOption?.dateLabel,
-          weekdayLabel: placeInfoDayOption?.weekdayLabel,
+          dayId: selectedPlaceInfoDayId,
+          dateLabel: placeInfoDayOptions.find((day) => day.id === selectedPlaceInfoDayId)?.dateLabel,
+          weekdayLabel: placeInfoDayOptions.find((day) => day.id === selectedPlaceInfoDayId)?.weekdayLabel,
         }}
         onClose={() => setPlaceInfoModalOpen(false)}
         onSubmit={handleSubmitPlaceInfo}
@@ -1505,11 +1937,7 @@ export default function PlaceDetailScreen() {
 
       <ConfirmDeleteModal
         onCancel={() => setDeleteConfirmOpen(false)}
-        onDelete={() => {
-          markPlaceDetailDeleted(initialDetail.placeId);
-          setDeleteConfirmOpen(false);
-          router.back();
-        }}
+        onDelete={handleConfirmDeletePlace}
         visible={isDeleteConfirmOpen}
       />
 

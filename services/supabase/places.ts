@@ -28,6 +28,7 @@ export type UpdatePlacePatch = Pick<
   | 'longitude'
   | 'memo'
   | 'name'
+  | 'trip_day_id'
   | 'updated_at'
   | 'visited_at'
 >;

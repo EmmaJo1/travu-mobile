@@ -66,6 +66,7 @@ import { useDeletePlaceRecord } from '@/hooks/useDeletePlaceRecord';
 import { useTripDayPlaces } from '@/hooks/useTripDayPlaces';
 import { useTripDayRecords } from '@/hooks/useTripDayRecords';
 import { useUpdatePlaceRecord } from '@/hooks/useUpdatePlaceRecord';
+import { isSupabaseUuid } from '@/hooks/usePlaceDetailData';
 import type { TripDayRow } from '@/services/supabase/tripDays';
 import { mapSupabasePlacesToPlaceEntries } from '@/utils/supabasePlaceRecordMappers';
 import { mapSupabaseTripToMyPageTrip } from '@/utils/supabaseTripMappers';
@@ -749,6 +750,43 @@ function ArchiveHeaderMenu({
     </Modal>
   );
 }
+
+function ArchiveEmptyState({
+  description,
+  title,
+}: {
+  description: string;
+  title: string;
+}) {
+  const router = useRouter();
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <StatusBar style="dark" />
+      <View style={styles.archiveHeader}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          hitSlop={10}
+          onPress={() => router.back()}
+          style={styles.archiveHeaderIconButton}
+        >
+          <RNImage
+            source={require('../assets/images/screenheader-back.png')}
+            style={styles.archiveHeaderBackIcon}
+            resizeMode="contain"
+          />
+        </Pressable>
+        <View style={styles.archiveHeaderIconButton} />
+      </View>
+      <View style={styles.archiveEmptyState}>
+        <Text style={styles.archiveEmptyTitle}>{title}</Text>
+        <Text style={styles.archiveEmptyDescription}>{description}</Text>
+      </View>
+    </SafeAreaView>
+  );
+}
+
 export default function DayArchiveDetailScreen() {
   const router = useRouter();
   const { dayId, dayNumber, tripId } = useLocalSearchParams<{
@@ -761,26 +799,39 @@ export default function DayArchiveDetailScreen() {
   const savedTrips = useSavedMyPageTrips();
   const { canUseSupabaseUserData } = useAuth();
   const routeTripId = getArchiveDetailTripId(tripId);
-  const { data: supabaseTrip } = useTripDetail(routeTripId);
-  const { data: supabaseTripDays } = useTripDays(routeTripId);
+  const isSupabaseArchiveTrip = isSupabaseUuid(routeTripId);
+  const supabaseRouteTripId = isSupabaseArchiveTrip ? routeTripId : undefined;
+  const {
+    data: supabaseTrip,
+    isError: isSupabaseTripError,
+    isFetched: hasFetchedSupabaseTrip,
+  } = useTripDetail(supabaseRouteTripId);
+  const {
+    data: supabaseTripDays,
+    isError: isSupabaseTripDaysError,
+    isFetched: hasFetchedSupabaseTripDays,
+  } = useTripDays(supabaseRouteTripId);
   const createPlaceRecordMutation = useCreatePlaceRecord();
   const updatePlaceRecordMutation = useUpdatePlaceRecord();
   const deletePlaceRecordMutation = useDeletePlaceRecord();
   const tripFromSaved = savedTrips.find((trip) => trip.id === routeTripId);
-  const fallbackTrip =
-    tripFromSaved ??
-    MOCK_MY_PAGE_TRIPS.find((trip) => trip.id === routeTripId) ??
-    savedTrips[0];
+  const fallbackTrip = isSupabaseArchiveTrip
+    ? undefined
+    : tripFromSaved ??
+      MOCK_MY_PAGE_TRIPS.find((trip) => trip.id === routeTripId) ??
+      savedTrips[0];
   const [localTripPatch, setLocalTripPatch] = useState<Partial<MyPageTrip>>({});
   const [isTitleEditorVisible, setTitleEditorVisible] = useState(false);
   const [isTripInfoEditorVisible, setTripInfoEditorVisible] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const activeTrip = useMemo(
     () => {
-      const sourceTrip = supabaseTrip ? mapSupabaseTripToMyPageTrip(supabaseTrip) : fallbackTrip;
+      const sourceTrip = isSupabaseArchiveTrip
+        ? supabaseTrip ? mapSupabaseTripToMyPageTrip(supabaseTrip) : undefined
+        : fallbackTrip;
       return sourceTrip ? { ...sourceTrip, ...localTripPatch } : undefined;
     },
-    [fallbackTrip, localTripPatch, supabaseTrip],
+    [fallbackTrip, isSupabaseArchiveTrip, localTripPatch, supabaseTrip],
   );
   const detail = useMemo(() => createArchiveDetailFromTrip(activeTrip), [activeTrip]);
   const supabaseDayOptions = useMemo(
@@ -789,10 +840,12 @@ export default function DayArchiveDetailScreen() {
   );
   const baseDayOptions = useMemo(
     () =>
-      supabaseDayOptions.length > 0
+      isSupabaseArchiveTrip
+        ? supabaseDayOptions
+        : supabaseDayOptions.length > 0
         ? supabaseDayOptions
         : createArchiveDayOptionsFromTrip(activeTrip),
-    [activeTrip, supabaseDayOptions],
+    [activeTrip, isSupabaseArchiveTrip, supabaseDayOptions],
   );
   const [customArchiveDays, setCustomArchiveDays] = useState<DaySelectorItem[]>([]);
   const dayOptions = useMemo(
@@ -851,10 +904,10 @@ export default function DayArchiveDetailScreen() {
   );
   const selectedSupabaseTripDayId = useMemo(
     () =>
-      supabaseDayOptions.some((day) => day.id === selectedDay.id)
+      isSupabaseArchiveTrip && supabaseDayOptions.some((day) => day.id === selectedDay.id)
         ? selectedDay.id
         : null,
-    [selectedDay.id, supabaseDayOptions],
+    [isSupabaseArchiveTrip, selectedDay.id, supabaseDayOptions],
   );
   const { data: supabasePlaces } = useTripDayPlaces(selectedSupabaseTripDayId);
   const { data: supabaseRecords } = useTripDayRecords(selectedSupabaseTripDayId);
@@ -878,9 +931,13 @@ export default function DayArchiveDetailScreen() {
       ),
     [detail.country, supabasePlaces, supabaseRecords],
   );
-  const entries = (supabaseEntries.length > 0 ? supabaseEntries : fallbackEntries).filter(
-    (entry) => !deletedArchivePlaceIds.has(getEntryPlaceId(entry)),
-  );
+  const entries = (
+    isSupabaseArchiveTrip
+      ? supabaseEntries
+      : supabaseEntries.length > 0
+        ? supabaseEntries
+        : fallbackEntries
+  ).filter((entry) => !deletedArchivePlaceIds.has(getEntryPlaceId(entry)));
   const coverPhotoOptions = useMemo(
     () => createArchiveCoverPhotoOptions(visibleArchivePlaces),
     [visibleArchivePlaces],
@@ -1283,6 +1340,41 @@ export default function DayArchiveDetailScreen() {
     showArchiveQuickAction(action?.label ?? '');
   };
 
+  if (isSupabaseArchiveTrip && !canUseSupabaseUserData) {
+    return (
+      <ArchiveEmptyState
+        title={'\uC5EC\uD589\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694'}
+        description={'\uB85C\uADF8\uC778 \uD6C4 \uB2E4\uC2DC \uD655\uC778\uD574 \uC8FC\uC138\uC694.'}
+      />
+    );
+  }
+
+  if (
+    isSupabaseArchiveTrip &&
+    (!hasFetchedSupabaseTrip || !hasFetchedSupabaseTripDays) &&
+    !isSupabaseTripError &&
+    !isSupabaseTripDaysError
+  ) {
+    return (
+      <ArchiveEmptyState
+        title={'\uC5EC\uD589\uC744 \uBD88\uB7EC\uC624\uB294 \uC911\uC774\uC5D0\uC694'}
+        description={'\uC800\uC7A5\uB41C \uC5EC\uD589 \uB370\uC774\uD130\uB97C \uD655\uC778\uD558\uACE0 \uC788\uC5B4\uC694.'}
+      />
+    );
+  }
+
+  if (
+    isSupabaseArchiveTrip &&
+    (isSupabaseTripError || isSupabaseTripDaysError || !supabaseTrip || dayOptions.length === 0)
+  ) {
+    return (
+      <ArchiveEmptyState
+        title={'\uC5EC\uD589\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC5B4\uC694'}
+        description={'\uC774\uC804 \uD654\uBA74\uC73C\uB85C \uB3CC\uC544\uAC00 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.'}
+      />
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar style="dark" />
@@ -1613,6 +1705,23 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingBottom: Spacing['4xl'],
+  },
+  archiveEmptyState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xl,
+    gap: Spacing.sm,
+  },
+  archiveEmptyTitle: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+  },
+  archiveEmptyDescription: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+    textAlign: 'center',
   },
   heroArea: {
     width: '100%',
