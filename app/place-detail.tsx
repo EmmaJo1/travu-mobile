@@ -50,6 +50,9 @@ import {
   formatPlaceEntryTime,
   parsePlaceEntryTime,
 } from '@/utils/placeEntryTime';
+import { isSupabaseUuid, usePlaceDetailData } from '@/hooks/usePlaceDetailData';
+import type { PlaceRow } from '@/services/supabase/places';
+import type { RecordRow } from '@/services/supabase/records';
 
 type PlaceDetailRouteParams = {
   tripId?: string;
@@ -377,6 +380,58 @@ function getSerializablePhotoUris(photos: PlaceDetailPhoto[]): string[] {
     .filter((uri): uri is string => typeof uri === 'string' && uri.length > 0);
 }
 
+function formatSupabaseVisitedTime(value?: string | null) {
+  if (!value) {
+    return undefined;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  return formatPlaceEntryTime({
+    hour: date.getHours() % 12 || 12,
+    minute: date.getMinutes(),
+    meridiem: date.getHours() >= 12 ? 'PM' : 'AM',
+  });
+}
+
+function createSupabasePlaceDetail(
+  place: PlaceRow,
+  placeRecords: RecordRow[],
+  params: PlaceDetailRouteParams,
+): PlaceDetailData {
+  const firstRecord = placeRecords[0];
+  const visitedAt = firstRecord?.visited_at ?? place.visited_at;
+
+  return {
+    categoryLabel: getParamValue(params.categoryLabel),
+    cityName: place.city ?? getParamValue(params.cityName) ?? '',
+    countryName: place.country ?? getParamValue(params.countryName) ?? '',
+    dateLabel: visitedAt ?? getParamValue(params.dateLabel) ?? '',
+    dayId: place.trip_day_id ?? getParamValue(params.dayId) ?? '',
+    photos: [],
+    placeId: place.id,
+    placeName: place.custom_name ?? place.name,
+    records: placeRecords.map((record) => ({
+      createdAt: record.created_at,
+      dayId: record.trip_day_id ?? place.trip_day_id ?? getParamValue(params.dayId) ?? '',
+      id: record.id,
+      photoIds: [],
+      placeId: record.place_id,
+      text: record.text ?? undefined,
+      time: formatSupabaseVisitedTime(record.visited_at),
+      tripId: record.trip_id,
+      updatedAt: record.updated_at,
+    })),
+    timeLabel: formatSupabaseVisitedTime(visitedAt),
+    tripDateRange: getParamValue(params.dateLabel) ?? '',
+    tripId: place.trip_id,
+    tripName: getParamValue(params.cityName) ?? getParamValue(params.placeName) ?? 'Trip',
+  };
+}
+
 function getRecordDayEntry(placeId?: string) {
   if (!placeId || isPlaceDetailDeleted(placeId)) {
     return undefined;
@@ -491,15 +546,37 @@ export default function PlaceDetailScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const screenWidth = Math.max(320, width);
+  const routePlaceId = getParamValue(params.placeId);
+  const shouldUseSupabasePlaceDetail = isSupabaseUuid(routePlaceId);
+  const { data: supabasePlaceDetailData, isFetched: hasFetchedSupabasePlaceDetail } =
+    usePlaceDetailData(routePlaceId);
 
   const initialDetail = React.useMemo(
-    () => (
-      isPlaceDetailDeleted(params.placeId)
+    () => {
+      if (supabasePlaceDetailData?.place) {
+        return createSupabasePlaceDetail(
+          supabasePlaceDetailData.place,
+          supabasePlaceDetailData.records,
+          params,
+        );
+      }
+
+      if (shouldUseSupabasePlaceDetail && hasFetchedSupabasePlaceDetail) {
+        return undefined;
+      }
+
+      if (shouldUseSupabasePlaceDetail && !hasFetchedSupabasePlaceDetail) {
+        return undefined;
+      }
+
+      return (
+        isPlaceDetailDeleted(params.placeId)
         ? undefined
         : getMockPlaceDetail(params.tripId, params.dayId, params.placeId)
       ?? createRecordDayFallbackDetail(params)
-    ),
-    [params],
+      );
+    },
+    [hasFetchedSupabasePlaceDetail, params, shouldUseSupabasePlaceDetail, supabasePlaceDetailData],
   );
 
   const [placeInfo, setPlaceInfo] = React.useState(() => ({
@@ -543,6 +620,22 @@ export default function PlaceDetailScreen() {
   const [gridSelectionResetSignal, setGridSelectionResetSignal] = React.useState(0);
   const recordPhotoPickerOpenTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordSheetRestoreTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    setPlaceInfo({
+      placeName: initialDetail?.placeName ?? '',
+      cityName: initialDetail?.cityName ?? '',
+      countryName: initialDetail?.countryName ?? '',
+      dateLabel: initialDetail?.dateLabel ?? '',
+      timeLabel: initialDetail?.timeLabel ?? '',
+      categoryLabel: initialDetail?.categoryLabel ?? '',
+    });
+    setPhotos(initialDetail?.photos ?? []);
+    setRecords(
+      [...(initialDetail?.records ?? [])].sort((a, b) => getRecordSortValue(a) - getRecordSortValue(b)),
+    );
+    setRecordTimeLabel(initialDetail?.timeLabel ?? '');
+  }, [initialDetail]);
 
   const prepareRecordComposer = React.useCallback((photoIds: string[]) => {
     setSelectedRecordPhotoIds(photoIds);

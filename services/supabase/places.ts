@@ -73,6 +73,12 @@ export function getPlaceById(placeId: string) {
     .maybeSingle();
 }
 
+export async function fetchPlaceById(placeId: string): Promise<PlaceRow | null> {
+  const { data, error } = await getPlaceById(placeId);
+  throwIfError(error);
+  return data;
+}
+
 export function createPlace(input: TablesInsert<'places'>) {
   return supabase
     .from('places')
