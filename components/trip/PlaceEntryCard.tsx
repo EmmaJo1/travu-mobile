@@ -25,6 +25,11 @@ import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme'
 export interface PlaceEntry {
   id: string;
   source?: 'mock' | 'manual';
+  dataSource?: 'local' | 'mock' | 'supabase';
+  placeId?: string;
+  recordId?: string;
+  tripId?: string;
+  tripDayId?: string;
   googlePlaceId?: string;
   placeName?: string;
   formattedAddress?: string;
@@ -41,6 +46,7 @@ export interface PlaceEntry {
   photoUris?: string[];
   photoSources?: ImageSourcePropType[];
   dayId?: string;
+  dayNumber?: number;
   dateKey?: string;
   dateLabel?: string;
   weekdayLabel?: string;
@@ -513,7 +519,7 @@ const styles = StyleSheet.create({
     gap: Spacing.md,
   },
   timeline: {
-    width: 28,
+    width: 40,
     alignItems: 'center',
     gap: Spacing.lg,
     paddingTop: Spacing.xs,
@@ -521,7 +527,7 @@ const styles = StyleSheet.create({
   },
   timeInline: {
     minHeight: 14,
-    width: 28,
+    width: 40,
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
@@ -530,7 +536,7 @@ const styles = StyleSheet.create({
   },
   timeStacked: {
     minHeight: 28,
-    width: 28,
+    width: 40,
     alignItems: 'center',
     justifyContent: 'flex-start',
     gap: 2,

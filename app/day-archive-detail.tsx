@@ -62,8 +62,10 @@ import { useTripDays } from '@/hooks/useTripDays';
 import { useTripDetail } from '@/hooks/useTripDetail';
 import { useAuth } from '@/providers/AuthProvider';
 import { useCreatePlaceRecord } from '@/hooks/useCreatePlaceRecord';
+import { useDeletePlaceRecord } from '@/hooks/useDeletePlaceRecord';
 import { useTripDayPlaces } from '@/hooks/useTripDayPlaces';
 import { useTripDayRecords } from '@/hooks/useTripDayRecords';
+import { useUpdatePlaceRecord } from '@/hooks/useUpdatePlaceRecord';
 import type { TripDayRow } from '@/services/supabase/tripDays';
 import { mapSupabasePlacesToPlaceEntries } from '@/utils/supabasePlaceRecordMappers';
 import { mapSupabaseTripToMyPageTrip } from '@/utils/supabaseTripMappers';
@@ -234,7 +236,7 @@ function resolveInitialArchiveDay(dayId?: string, dayNumberParam?: string): DayS
 }
 
 function getEntryPlaceId(entry: PlaceEntry): string {
-  return entry.googlePlaceId ?? entry.id;
+  return entry.placeId ?? entry.googlePlaceId ?? entry.id;
 }
 
 function formatPlaceCreateDateLabel(dateLabel: string) {
@@ -762,6 +764,8 @@ export default function DayArchiveDetailScreen() {
   const { data: supabaseTrip } = useTripDetail(routeTripId);
   const { data: supabaseTripDays } = useTripDays(routeTripId);
   const createPlaceRecordMutation = useCreatePlaceRecord();
+  const updatePlaceRecordMutation = useUpdatePlaceRecord();
+  const deletePlaceRecordMutation = useDeletePlaceRecord();
   const tripFromSaved = savedTrips.find((trip) => trip.id === routeTripId);
   const fallbackTrip =
     tripFromSaved ??
@@ -814,6 +818,7 @@ export default function DayArchiveDetailScreen() {
   const [deletedArchivePlaceIds, setDeletedArchivePlaceIds] = useState<Set<string>>(() => new Set());
   const [sheetVisible, setSheetVisible] = useState(false);
   const [isPlaceCreateModalVisible, setPlaceCreateModalVisible] = useState(false);
+  const [editingArchiveEntry, setEditingArchiveEntry] = useState<PlaceEntry | null>(null);
   const [isCoverPhotoPickerVisible, setCoverPhotoPickerVisible] = useState(false);
   const [coverPhotoPickerKey, setCoverPhotoPickerKey] = useState(0);
   const [isFixedHeaderVisible, setFixedHeaderVisible] = useState(false);
@@ -824,15 +829,25 @@ export default function DayArchiveDetailScreen() {
     return options.length > 0 ? options : [createArchiveDayOption(selectedDay)];
   }, [dayOptions, selectedDay]);
   const placeCreateInitialValue = useMemo(
-    () => ({
-      dayId: selectedDay.id,
-      dayNumber: selectedDay.dayNumber,
-      dateLabel: formatPlaceCreateDateLabel(selectedDay.dateLabel),
-      weekdayLabel: selectedDay.weekdayLabel,
-      photoUris: [],
-      photoSources: [],
-    }),
-    [selectedDay],
+    () =>
+      editingArchiveEntry
+        ? {
+          ...editingArchiveEntry,
+          dayId: editingArchiveEntry.dayId ?? editingArchiveEntry.tripDayId ?? selectedDay.id,
+          dayNumber: editingArchiveEntry.dayNumber ?? selectedDay.dayNumber,
+          dateLabel:
+            editingArchiveEntry.dateLabel ?? formatPlaceCreateDateLabel(selectedDay.dateLabel),
+          weekdayLabel: editingArchiveEntry.weekdayLabel ?? selectedDay.weekdayLabel,
+        }
+        : {
+          dayId: selectedDay.id,
+          dayNumber: selectedDay.dayNumber,
+          dateLabel: formatPlaceCreateDateLabel(selectedDay.dateLabel),
+          weekdayLabel: selectedDay.weekdayLabel,
+          photoUris: [],
+          photoSources: [],
+        },
+    [editingArchiveEntry, selectedDay],
   );
   const selectedSupabaseTripDayId = useMemo(
     () =>
@@ -863,7 +878,9 @@ export default function DayArchiveDetailScreen() {
       ),
     [detail.country, supabasePlaces, supabaseRecords],
   );
-  const entries = supabaseEntries.length > 0 ? supabaseEntries : fallbackEntries;
+  const entries = (supabaseEntries.length > 0 ? supabaseEntries : fallbackEntries).filter(
+    (entry) => !deletedArchivePlaceIds.has(getEntryPlaceId(entry)),
+  );
   const coverPhotoOptions = useMemo(
     () => createArchiveCoverPhotoOptions(visibleArchivePlaces),
     [visibleArchivePlaces],
@@ -988,6 +1005,11 @@ export default function DayArchiveDetailScreen() {
     });
   };
 
+  const closePlaceCreateModal = React.useCallback(() => {
+    setPlaceCreateModalVisible(false);
+    setEditingArchiveEntry(null);
+  }, []);
+
   const handleDeleteArchiveEntry = React.useCallback((entry: PlaceEntry) => {
     const targetPlaceId = getEntryPlaceId(entry);
 
@@ -1000,6 +1022,34 @@ export default function DayArchiveDetailScreen() {
           text: '\uC0AD\uC81C',
           style: 'destructive',
           onPress: () => {
+            if (
+              entry.dataSource === 'supabase' &&
+              entry.placeId &&
+              entry.tripDayId &&
+              entry.tripId
+            ) {
+              void deletePlaceRecordMutation.mutateAsync({
+                placeId: entry.placeId,
+                tripDayId: entry.tripDayId,
+                tripId: entry.tripId,
+              }).then(() => {
+                markPlaceDetailDeleted(targetPlaceId);
+                setDeletedArchivePlaceIds((current) => {
+                  const next = new Set(current);
+                  next.add(targetPlaceId);
+                  return next;
+                });
+              }).catch((error) => {
+                console.warn('[day-archive-detail] delete place record failed', error);
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                Alert.alert(
+                  '\uC7A5\uC18C\uB97C \uC0AD\uC81C\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+                  `\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.\n\uAC1C\uBC1C \uC815\uBCF4: ${errorMessage}`,
+                );
+              });
+              return;
+            }
+
             markPlaceDetailDeleted(targetPlaceId);
             setDeletedArchivePlaceIds((current) => {
               const next = new Set(current);
@@ -1019,7 +1069,7 @@ export default function DayArchiveDetailScreen() {
         },
       ],
     );
-  }, []);
+  }, [deletePlaceRecordMutation]);
 
   const updateArchiveTrip = React.useCallback(
     (patch: Partial<MyPageTrip>) => {
@@ -1101,6 +1151,31 @@ export default function DayArchiveDetailScreen() {
         ? targetDayId
         : null;
 
+      if (
+        editingArchiveEntry?.dataSource === 'supabase' &&
+        editingArchiveEntry.placeId &&
+        routeTripId &&
+        targetSupabaseTripDayId
+      ) {
+        try {
+          await updatePlaceRecordMutation.mutateAsync({
+            ...value,
+            placeId: editingArchiveEntry.placeId,
+            recordId: editingArchiveEntry.recordId,
+            tripDayId: targetSupabaseTripDayId,
+            tripId: routeTripId,
+          });
+          closePlaceCreateModal();
+        } catch (error) {
+          console.warn('[day-archive-detail] update place record failed', error);
+          Alert.alert(
+            '\uC7A5\uC18C\uB97C \uC218\uC815\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+            '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+          );
+        }
+        return;
+      }
+
       if (canUseSupabaseUserData && routeTripId && targetSupabaseTripDayId) {
         try {
           await createPlaceRecordMutation.mutateAsync({
@@ -1108,7 +1183,7 @@ export default function DayArchiveDetailScreen() {
             tripDayId: targetSupabaseTripDayId,
             tripId: routeTripId,
           });
-          setPlaceCreateModalVisible(false);
+          closePlaceCreateModal();
         } catch (error) {
           console.warn('[day-archive-detail] create place record failed', error);
           Alert.alert(
@@ -1131,17 +1206,27 @@ export default function DayArchiveDetailScreen() {
       // TODO: Persist newly created archive places to Supabase when archive editing sync is connected.
       setAddedPlacesByDay((current) => ({
         ...current,
-        [targetDayId]: [...(current[targetDayId] ?? []), nextPlace],
+        [targetDayId]: editingArchiveEntry
+          ? [
+            ...(current[targetDayId] ?? []).filter(
+              (place) => place.id !== editingArchiveEntry.id,
+            ),
+            { ...nextPlace, id: editingArchiveEntry.id },
+          ]
+          : [...(current[targetDayId] ?? []), nextPlace],
       }));
-      setPlaceCreateModalVisible(false);
+      closePlaceCreateModal();
     },
     [
       canUseSupabaseUserData,
+      closePlaceCreateModal,
       createPlaceRecordMutation,
       dayOptions,
+      editingArchiveEntry,
       routeTripId,
       selectedDay.id,
       supabaseDayOptions,
+      updatePlaceRecordMutation,
     ],
   );
 
@@ -1189,6 +1274,7 @@ export default function DayArchiveDetailScreen() {
     }
 
     if (actionId === 'place') {
+      setEditingArchiveEntry(null);
       setPlaceCreateModalVisible(true);
       return;
     }
@@ -1352,7 +1438,7 @@ export default function DayArchiveDetailScreen() {
       />
       <PlaceCreateModal
         visible={isPlaceCreateModalVisible}
-        mode="create"
+        mode={editingArchiveEntry ? 'edit' : 'create'}
         initialValue={placeCreateInitialValue}
         dayOptions={placeCreateDayOptions}
         selectedDayId={selectedDay.id}
@@ -1360,7 +1446,7 @@ export default function DayArchiveDetailScreen() {
         dayId={selectedDay.id}
         tripDestinationName={detail.city}
         tripDestinationCountry={detail.country}
-        onClose={() => setPlaceCreateModalVisible(false)}
+        onClose={closePlaceCreateModal}
         onSubmit={handleCreateArchivePlace}
       />
       <ArchiveHeaderMenu

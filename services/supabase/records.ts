@@ -11,6 +11,11 @@ export interface CreateRecordForPlaceInput {
   visitedAt?: string | null;
 }
 
+export type UpdateRecordPatch = Pick<
+  TablesUpdate<'records'>,
+  'text' | 'updated_at' | 'visited_at'
+>;
+
 function throwIfError(error: Error | null) {
   if (error) {
     throw error;
@@ -90,17 +95,73 @@ export async function createRecordForPlace(
   return data;
 }
 
-export function updateRecord(recordId: string, patch: TablesUpdate<'records'>) {
-  return supabase
+export async function updateRecord(
+  recordId: string,
+  patch: UpdateRecordPatch,
+): Promise<{ id: string; updated_at: string }> {
+  const userId = await getCurrentUserId();
+  const updatedAt = patch.updated_at ?? new Date().toISOString();
+  const payload: UpdateRecordPatch = {
+    ...patch,
+    updated_at: updatedAt,
+  };
+  const { error } = await supabase
     .from('records')
-    .update(patch)
+    .update(payload)
     .eq('id', recordId)
-    .select()
-    .single();
+    .eq('user_id', userId)
+    .is('deleted_at', null);
+
+  throwIfError(error);
+  return { id: recordId, updated_at: updatedAt };
 }
 
-export function softDeleteRecord(recordId: string) {
-  return updateRecord(recordId, { deleted_at: new Date().toISOString() });
+export async function softDeleteRecord(
+  recordId: string,
+): Promise<{ deleted_at: string; id: string; updated_at: string }> {
+  const userId = await getCurrentUserId();
+  const timestamp = new Date().toISOString();
+  const { error } = await supabase
+    .from('records')
+    .update({
+      deleted_at: timestamp,
+      updated_at: timestamp,
+    })
+    .eq('id', recordId)
+    .eq('user_id', userId)
+    .is('deleted_at', null);
+
+  throwIfError(error);
+  return { deleted_at: timestamp, id: recordId, updated_at: timestamp };
+}
+
+export async function softDeleteRecordsByPlaceId(
+  placeId: string,
+): Promise<{ deleted_at: string; place_id: string; updated_at: string }> {
+  const userId = await getCurrentUserId();
+  const timestamp = new Date().toISOString();
+  const { error } = await supabase
+    .from('records')
+    .update({
+      deleted_at: timestamp,
+      updated_at: timestamp,
+    })
+    .eq('place_id', placeId)
+    .eq('user_id', userId)
+    .is('deleted_at', null);
+
+  if (error) {
+    console.warn('[softDeleteRecordsByPlaceId] update failed', {
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      message: error.message,
+      placeId,
+      userId,
+    });
+  }
+  throwIfError(error);
+  return { deleted_at: timestamp, place_id: placeId, updated_at: timestamp };
 }
 
 export function attachPhotoToRecord(input: TablesInsert<'record_photos'>) {

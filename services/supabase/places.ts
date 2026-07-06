@@ -18,6 +18,20 @@ export interface CreatePlaceForTripDayInput {
   visitedAt?: string | null;
 }
 
+export type UpdatePlacePatch = Pick<
+  TablesUpdate<'places'>,
+  | 'address'
+  | 'city'
+  | 'country'
+  | 'custom_name'
+  | 'latitude'
+  | 'longitude'
+  | 'memo'
+  | 'name'
+  | 'updated_at'
+  | 'visited_at'
+>;
+
 function throwIfError(error: Error | null) {
   if (error) {
     throw error;
@@ -99,15 +113,52 @@ export async function createPlaceForTripDay(
   return data;
 }
 
-export function updatePlace(placeId: string, patch: TablesUpdate<'places'>) {
-  return supabase
+export async function updatePlace(
+  placeId: string,
+  patch: UpdatePlacePatch,
+): Promise<{ id: string; updated_at: string }> {
+  const userId = await getCurrentUserId();
+  const updatedAt = patch.updated_at ?? new Date().toISOString();
+  const payload: UpdatePlacePatch = {
+    ...patch,
+    updated_at: updatedAt,
+  };
+  const { error } = await supabase
     .from('places')
-    .update(patch)
+    .update(payload)
     .eq('id', placeId)
-    .select()
-    .single();
+    .eq('user_id', userId)
+    .is('deleted_at', null);
+
+  throwIfError(error);
+  return { id: placeId, updated_at: updatedAt };
 }
 
-export function softDeletePlace(placeId: string) {
-  return updatePlace(placeId, { deleted_at: new Date().toISOString() });
+export async function softDeletePlace(
+  placeId: string,
+): Promise<{ deleted_at: string; id: string; updated_at: string }> {
+  const userId = await getCurrentUserId();
+  const timestamp = new Date().toISOString();
+  const { error } = await supabase
+    .from('places')
+    .update({
+      deleted_at: timestamp,
+      updated_at: timestamp,
+    })
+    .eq('id', placeId)
+    .eq('user_id', userId)
+    .is('deleted_at', null);
+
+  if (error) {
+    console.warn('[softDeletePlace] update failed', {
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      message: error.message,
+      placeId,
+      userId,
+    });
+  }
+  throwIfError(error);
+  return { deleted_at: timestamp, id: placeId, updated_at: timestamp };
 }

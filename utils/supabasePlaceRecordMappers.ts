@@ -44,6 +44,7 @@ export function mapSupabasePlacesToPlaceEntries(
       city: place.city ?? undefined,
       cityName: place.city ?? undefined,
       countryName: place.country ?? fallbackCountryName,
+      dataSource: 'supabase',
       dateKey: firstRecord?.visited_at?.slice(0, 10) ?? place.visited_at?.slice(0, 10),
       formattedAddress: place.address ?? undefined,
       googlePlaceId: place.google_place_id ?? undefined,
@@ -52,11 +53,15 @@ export function mapSupabasePlacesToPlaceEntries(
       longitude: place.longitude ?? undefined,
       photoCount: 0,
       place: place.custom_name ?? place.name,
+      placeId: place.id,
       placeName: place.custom_name ?? place.name,
+      recordId: firstRecord?.id,
       recordCount: placeRecords.length,
       source: 'manual',
       text,
       time,
+      tripDayId: place.trip_day_id ?? firstRecord?.trip_day_id ?? undefined,
+      tripId: place.trip_id,
     };
   });
 }
