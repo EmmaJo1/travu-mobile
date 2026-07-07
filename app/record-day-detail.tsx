@@ -33,7 +33,16 @@ import PlaceCreateModal, {
   type PlaceEntryFormMode,
 } from '@/components/record/PlaceCreateModal';
 import PlaceEntryCard, { type PlaceEntry } from '@/components/trip/PlaceEntryCard';
-import { getDaySelectorItemsForTrip } from '@/constants/mockDetectedTrips';
+import {
+  getDaySelectorItemsForTrip,
+  getDetectedTripById,
+} from '@/constants/mockDetectedTrips';
+import { MOCK_PHOTO_IMPORT_CANDIDATES } from '@/services/photoImport/mockPhotoImportProvider';
+import {
+  getLocalDetectedTripDraft,
+  type LocalDetectedTripDraft,
+} from '@/services/photoImport/localDetectedTripDraftStore';
+import type { PhotoImportTripCandidate } from '@/services/photoImport/types';
 import {
   DEFAULT_RECORD_DAY,
   RECORD_DAY_ENTRIES,
@@ -47,6 +56,15 @@ import {
   isPlaceDetailDeleted,
   markPlaceDetailDeleted,
 } from '@/services/placeDetailDeletionRegistry';
+import { isSupabaseUuid } from '@/hooks/usePlaceDetailData';
+import { useCreatePlaceRecord } from '@/hooks/useCreatePlaceRecord';
+import { useDeletePlaceRecord } from '@/hooks/useDeletePlaceRecord';
+import { useTripDayPlaces } from '@/hooks/useTripDayPlaces';
+import { useTripDayRecords } from '@/hooks/useTripDayRecords';
+import { useTripDays } from '@/hooks/useTripDays';
+import { useUpdatePlaceRecord } from '@/hooks/useUpdatePlaceRecord';
+import type { TripDayRow } from '@/services/supabase/tripDays';
+import { mapSupabasePlacesToPlaceEntries } from '@/utils/supabasePlaceRecordMappers';
 
 const ALL_DAYS_ID = 'all';
 const DAY_FILTER_BG = '#F2F2F2';
@@ -164,6 +182,153 @@ function createDetectedDraftDestination(
     type: 'city',
     source: 'custom',
   };
+}
+
+function isDetectedTripRoute(entryPoint?: string, mode?: string, tripId?: string) {
+  return (
+    entryPoint === 'detectedTrip' ||
+    entryPoint === 'detectedTrips' ||
+    entryPoint === 'detectedPhotoDraft' ||
+    mode === 'create' ||
+    Boolean(tripId && (getDetectedTripById(tripId) || getPhotoImportCandidateById(tripId)))
+  );
+}
+
+function isExplicitMockRoute(entryPoint?: string, mode?: string, tripId?: string) {
+  if (entryPoint === 'mock' || mode === 'mock') {
+    return true;
+  }
+
+  return !tripId && !entryPoint && !mode;
+}
+
+function parseDetectedDateRange(dateRange?: string) {
+  const normalized = dateRange?.replace(/\s+/g, '') ?? '';
+  const matched = normalized.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})-(?:(\d{4})\.)?(\d{1,2})\.(\d{1,2})$/);
+
+  if (!matched) {
+    return { endDate: undefined, startDate: undefined };
+  }
+
+  const startYear = Number(matched[1]);
+  const startMonth = Number(matched[2]);
+  const startDay = Number(matched[3]);
+  const endYear = Number(matched[4] ?? matched[1]);
+  const endMonth = Number(matched[5]);
+  const endDay = Number(matched[6]);
+  const formatDateKey = (year: number, month: number, day: number) =>
+    `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+  return {
+    endDate: formatDateKey(endYear, endMonth, endDay),
+    startDate: formatDateKey(startYear, startMonth, startDay),
+  };
+}
+
+function getPhotoImportCandidateById(tripId?: string) {
+  return tripId ? MOCK_PHOTO_IMPORT_CANDIDATES.find((candidate) => candidate.id === tripId) : undefined;
+}
+
+function createDetectedTripDayOptionsFromCandidate(
+  candidate: PhotoImportTripCandidate,
+): DaySelectorItem[] {
+  const { endDate, startDate } = parseDetectedDateRange(candidate.dateRange);
+
+  if (!startDate || !endDate) {
+    return [];
+  }
+
+  return createDetectedTripDraftDays(startDate, endDate, String(candidate.photoCount)).map((day) => ({
+    ...day,
+    id: `${candidate.id}-d${day.dayNumber}`,
+  }));
+}
+
+function createLocalDetectedTripDayOptions(
+  draft: LocalDetectedTripDraft,
+): DaySelectorItem[] {
+  return draft.days.map((day) => ({
+    dateLabel: day.dateLabel,
+    dayNumber: day.dayNumber,
+    id: day.id,
+    photoCount: day.photoCount,
+    weekdayLabel: day.weekdayLabel,
+  }));
+}
+
+function createDetectedTripEntries(
+  tripId: string | undefined,
+  days: DaySelectorItem[],
+  selectedDay: DaySelectorItem,
+  selectedFilterId: string,
+): PlaceEntry[] {
+  const photoImportCandidate = getPhotoImportCandidateById(tripId);
+  const detectedTrip = tripId ? getDetectedTripById(tripId) : undefined;
+  const city = photoImportCandidate?.city ?? detectedTrip?.title;
+  const country = photoImportCandidate?.country;
+
+  if (!city) {
+    return [];
+  }
+
+  const targetDays = selectedFilterId === ALL_DAYS_ID ? days : [selectedDay];
+
+  return targetDays.map((day) => ({
+    category: '\uC0AC\uC9C4 \uBB36\uC74C',
+    city,
+    cityName: city,
+    countryName: country,
+    dataSource: 'detected',
+    dateLabel: day.dateLabel,
+    dayId: day.id,
+    dayNumber: day.dayNumber,
+    id: `${tripId ?? 'detected'}-${day.id}-entry`,
+    photoCount: day.photoCount,
+    photoSources: photoImportCandidate?.image
+      ? [photoImportCandidate.image]
+      : detectedTrip?.dayThumbnails?.[(day.dayNumber - 1) % detectedTrip.dayThumbnails.length]
+        ? [detectedTrip.dayThumbnails[(day.dayNumber - 1) % detectedTrip.dayThumbnails.length]]
+        : undefined,
+    place: city,
+    placeId: `${tripId ?? 'detected'}-${day.id}-place`,
+    placeName: city,
+    source: 'detected',
+    time: '',
+    tripId,
+    weekdayLabel: day.weekdayLabel,
+  }));
+}
+
+function createLocalDetectedTripEntries(
+  draft: LocalDetectedTripDraft,
+  selectedDay: DaySelectorItem,
+  selectedFilterId: string,
+): PlaceEntry[] {
+  const targetDays = selectedFilterId === ALL_DAYS_ID
+    ? draft.days
+    : draft.days.filter((day) => day.id === selectedDay.id);
+
+  return targetDays.flatMap((day) =>
+    day.groups.map((group) => ({
+      dataSource: 'detected' as const,
+      dateKey: day.dateKey,
+      dateLabel: day.dateLabel,
+      dayId: day.id,
+      dayNumber: day.dayNumber,
+      id: group.id,
+      latitude: group.latitude,
+      longitude: group.longitude,
+      photoCount: group.photos.length,
+      photoUris: group.photos.map((photo) => photo.uri),
+      place: group.label,
+      placeId: group.id,
+      placeName: group.label,
+      source: 'detected' as const,
+      time: group.time,
+      tripId: draft.id,
+      weekdayLabel: day.weekdayLabel,
+    })),
+  );
 }
 
 function parseExifDate(value: unknown): Date | null {
@@ -397,6 +562,18 @@ function toPlaceEntryDayOption(day: DaySelectorItem): PlaceEntryDayOption {
   };
 }
 
+function createRecordDayOptionFromTripDay(day: TripDayRow): DaySelectorItem {
+  const date = parseRouteDateKey(day.date);
+
+  return {
+    id: day.id,
+    dayNumber: day.day_index,
+    dateLabel: date ? formatDateLabel(date) : day.date,
+    weekdayLabel: date ? WEEKDAY_LABELS[date.getDay()] : '',
+    photoCount: 0,
+  };
+}
+
 function resolveDayForPlaceInput(
   currentDays: DaySelectorItem[],
   input: PlaceCreateInput,
@@ -461,7 +638,21 @@ function formatEntryTime(date: Date): string {
 }
 
 function getEntryPlaceId(entry: PlaceEntry): string {
-  return entry.googlePlaceId ?? entry.id;
+  return entry.placeId ?? entry.googlePlaceId ?? entry.id;
+}
+
+function getLocalEntryDeletionKey(
+  tripId: string | undefined,
+  day: DaySelectorItem,
+  entry: PlaceEntry,
+  index: number,
+) {
+  return [
+    tripId ?? 'record-trip',
+    day.id || getDayDateKey(day) || day.dayNumber,
+    entry.id || getEntryPlaceId(entry),
+    index,
+  ].join(':');
 }
 
 function createPhotoEntry(
@@ -634,6 +825,10 @@ function parseNumberArrayParam(value?: string | string[]): number[] {
   }
 }
 
+function readRouteParam(value?: string | string[]): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 function resolveInitialDay(
   dayOptions: DaySelectorItem[],
   dayId?: string,
@@ -710,54 +905,182 @@ function DayFilterBar({ days, selectedId, onSelectAll, onSelectDay }: DayFilterB
 export default function RecordDayDetailScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const {
-    tripId,
-    dayId,
-    updatedPlaceId,
-    updatedPhotoUris,
-    deletedSourceIndexes,
-    entryPoint,
-    mode,
-    detectedTripId,
+  const routeParams = useLocalSearchParams<{
+    tripId?: string | string[];
+    dayId?: string | string[];
+    tripDayId?: string | string[];
+    date?: string | string[];
+    dayIndex?: string | string[];
+    updatedPlaceId?: string | string[];
+    updatedPhotoUris?: string | string[];
+    deletedSourceIndexes?: string | string[];
+    entryPoint?: string | string[];
+    mode?: string | string[];
+    detectedTripId?: string | string[];
+    cityName?: string | string[];
+    countryName?: string | string[];
+    startDate?: string | string[];
+    endDate?: string | string[];
+    photoCount?: string | string[];
+  }>();
+  const tripId = readRouteParam(routeParams.tripId);
+  const dayId = readRouteParam(routeParams.dayId);
+  const tripDayId = readRouteParam(routeParams.tripDayId);
+  const date = readRouteParam(routeParams.date);
+  const dayIndex = readRouteParam(routeParams.dayIndex);
+  const updatedPlaceId = readRouteParam(routeParams.updatedPlaceId);
+  const updatedPhotoUris = readRouteParam(routeParams.updatedPhotoUris);
+  const deletedSourceIndexes = readRouteParam(routeParams.deletedSourceIndexes);
+  const entryPoint = readRouteParam(routeParams.entryPoint);
+  const mode = readRouteParam(routeParams.mode);
+  const detectedTripId = readRouteParam(routeParams.detectedTripId);
+  const cityName = readRouteParam(routeParams.cityName);
+  const countryName = readRouteParam(routeParams.countryName);
+  const startDate = readRouteParam(routeParams.startDate);
+  const endDate = readRouteParam(routeParams.endDate);
+  const photoCount = readRouteParam(routeParams.photoCount);
+  const routeTripId = tripId;
+  const routeTripDayId = tripDayId ?? dayId;
+  const localDetectedTripDraft = useMemo(
+    () => getLocalDetectedTripDraft(routeTripId),
+    [routeTripId],
+  );
+  const isLocalDetectedPhotoDraftRoute = entryPoint === 'detectedPhotoDraft';
+  const isDetectedTripPreviewRoute = isDetectedTripRoute(entryPoint, mode, routeTripId);
+  const isExplicitMockRecordRoute = isExplicitMockRoute(entryPoint, mode, routeTripId);
+  const isSupabaseTripRoute = isSupabaseUuid(routeTripId);
+  const isSupabaseTripDayRoute = isSupabaseUuid(routeTripDayId);
+  const shouldUseSupabaseRecordDay = isSupabaseTripRoute || isSupabaseTripDayRoute;
+  const createPlaceRecordMutation = useCreatePlaceRecord();
+  const deletePlaceRecordMutation = useDeletePlaceRecord();
+  const updatePlaceRecordMutation = useUpdatePlaceRecord();
+  const { data: supabaseTripDays } = useTripDays(isSupabaseTripRoute ? routeTripId : undefined);
+
+  useEffect(() => {
+    if (!__DEV__) {
+      return;
+    }
+
+    console.log('[record-day-detail params]', {
+      cityName,
+      countryName,
+      date,
+      dayId,
+      dayIndex,
+      detectedTripId,
+      entryPoint,
+      isDetectedTripRoute: isDetectedTripPreviewRoute,
+      isExplicitMockRoute: isExplicitMockRecordRoute,
+      isSupabaseRoute: shouldUseSupabaseRecordDay,
+      isSupabaseTrip: isSupabaseTripRoute,
+      isSupabaseTripDay: isSupabaseTripDayRoute,
+      mode,
+      photoCount,
+      localDetectedDraftId: localDetectedTripDraft?.id,
+      localDetectedPhotoCount: localDetectedTripDraft?.photoCount,
+      isLocalDetectedPhotoDraftRoute,
+      routeTripDayId,
+      tripDayId,
+      tripId,
+    });
+  }, [
     cityName,
     countryName,
-    startDate,
-    endDate,
+    date,
+    dayId,
+    dayIndex,
+    detectedTripId,
+    entryPoint,
+    isDetectedTripPreviewRoute,
+    isExplicitMockRecordRoute,
+    isLocalDetectedPhotoDraftRoute,
+    localDetectedTripDraft?.id,
+    localDetectedTripDraft?.photoCount,
+    isSupabaseTripDayRoute,
+    isSupabaseTripRoute,
+    mode,
     photoCount,
-  } = useLocalSearchParams<{
-    tripId?: string;
-    dayId?: string;
-    updatedPlaceId?: string;
-    updatedPhotoUris?: string;
-    deletedSourceIndexes?: string;
-    entryPoint?: string;
-    mode?: string;
-    detectedTripId?: string;
-    cityName?: string;
-    countryName?: string;
-    startDate?: string;
-    endDate?: string;
-    photoCount?: string;
-  }>();
-  const isDetectedTripDraft = entryPoint === 'detectedTrip' || mode === 'create';
+    routeTripDayId,
+    shouldUseSupabaseRecordDay,
+    tripDayId,
+    tripId,
+  ]);
 
   const baseDayOptions = useMemo(() => {
-    if (isDetectedTripDraft) {
+    if (shouldUseSupabaseRecordDay) {
+      const tripDayOptions = (supabaseTripDays ?? []).map(createRecordDayOptionFromTripDay);
+
+      if (tripDayOptions.length > 0) {
+        return tripDayOptions;
+      }
+
+      if (isSupabaseUuid(routeTripDayId)) {
+        const routeDate = parseRouteDateKey(date ?? '');
+        const routeDayNumber = Number(dayIndex);
+
+        return [
+          {
+            id: routeTripDayId,
+            dayNumber: Number.isFinite(routeDayNumber) && routeDayNumber > 0 ? routeDayNumber : 1,
+            dateLabel: routeDate ? formatDateLabel(routeDate) : date ?? '',
+            weekdayLabel: routeDate ? WEEKDAY_LABELS[routeDate.getDay()] : '',
+            photoCount: 0,
+          },
+        ];
+      }
+
+      return [];
+    }
+
+    if (isDetectedTripPreviewRoute) {
+      if (localDetectedTripDraft) {
+        return createLocalDetectedTripDayOptions(localDetectedTripDraft);
+      }
+
+      if (isLocalDetectedPhotoDraftRoute) {
+        return [];
+      }
+
+      const photoImportCandidate = getPhotoImportCandidateById(routeTripId);
+      const detectedTripDays = routeTripId ? getDaySelectorItemsForTrip(routeTripId) : undefined;
+
+      if (photoImportCandidate) {
+        return createDetectedTripDayOptionsFromCandidate(photoImportCandidate);
+      }
+
+      if (detectedTripDays) {
+        return detectedTripDays;
+      }
+
       return createDetectedTripDraftDays(startDate, endDate, photoCount);
     }
 
-    if (tripId) {
-      return getDaySelectorItemsForTrip(tripId) ?? RECORD_DAY_OPTIONS;
+    if (isExplicitMockRecordRoute && routeTripId) {
+      return getDaySelectorItemsForTrip(routeTripId) ?? RECORD_DAY_OPTIONS;
     }
-    return RECORD_DAY_OPTIONS;
-  }, [endDate, isDetectedTripDraft, photoCount, startDate, tripId]);
+    return isExplicitMockRecordRoute ? RECORD_DAY_OPTIONS : [];
+  }, [
+    endDate,
+    isDetectedTripPreviewRoute,
+    isExplicitMockRecordRoute,
+    isLocalDetectedPhotoDraftRoute,
+    date,
+    dayIndex,
+    photoCount,
+    localDetectedTripDraft,
+    routeTripDayId,
+    routeTripId,
+    shouldUseSupabaseRecordDay,
+    startDate,
+    supabaseTripDays,
+  ]);
 
   const [dayOptions, setDayOptions] = useState<DaySelectorItem[]>(() => baseDayOptions);
   const [selectedDay, setSelectedDay] = useState<DaySelectorItem>(() =>
-    resolveInitialDay(baseDayOptions, dayId),
+    resolveInitialDay(baseDayOptions, routeTripDayId),
   );
   const [selectedFilterId, setSelectedFilterId] = useState<string>(() =>
-    resolveInitialDay(baseDayOptions, dayId).id,
+    resolveInitialDay(baseDayOptions, routeTripDayId).id,
   );
   const [daySheetVisible, setDaySheetVisible] = useState(false);
   const [headerMenuVisible, setHeaderMenuVisible] = useState(false);
@@ -766,6 +1089,7 @@ export default function RecordDayDetailScreen() {
     useState<PlaceEntryFormMode>('create');
   const [editingEntry, setEditingEntry] = useState<PlaceEntry | null>(null);
   const [entriesByDay, setEntriesByDay] = useState<Record<string, PlaceEntry[]>>({});
+  const [deletedLocalEntryKeys, setDeletedLocalEntryKeys] = useState<Set<string>>(() => new Set());
   const [photoGridEntry, setPhotoGridEntry] = useState<PlaceEntry | null>(null);
   const [isPhotoGridSelectionMode, setPhotoGridSelectionMode] = useState(false);
   const [selectedPhotoIndexes, setSelectedPhotoIndexes] = useState<number[]>([]);
@@ -774,17 +1098,28 @@ export default function RecordDayDetailScreen() {
     photoIndex: number;
   } | null>(null);
   const [tripInfoModalVisible, setTripInfoModalVisible] = useState(false);
+  const selectedSupabaseTripDayId = shouldUseSupabaseRecordDay && isSupabaseUuid(selectedDay.id)
+    ? selectedDay.id
+    : isSupabaseTripDayRoute
+      ? routeTripDayId
+      : null;
+  const { data: supabasePlaces } = useTripDayPlaces(selectedSupabaseTripDayId);
+  const { data: supabaseRecords } = useTripDayRecords(selectedSupabaseTripDayId);
 
   useEffect(() => {
     setDayOptions(baseDayOptions);
-    const initialDay = resolveInitialDay(baseDayOptions, dayId);
+    const initialDay = resolveInitialDay(baseDayOptions, routeTripDayId);
     setSelectedDay(initialDay);
     setSelectedFilterId(initialDay.id);
-  }, [baseDayOptions, dayId]);
+  }, [baseDayOptions, routeTripDayId]);
 
   useEffect(() => {
     const nextPhotoUris = parseUpdatedPhotoUris(updatedPhotoUris);
     const nextDeletedSourceIndexes = parseNumberArrayParam(deletedSourceIndexes);
+
+    if (shouldUseSupabaseRecordDay) {
+      return;
+    }
 
     if (!updatedPlaceId || (nextPhotoUris.length === 0 && nextDeletedSourceIndexes.length === 0)) {
       return;
@@ -793,7 +1128,7 @@ export default function RecordDayDetailScreen() {
     const targetDayId = dayId ?? selectedDay.id;
 
     setEntriesByDay((current) => {
-      const dayEntries = current[targetDayId] ?? RECORD_DAY_ENTRIES;
+      const dayEntries = current[targetDayId] ?? (isDetectedTripPreviewRoute ? [] : RECORD_DAY_ENTRIES);
       let didUpdate = false;
       const nextDayEntries = dayEntries.map((entry) => {
         if (getEntryPlaceId(entry) !== updatedPlaceId) {
@@ -824,26 +1159,196 @@ export default function RecordDayDetailScreen() {
         [targetDayId]: nextDayEntries,
       };
     });
-  }, [dayId, deletedSourceIndexes, selectedDay.id, updatedPhotoUris, updatedPlaceId]);
+  }, [
+    dayId,
+    deletedSourceIndexes,
+    isDetectedTripPreviewRoute,
+    selectedDay.id,
+    shouldUseSupabaseRecordDay,
+    updatedPhotoUris,
+    updatedPlaceId,
+  ]);
 
-  const entries = useMemo(() => {
-    if (isDetectedTripDraft) {
+  const supabaseEntries = useMemo(() => {
+    if (!shouldUseSupabaseRecordDay) {
       return [];
     }
 
-    const dayEntries = selectedFilterId === ALL_DAYS_ID
-      ? dayOptions.flatMap((day) => entriesByDay[day.id] ?? RECORD_DAY_ENTRIES)
-      : entriesByDay[selectedDay.id] ?? RECORD_DAY_ENTRIES;
-
-    return dayEntries.filter((entry) => !isPlaceDetailDeleted(getEntryPlaceId(entry))).sort(
+    return mapSupabasePlacesToPlaceEntries(
+      supabasePlaces ?? [],
+      supabaseRecords ?? [],
+    ).filter((entry) => !isPlaceDetailDeleted(getEntryPlaceId(entry))).sort(
       (left, right) => getTimeSortValue(left.time) - getTimeSortValue(right.time),
     );
-  }, [dayOptions, entriesByDay, isDetectedTripDraft, selectedDay.id, selectedFilterId]);
+  }, [
+    shouldUseSupabaseRecordDay,
+    supabasePlaces,
+    supabaseRecords,
+  ]);
+
+  const detectedTripEntries = useMemo(() => {
+    if (!isDetectedTripPreviewRoute || shouldUseSupabaseRecordDay) {
+      return [];
+    }
+
+    if (isLocalDetectedPhotoDraftRoute && !localDetectedTripDraft) {
+      return [];
+    }
+
+    const baseDetectedEntries = localDetectedTripDraft
+      ? createLocalDetectedTripEntries(
+        localDetectedTripDraft,
+        selectedDay,
+        selectedFilterId,
+      )
+      : createDetectedTripEntries(
+        routeTripId,
+        dayOptions,
+        selectedDay,
+        selectedFilterId,
+      );
+    const addedDetectedEntries = selectedFilterId === ALL_DAYS_ID
+      ? dayOptions.flatMap((day) => entriesByDay[day.id] ?? [])
+      : entriesByDay[selectedDay.id] ?? [];
+
+    return [...baseDetectedEntries, ...addedDetectedEntries].filter((entry, index) => (
+      !deletedLocalEntryKeys.has(getLocalEntryDeletionKey(
+        routeTripId,
+        dayOptions.find((day) => day.id === entry.dayId) ?? selectedDay,
+        entry,
+        index,
+      ))
+    ));
+  }, [
+    dayOptions,
+    deletedLocalEntryKeys,
+    entriesByDay,
+    isDetectedTripPreviewRoute,
+    isLocalDetectedPhotoDraftRoute,
+    localDetectedTripDraft,
+    routeTripId,
+    selectedDay,
+    selectedFilterId,
+    shouldUseSupabaseRecordDay,
+  ]);
+
+  const localEntries = useMemo(() => {
+    if (shouldUseSupabaseRecordDay || isDetectedTripPreviewRoute || !isExplicitMockRecordRoute) {
+      return [];
+    }
+
+    const filteredLocalEntries = selectedFilterId === ALL_DAYS_ID
+      ? dayOptions.flatMap((day) =>
+        (entriesByDay[day.id] ?? RECORD_DAY_ENTRIES).filter(
+          (entry, index) => !deletedLocalEntryKeys.has(getLocalEntryDeletionKey(routeTripId, day, entry, index)),
+        ),
+      )
+      : (entriesByDay[selectedDay.id] ?? RECORD_DAY_ENTRIES).filter(
+        (entry, index) => !deletedLocalEntryKeys.has(getLocalEntryDeletionKey(routeTripId, selectedDay, entry, index)),
+      );
+
+    return filteredLocalEntries.sort(
+      (left, right) => getTimeSortValue(left.time) - getTimeSortValue(right.time),
+    );
+  }, [
+    dayOptions,
+    deletedLocalEntryKeys,
+    entriesByDay,
+    isDetectedTripPreviewRoute,
+    isExplicitMockRecordRoute,
+    routeTripId,
+    selectedDay,
+    selectedFilterId,
+    shouldUseSupabaseRecordDay,
+  ]);
+
+  const selectedDataSource = shouldUseSupabaseRecordDay
+    ? 'supabase'
+    : isDetectedTripPreviewRoute
+      ? 'detected'
+      : isExplicitMockRecordRoute
+        ? 'mock'
+        : 'empty';
+  const entries = useMemo(() => {
+    if (selectedDataSource === 'supabase') {
+      return supabaseEntries;
+    }
+
+    if (selectedDataSource === 'detected') {
+      return detectedTripEntries;
+    }
+
+    if (selectedDataSource === 'mock') {
+      return localEntries;
+    }
+
+    return [];
+  }, [
+    detectedTripEntries,
+    localEntries,
+    selectedDataSource,
+    supabaseEntries,
+  ]);
+
+  useEffect(() => {
+    if (!__DEV__) {
+      return;
+    }
+
+    const mockLeakedIntoSupabaseRoute = shouldUseSupabaseRecordDay && entries.some((entry) => (
+      entry.dataSource !== 'supabase' || !entry.placeId || !isSupabaseUuid(entry.placeId)
+    ));
+
+    console.log('[record-day-detail entries]', {
+      finalEntries: entries.length,
+      finalEntryIds: entries.map((entry) => ({
+        dataSource: entry.dataSource,
+        id: entry.id,
+        placeId: entry.placeId,
+        placeName: entry.placeName ?? entry.place,
+      })),
+      isSupabaseRoute: shouldUseSupabaseRecordDay,
+      isDetectedTripRoute: isDetectedTripPreviewRoute,
+      isExplicitMockRoute: isExplicitMockRecordRoute,
+      selectedDataSource,
+      detectedTripEntries: detectedTripEntries.length,
+      localEntries: localEntries.length,
+      selectedFilterId,
+      selectedTripDayId: selectedSupabaseTripDayId,
+      supabasePlaces: supabasePlaces?.length ?? 0,
+      supabaseRecords: supabaseRecords?.length ?? 0,
+      supabaseEntries: supabaseEntries.length,
+    });
+
+    if (mockLeakedIntoSupabaseRoute) {
+      console.warn('[record-day-detail] mock entries leaked into Supabase route', {
+        entries,
+        routeTripDayId,
+        routeTripId,
+        selectedFilterId,
+      });
+    }
+  }, [
+    entries,
+    detectedTripEntries.length,
+    isDetectedTripPreviewRoute,
+    isExplicitMockRecordRoute,
+    localEntries.length,
+    routeTripDayId,
+    routeTripId,
+    selectedFilterId,
+    selectedSupabaseTripDayId,
+    selectedDataSource,
+    shouldUseSupabaseRecordDay,
+    supabasePlaces,
+    supabaseRecords,
+    supabaseEntries.length,
+  ]);
   const tripInfoInitialValue = useMemo(
     () => {
       const initialValue = createTripSetupInitialValue(dayOptions, entries);
 
-      if (!isDetectedTripDraft) {
+      if (!isDetectedTripPreviewRoute) {
         return initialValue;
       }
 
@@ -867,7 +1372,7 @@ export default function RecordDayDetailScreen() {
       detectedTripId,
       endDate,
       entries,
-      isDetectedTripDraft,
+      isDetectedTripPreviewRoute,
       startDate,
     ],
   );
@@ -1089,11 +1594,13 @@ export default function RecordDayDetailScreen() {
   };
 
   const handleOpenPlaceDetail = (entry: PlaceEntry) => {
+    const entryDayId = entry.tripDayId ?? entry.dayId ?? selectedDay.id;
+
     router.push({
       pathname: '/place-detail',
       params: {
-        tripId: tripId ?? 'record-trip',
-        dayId: selectedDay.id,
+        tripId: entry.tripId ?? routeTripId ?? 'record-trip',
+        dayId: entryDayId,
         placeId: getEntryPlaceId(entry),
         entryPoint: 'recordDayDetail',
         placeName: entry.placeName ?? entry.place,
@@ -1115,6 +1622,10 @@ export default function RecordDayDetailScreen() {
   };
 
   const getEntryDayId = (entry: PlaceEntry) => {
+    if (entry.tripDayId) {
+      return entry.tripDayId;
+    }
+
     for (const day of dayOptions) {
       const dayEntries = entriesByDay[day.id]
         ?? (day.id === selectedDay.id ? RECORD_DAY_ENTRIES : undefined);
@@ -1127,7 +1638,7 @@ export default function RecordDayDetailScreen() {
     return entry.dayId ?? selectedDay.id;
   };
 
-  const handleSubmitPlaceEntry = (input: PlaceCreateInput) => {
+  const handleSubmitPlaceEntry = async (input: PlaceCreateInput) => {
     const { dayOptions: nextDayOptions, targetDay } = resolveDayForPlaceInput(
       dayOptions,
       input,
@@ -1135,11 +1646,99 @@ export default function RecordDayDetailScreen() {
     );
     const targetDayId = targetDay.id;
 
+    if (shouldUseSupabaseRecordDay && routeTripId && isSupabaseUuid(targetDayId)) {
+      try {
+        if (
+          editingEntry?.dataSource === 'supabase' &&
+          editingEntry.placeId
+        ) {
+          await updatePlaceRecordMutation.mutateAsync({
+            ...input,
+            placeId: editingEntry.placeId,
+            recordId: editingEntry.recordId,
+            tripDayId: targetDayId,
+            tripId: routeTripId,
+          });
+        } else {
+          await createPlaceRecordMutation.mutateAsync({
+            ...input,
+            tripDayId: targetDayId,
+            tripId: routeTripId,
+          });
+        }
+
+        handleClosePlaceEntryModal();
+      } catch (error) {
+        console.warn('[record-day-detail] save place record failed', error);
+        Alert.alert(
+          '\uC7A5\uC18C\uB97C \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+        );
+      }
+      return;
+    }
+
     if (nextDayOptions !== dayOptions) {
       setDayOptions(nextDayOptions);
       setSelectedDay((current) =>
         nextDayOptions.find((day) => day.id === current.id) ?? current,
       );
+    }
+
+    if (isDetectedTripPreviewRoute) {
+      setEntriesByDay((current) => {
+        const targetDayEntries = current[targetDayId] ?? [];
+
+        if (editingEntry) {
+          const sourceDayId = getEntryDayId(editingEntry);
+          const sourceDayEntries = current[sourceDayId] ?? [];
+          const nextEntriesByDay = {
+            ...current,
+            [sourceDayId]: sourceDayEntries.filter((entry) => entry.id !== editingEntry.id),
+          };
+          const normalizedTargetEntries = sourceDayId === targetDayId
+            ? nextEntriesByDay[sourceDayId]
+            : targetDayEntries;
+          const updatedEntry: PlaceEntry = {
+            ...editingEntry,
+            ...input,
+            dataSource: 'detected',
+            id: editingEntry.id,
+            source: 'detected',
+            dayId: targetDay.id,
+            dateKey: getDayDateKey(targetDay) ?? undefined,
+            dateLabel: targetDay.dateLabel,
+            weekdayLabel: targetDay.weekdayLabel,
+          };
+
+          return {
+            ...nextEntriesByDay,
+            [targetDayId]: [...normalizedTargetEntries, updatedEntry].sort(
+              (left, right) => getTimeSortValue(left.time) - getTimeSortValue(right.time),
+            ),
+          };
+        }
+
+        const newEntry: PlaceEntry = {
+          id: `detected-manual-${targetDayId}-${Date.now()}`,
+          ...input,
+          dataSource: 'detected',
+          source: 'detected',
+          dayId: targetDay.id,
+          dateKey: getDayDateKey(targetDay) ?? undefined,
+          dateLabel: targetDay.dateLabel,
+          weekdayLabel: targetDay.weekdayLabel,
+        };
+
+        return {
+          ...current,
+          [targetDayId]: [...targetDayEntries, newEntry].sort(
+            (left, right) => getTimeSortValue(left.time) - getTimeSortValue(right.time),
+          ),
+        };
+      });
+      handleClosePlaceEntryModal();
+      return;
     }
 
     setEntriesByDay((current) => {
@@ -1194,7 +1793,7 @@ export default function RecordDayDetailScreen() {
     handleClosePlaceEntryModal();
   };
 
-  const handleDeleteEntry = (entry: PlaceEntry) => {
+  const handleDeleteEntry = (entry: PlaceEntry, entryIndex?: number) => {
     const targetPlaceId = getEntryPlaceId(entry);
 
     Alert.alert(
@@ -1206,21 +1805,73 @@ export default function RecordDayDetailScreen() {
           text: '\uC0AD\uC81C',
           style: 'destructive',
           onPress: () => {
-            markPlaceDetailDeleted(targetPlaceId);
+            if (
+              entry.dataSource === 'supabase' &&
+              entry.placeId &&
+              entry.tripDayId &&
+              entry.tripId
+            ) {
+              void deletePlaceRecordMutation.mutateAsync({
+                placeId: entry.placeId,
+                tripDayId: entry.tripDayId,
+                tripId: entry.tripId,
+              }).then(() => {
+                markPlaceDetailDeleted(targetPlaceId);
+              }).catch((error) => {
+                console.warn('[record-day-detail] delete place record failed', error);
+                Alert.alert(
+                  '\uC7A5\uC18C\uB97C \uC0AD\uC81C\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+                  '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+                );
+              });
+              return;
+            }
+
+            if (entry.dataSource === 'detected') {
+              const targetDay = dayOptions.find((day) => day.id === entry.dayId) ?? selectedDay;
+              const nextDeletedKey = getLocalEntryDeletionKey(
+                routeTripId,
+                targetDay,
+                entry,
+                entryIndex ?? 0,
+              );
+
+              setDeletedLocalEntryKeys((current) => {
+                const next = new Set(current);
+                next.add(nextDeletedKey);
+                return next;
+              });
+              return;
+            }
+
+            const targetDay = selectedFilterId === ALL_DAYS_ID
+              ? dayOptions.find((day) =>
+                (entriesByDay[day.id] ?? RECORD_DAY_ENTRIES).some((item) => item === entry),
+              ) ?? selectedDay
+              : selectedDay;
+            const targetDayEntries = entriesByDay[targetDay.id] ?? RECORD_DAY_ENTRIES;
+            const targetIndex = entryIndex ?? targetDayEntries.findIndex((item) => item === entry);
+            const nextDeletedKey = getLocalEntryDeletionKey(
+              routeTripId,
+              targetDay,
+              entry,
+              targetIndex >= 0 ? targetIndex : 0,
+            );
+
+            setDeletedLocalEntryKeys((current) => {
+              const next = new Set(current);
+              next.add(nextDeletedKey);
+              return next;
+            });
             setEntriesByDay((current) => {
               const nextEntriesByDay = { ...current };
+              const dayEntries = nextEntriesByDay[targetDay.id]
+                ?? (targetDay.id === selectedDay.id ? RECORD_DAY_ENTRIES : undefined);
 
-              for (const day of dayOptions) {
-                const dayEntries = nextEntriesByDay[day.id]
-                  ?? (day.id === selectedDay.id ? RECORD_DAY_ENTRIES : undefined);
-
-                if (!dayEntries) {
-                  continue;
-                }
-
-                nextEntriesByDay[day.id] = dayEntries.filter(
-                  (item) => getEntryPlaceId(item) !== targetPlaceId,
-                );
+              if (dayEntries) {
+                nextEntriesByDay[targetDay.id] = dayEntries.filter((item, index) => (
+                  index !== (targetIndex >= 0 ? targetIndex : 0)
+                ));
               }
 
               return nextEntriesByDay;
@@ -1429,13 +2080,13 @@ export default function RecordDayDetailScreen() {
             photoDisplayMode="limited"
             showRating={false}
             variant="recordPhotoReview"
-            onLongPress={() => handleDeleteEntry(entry)}
+            onLongPress={() => handleDeleteEntry(entry, index)}
             onPress={() => handleOpenPlaceDetail(entry)}
             onPhotoDelete={(photoIndex) => confirmDeletePhotoFromEntry(entry, photoIndex)}
             onPhotoGridOpen={() => handleOpenPlacePhotoGrid(entry)}
             onQuickAddPhoto={() => handleAddPhotosToEntry(entry)}
             onQuickEdit={() => handleOpenEditEntry(entry)}
-            onQuickDelete={() => handleDeleteEntry(entry)}
+            onQuickDelete={() => handleDeleteEntry(entry, index)}
           />
         ))}
         </View>
@@ -1452,6 +2103,7 @@ export default function RecordDayDetailScreen() {
           editingEntry
             ? {
               ...editingEntry,
+              source: editingEntry.source === 'mock' ? ('mock' as const) : ('manual' as const),
               dayId: getEntryDayId(editingEntry),
             }
             : {
@@ -1462,20 +2114,62 @@ export default function RecordDayDetailScreen() {
             }
         }
         onDelete={(entryId) => {
+          if (
+            editingEntry?.dataSource === 'supabase' &&
+            editingEntry.placeId &&
+            editingEntry.tripDayId &&
+            editingEntry.tripId
+          ) {
+            void deletePlaceRecordMutation.mutateAsync({
+              placeId: editingEntry.placeId,
+              tripDayId: editingEntry.tripDayId,
+              tripId: editingEntry.tripId,
+            }).then(() => {
+              markPlaceDetailDeleted(getEntryPlaceId(editingEntry));
+              handleClosePlaceEntryModal();
+            }).catch((error) => {
+              console.warn('[record-day-detail] delete place record from modal failed', error);
+              Alert.alert(
+                '\uC7A5\uC18C\uB97C \uC0AD\uC81C\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+                '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+              );
+            });
+            return;
+          }
+
+          if (editingEntry?.dataSource === 'detected') {
+            const targetDay = dayOptions.find((day) => day.id === editingEntry.dayId) ?? selectedDay;
+            const nextDeletedKey = getLocalEntryDeletionKey(routeTripId, targetDay, editingEntry, 0);
+
+            setDeletedLocalEntryKeys((currentKeys) => {
+              const next = new Set(currentKeys);
+              next.add(nextDeletedKey);
+              return next;
+            });
+            handleClosePlaceEntryModal();
+            return;
+          }
+
           setEntriesByDay((current) => {
             const nextEntriesByDay = { ...current };
 
             for (const day of dayOptions) {
               const dayEntries = nextEntriesByDay[day.id]
                 ?? (day.id === selectedDay.id ? RECORD_DAY_ENTRIES : undefined);
-              const matchedEntry = dayEntries?.find((entry) => entry.id === entryId);
+              const matchedEntryIndex = dayEntries?.findIndex((entry) => entry.id === entryId) ?? -1;
+              const matchedEntry = matchedEntryIndex >= 0 ? dayEntries?.[matchedEntryIndex] : undefined;
 
               if (!dayEntries || !matchedEntry) {
                 continue;
               }
 
-              markPlaceDetailDeleted(getEntryPlaceId(matchedEntry));
-              nextEntriesByDay[day.id] = dayEntries.filter((entry) => entry.id !== entryId);
+              const nextDeletedKey = getLocalEntryDeletionKey(routeTripId, day, matchedEntry, matchedEntryIndex);
+              setDeletedLocalEntryKeys((currentKeys) => {
+                const next = new Set(currentKeys);
+                next.add(nextDeletedKey);
+                return next;
+              });
+              nextEntriesByDay[day.id] = dayEntries.filter((_, index) => index !== matchedEntryIndex);
               break;
             }
 

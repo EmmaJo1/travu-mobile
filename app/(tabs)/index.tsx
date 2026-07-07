@@ -61,6 +61,7 @@ import { useCompleteTrip } from '@/hooks/useCompleteTrip';
 import { useCreateTrip } from '@/hooks/useCreateTrip';
 import { useActiveTrip, useMyTrips, useRecentTrips } from '@/hooks/useMyTrips';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
+import { useTripDays } from '@/hooks/useTripDays';
 import { useAuth } from '@/providers/AuthProvider';
 import { ActiveTripExistsError, type TripRow } from '@/services/supabase/trips';
 import {
@@ -659,6 +660,7 @@ export default function HomeScreen() {
   const createTripMutation = useCreateTrip();
   const completeTripMutation = useCompleteTrip();
   const { data: supabaseActiveTrip } = useActiveTrip();
+  const { data: supabaseActiveTripDays } = useTripDays(supabaseActiveTrip?.id);
   const { data: supabaseTrips } = useMyTrips();
   const { data: supabaseRecentTrips } = useRecentTrips(3);
   const { currentTrip, todaySummary } = HOME_MOCK_DATA;
@@ -895,6 +897,15 @@ export default function HomeScreen() {
   );
   const selectedTripDay = tripDays[selectedTripDayIndex] ?? tripDays[0];
   const selectedDateKey = selectedTripDay?.dateKey ?? activeTrip.startDate;
+  const selectedSupabaseTripDay = React.useMemo(
+    () =>
+      supabaseActiveTripDays?.find((day) => day.date === selectedDateKey) ??
+      supabaseActiveTripDays?.find((day) => day.day_index === selectedTripDayIndex + 1),
+    [selectedDateKey, selectedTripDayIndex, supabaseActiveTripDays],
+  );
+  const selectedRouteDayId = selectedSupabaseTripDay?.id ?? selectedDateKey;
+  const selectedRouteTripDayId = selectedSupabaseTripDay?.id;
+  const selectedRouteDayIndex = selectedSupabaseTripDay?.day_index ?? selectedTripDayIndex + 1;
   const todayDateKey = getTodayDateKey();
   const tripDayLabels = React.useMemo(
     () =>
@@ -940,7 +951,10 @@ export default function HomeScreen() {
       pathname: '/place-detail',
       params: {
         tripId: activeTrip.destination.id,
-        dayId: selectedDateKey,
+        dayId: selectedRouteDayId,
+        tripDayId: selectedRouteTripDayId,
+        date: selectedDateKey,
+        dayIndex: String(selectedRouteDayIndex),
         placeId: item.id,
         entryPoint: 'activeTripTimeline',
         placeName: item.placeName,
@@ -958,6 +972,9 @@ export default function HomeScreen() {
     activeTrip.destination.id,
     router,
     selectedDateKey,
+    selectedRouteDayId,
+    selectedRouteDayIndex,
+    selectedRouteTripDayId,
     selectedSummaryDateLabel,
   ]);
 
@@ -1520,7 +1537,7 @@ export default function HomeScreen() {
         visible={isPlaceCreateModalVisible}
         mode="create"
         tripId={activeTrip.destination.id}
-        dayId={selectedDateKey}
+        dayId={selectedRouteDayId}
         tripDestinationName={activeTrip.destination.displayName}
         tripDestinationCountry={activeTrip.destination.countryName}
         tripLatitude={activeTrip.latitude}

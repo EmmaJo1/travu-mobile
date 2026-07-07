@@ -207,7 +207,7 @@ function ArchiveBlurBackground({
 }
 
 function resolveDayNumberFromId(dayId?: string): number | undefined {
-  const matchedNumber = dayId?.match(/day-(\d+)/i)?.[1];
+  const matchedNumber = dayId?.match(/(?:day|rd)-(\d+)/i)?.[1];
   return matchedNumber ? Number(matchedNumber) : undefined;
 }
 
@@ -249,6 +249,18 @@ function formatPlaceCreateDateLabel(dateLabel: string) {
   }
 
   return `${matched[1]}.${Number(matched[2])}.${Number(matched[3])}`;
+}
+
+function parseArchiveDateLabelToDateKey(dateLabel: string) {
+  const matched = dateLabel.replace(/\s+/g, '').match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})/);
+
+  if (!matched) {
+    return undefined;
+  }
+
+  return `${matched[1]}-${String(Number(matched[2])).padStart(2, '0')}-${String(
+    Number(matched[3]),
+  ).padStart(2, '0')}`;
 }
 
 function createArchiveDayOption(day: DaySelectorItem): PlaceEntryDayOption {
@@ -881,33 +893,50 @@ export default function DayArchiveDetailScreen() {
     const options = dayOptions.map(createArchiveDayOption);
     return options.length > 0 ? options : [createArchiveDayOption(selectedDay)];
   }, [dayOptions, selectedDay]);
+  const selectedSupabaseTripDay = useMemo(
+    () => {
+      if (!isSupabaseArchiveTrip) {
+        return undefined;
+      }
+
+      const selectedDateKey = parseArchiveDateLabelToDateKey(selectedDay.dateLabel);
+      return supabaseTripDays?.find((day) => day.id === selectedDay.id) ??
+        supabaseTripDays?.find((day) => day.day_index === selectedDay.dayNumber) ??
+        supabaseTripDays?.find((day) => day.date === selectedDateKey);
+    },
+    [isSupabaseArchiveTrip, selectedDay.dateLabel, selectedDay.dayNumber, selectedDay.id, supabaseTripDays],
+  );
+  const selectedSupabaseTripDayId = useMemo(
+    () =>
+      isSupabaseArchiveTrip
+        ? selectedSupabaseTripDay?.id ?? null
+        : null,
+    [isSupabaseArchiveTrip, selectedSupabaseTripDay?.id],
+  );
+  const selectedRouteDayId = selectedSupabaseTripDayId ?? selectedDay.id;
+  const selectedRouteDayIndex = selectedSupabaseTripDay?.day_index ?? selectedDay.dayNumber;
+  const selectedRouteDate = selectedSupabaseTripDay?.date ?? formatPlaceCreateDateLabel(selectedDay.dateLabel);
   const placeCreateInitialValue = useMemo(
     () =>
       editingArchiveEntry
         ? {
           ...editingArchiveEntry,
-          dayId: editingArchiveEntry.dayId ?? editingArchiveEntry.tripDayId ?? selectedDay.id,
-          dayNumber: editingArchiveEntry.dayNumber ?? selectedDay.dayNumber,
+          source: editingArchiveEntry.source === 'mock' ? ('mock' as const) : ('manual' as const),
+          dayId: editingArchiveEntry.dayId ?? editingArchiveEntry.tripDayId ?? selectedRouteDayId,
+          dayNumber: editingArchiveEntry.dayNumber ?? selectedRouteDayIndex,
           dateLabel:
             editingArchiveEntry.dateLabel ?? formatPlaceCreateDateLabel(selectedDay.dateLabel),
           weekdayLabel: editingArchiveEntry.weekdayLabel ?? selectedDay.weekdayLabel,
         }
         : {
-          dayId: selectedDay.id,
-          dayNumber: selectedDay.dayNumber,
+          dayId: selectedRouteDayId,
+          dayNumber: selectedRouteDayIndex,
           dateLabel: formatPlaceCreateDateLabel(selectedDay.dateLabel),
           weekdayLabel: selectedDay.weekdayLabel,
           photoUris: [],
           photoSources: [],
         },
-    [editingArchiveEntry, selectedDay],
-  );
-  const selectedSupabaseTripDayId = useMemo(
-    () =>
-      isSupabaseArchiveTrip && supabaseDayOptions.some((day) => day.id === selectedDay.id)
-        ? selectedDay.id
-        : null,
-    [isSupabaseArchiveTrip, selectedDay.id, supabaseDayOptions],
+    [editingArchiveEntry, selectedDay.dateLabel, selectedDay.weekdayLabel, selectedRouteDayId, selectedRouteDayIndex],
   );
   const { data: supabasePlaces } = useTripDayPlaces(selectedSupabaseTripDayId);
   const { data: supabaseRecords } = useTripDayRecords(selectedSupabaseTripDayId);
@@ -950,6 +979,36 @@ export default function DayArchiveDetailScreen() {
   const photoFrameLeft = (screenWidth - PHOTO_FRAME_WIDTH) / 2;
 
   React.useEffect(() => {
+    if (!__DEV__) {
+      return;
+    }
+
+    console.log('[day-archive-detail route day]', {
+      dayId,
+      dayNumber,
+      isSupabaseArchiveTrip,
+      routeTripId,
+      selectedDayId: selectedDay.id,
+      selectedRouteDate,
+      selectedRouteDayId,
+      selectedRouteDayIndex,
+      selectedSupabaseTripDayId,
+      supabaseTripDays: supabaseTripDays?.length ?? 0,
+    });
+  }, [
+    dayId,
+    dayNumber,
+    isSupabaseArchiveTrip,
+    routeTripId,
+    selectedDay.id,
+    selectedRouteDate,
+    selectedRouteDayId,
+    selectedRouteDayIndex,
+    selectedSupabaseTripDayId,
+    supabaseTripDays?.length,
+  ]);
+
+  React.useEffect(() => {
     if (dayOptions.length === 0) {
       return;
     }
@@ -959,7 +1018,7 @@ export default function DayArchiveDetailScreen() {
         return current;
       }
 
-      const parsedDayNumber = dayNumber ? Number(dayNumber) : undefined;
+      const parsedDayNumber = dayNumber ? Number(dayNumber) : resolveDayNumberFromId(dayId);
       const nextDay =
         dayOptions.find((day) => day.id === dayId) ??
         dayOptions.find((day) => day.dayNumber === parsedDayNumber) ??
@@ -1023,9 +1082,10 @@ export default function DayArchiveDetailScreen() {
       pathname: '/place-detail',
       params: {
         tripId: detail.id,
-        dayId: selectedDay.id,
-        dayIndex: String(selectedDay.dayNumber),
-        date: formatPlaceCreateDateLabel(selectedDay.dateLabel),
+        dayId: selectedRouteDayId,
+        tripDayId: selectedSupabaseTripDayId ?? undefined,
+        dayIndex: String(selectedRouteDayIndex),
+        date: selectedRouteDate,
         placeId: getEntryPlaceId(entry),
         entryPoint: 'archiveDayDetail',
         placeName: entry.placeName ?? entry.place,
@@ -1044,9 +1104,10 @@ export default function DayArchiveDetailScreen() {
       pathname: '/place-detail',
       params: {
         tripId: detail.id,
-        dayId: selectedDay.id,
-        dayIndex: String(selectedDay.dayNumber),
-        date: formatPlaceCreateDateLabel(selectedDay.dateLabel),
+        dayId: selectedRouteDayId,
+        tripDayId: selectedSupabaseTripDayId ?? undefined,
+        dayIndex: String(selectedRouteDayIndex),
+        date: selectedRouteDate,
         placeId: getEntryPlaceId(entry),
         entryPoint: 'archiveDayDetail',
         openPhotoGrid: '1',
@@ -1533,9 +1594,9 @@ export default function DayArchiveDetailScreen() {
         mode={editingArchiveEntry ? 'edit' : 'create'}
         initialValue={placeCreateInitialValue}
         dayOptions={placeCreateDayOptions}
-        selectedDayId={selectedDay.id}
+        selectedDayId={selectedRouteDayId}
         tripId={detail.id}
-        dayId={selectedDay.id}
+        dayId={selectedRouteDayId}
         tripDestinationName={detail.city}
         tripDestinationCountry={detail.country}
         onClose={closePlaceCreateModal}

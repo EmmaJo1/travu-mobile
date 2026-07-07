@@ -24,8 +24,8 @@ import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme'
 
 export interface PlaceEntry {
   id: string;
-  source?: 'mock' | 'manual';
-  dataSource?: 'local' | 'mock' | 'supabase';
+  source?: 'mock' | 'manual' | 'detected';
+  dataSource?: 'local' | 'mock' | 'supabase' | 'detected';
   placeId?: string;
   recordId?: string;
   tripId?: string;

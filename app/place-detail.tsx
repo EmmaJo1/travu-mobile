@@ -63,6 +63,7 @@ import type { RecordRow } from '@/services/supabase/records';
 type PlaceDetailRouteParams = {
   tripId?: string;
   dayId?: string;
+  tripDayId?: string;
   placeId?: string;
   entryPoint?: 'dailyMoment' | 'activeTripTimeline' | 'recordDayDetail' | 'archiveDayDetail';
   openPhotoGrid?: string;
@@ -1169,6 +1170,7 @@ export default function PlaceDetailScreen() {
         params: {
           tripId: params.tripId ?? initialDetail.tripId,
           dayId: params.dayId ?? initialDetail.dayId,
+          tripDayId: params.tripDayId ?? params.dayId ?? initialDetail.dayId,
           updatedPlaceId: initialDetail.placeId,
           updatedPhotoUris: JSON.stringify(getSerializablePhotoUris(photos)),
           deletedSourceIndexes: JSON.stringify(deletedSourceIndexes),
