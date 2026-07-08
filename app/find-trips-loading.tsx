@@ -7,6 +7,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import Text from '@/components/common/AppText';
 import ScreenHeader from '@/components/nav/ScreenHeader';
+import PhotoAnalysisProgressSection from '@/components/photo-import/PhotoAnalysisProgressSection';
 import { Colors, Radius, Typography } from '@/constants/theme';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
 import type { PhotoImportDetectionState } from '@/services/photoImport/types';
@@ -21,7 +22,10 @@ export default function FindTripsLoading() {
     status,
     detectionState,
     errorMessage,
+    progress,
     candidates,
+    lastScanResult,
+    scanProgress,
     runPhotoImportDetection,
     deferPhotoImportResults,
   } = usePhotoImportFlow();
@@ -68,8 +72,11 @@ export default function FindTripsLoading() {
       return;
     }
 
-    router.replace((candidates.length > 0 ? '/detected-trips' : '/no-detected-trips') as Href);
-  }, [candidates.length, router, status]);
+    const hasVisibleOrPendingCandidates =
+      candidates.length > 0 || (lastScanResult?.pendingEnrichmentCandidateCount ?? 0) > 0;
+
+    router.replace((hasVisibleOrPendingCandidates ? '/detected-trips' : '/no-detected-trips') as Href);
+  }, [candidates.length, lastScanResult?.pendingEnrichmentCandidateCount, router, status]);
 
   const handleRetry = React.useCallback(() => {
     startDetection();
@@ -105,15 +112,21 @@ export default function FindTripsLoading() {
           <View style={styles.centerCopy}>
             <Text style={styles.title}>사진첩에서{'\n'}여행을 찾고 있어요</Text>
             <Text style={styles.description}>
-              사진의 시간과 위치를 기준으로{'\n'}여행의 시간을 정리하고 있어요
+              사진의 시간과 위치를 기준으로{'\n'}여행을 정리하고 있어요
             </Text>
-            <Text style={styles.statusText}>사진 1400장을 확인하는 중이에요</Text>
+            <View style={styles.analysisProgressSection}>
+              <PhotoAnalysisProgressSection
+                progress={progress}
+                scannedAssetCount={scanProgress?.scannedAssetCount}
+                totalAssetCount={scanProgress?.totalAssetCount}
+              />
+            </View>
           </View>
 
           <View style={styles.progressCard}>
             <ProgressRow state="completed" label="사진 시간 정보 확인" top="16.67%" />
             <DashConnector active top="31.25%" />
-            <ProgressRow state="loading" label="촬영 위치 정보 정리" top="45.42%" />
+            <ProgressRow state="loading" label="촬영 위치 후보 정리" top="45.42%" />
             <DashConnector active={false} top="60%" />
             <ProgressRow state="pending" label="여행 후보 만들기" top="74.17%" />
           </View>
@@ -216,18 +229,16 @@ const styles = StyleSheet.create({
     color: GREY_700,
     textAlign: 'center',
   },
-  statusText: {
-    marginTop: 88,
-    ...Typography.body2Regular,
-    color: Colors.foundation.grey400,
-    textAlign: 'center',
+  analysisProgressSection: {
+    marginTop: 40,
+    alignItems: 'center',
   },
   progressCard: {
     position: 'absolute',
-    left: '11.54%',
-    right: '11.54%',
-    top: '44.08%',
-    bottom: '27.49%',
+    top: 430,
+    alignSelf: 'center',
+    width: 300,
+    height: 200,
     borderRadius: Radius.sm,
     backgroundColor: Colors.foundation.white,
   },

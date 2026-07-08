@@ -803,9 +803,7 @@ export default function HomeScreen() {
   const handleOpenPhotoImportResults = React.useCallback(() => {
     setShowPhotoImportCompleteModal(false);
     openPhotoImportResults();
-    // TODO: Replace onboarding results route with the final imported-trip
-    // review route when the real media-library analysis flow is connected.
-    router.push('/onboarding/results' as Href);
+    router.push('/detected-trips' as Href);
   }, [openPhotoImportResults, router]);
 
   const handleOpenPhotoImportProgress = React.useCallback(() => {
@@ -1383,6 +1381,7 @@ export default function HomeScreen() {
   const shouldShowPhotoImportResultsCard =
     !hasSavedPhotoImportResults &&
     !shouldShowPhotoTripDetectionProgressCard &&
+    photoImportCandidates.length > 0 &&
     (photoImportHomeFlowStatus === 'completed' ||
       photoImportStatus === 'results_ready' ||
       hasDeferredPhotoImportResults ||

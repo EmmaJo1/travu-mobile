@@ -17,6 +17,39 @@ export type PhotoImportDetectionState =
 
 export type PhotoLibraryPermissionResult = 'granted' | 'denied';
 
+export type PhotoImportConfidenceLevel = 'high' | 'medium' | 'low';
+
+export type PhotoImportCandidateSplitReason =
+  | 'date_gap'
+  | 'max_days_exceeded'
+  | 'max_photos_exceeded'
+  | 'distance_exceeded'
+  | 'gps_mixed_with_no_gps'
+  | 'final_chunk';
+
+export interface PhotoImportCandidateDebugMetadata {
+  candidateId: string;
+  startDate: string;
+  endDate: string;
+  dayCount: number;
+  photoCount: number;
+  screenshotPhotoCount: number;
+  realPhotoCount: number;
+  gpsPhotoCount: number;
+  noGpsPhotoCount: number;
+  displayablePhotoCount: number;
+  locationClusterCount: number;
+  centroidLat?: number;
+  centroidLng?: number;
+  maxDistanceKm: number;
+  dateGapSplitCount: number;
+  oversizedSplitCount: number;
+  splitReason: PhotoImportCandidateSplitReason;
+  confidenceScore: number;
+  confidenceLevel: PhotoImportConfidenceLevel;
+  warningReasons: string[];
+}
+
 export interface PhotoImportTripCandidate {
   id: string;
   city: string;
@@ -24,6 +57,7 @@ export interface PhotoImportTripCandidate {
   dateRange: string;
   photoCount: number;
   image: ImageSourcePropType;
+  debugMetadata?: PhotoImportCandidateDebugMetadata;
   initiallySelected?: boolean;
 }
 

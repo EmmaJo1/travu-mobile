@@ -18,7 +18,7 @@ import {
   useWindowDimensions,
   type ImageSourcePropType,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
 import StartTripSetupModal, {
@@ -40,6 +40,7 @@ import {
 import { MOCK_PHOTO_IMPORT_CANDIDATES } from '@/services/photoImport/mockPhotoImportProvider';
 import {
   getLocalDetectedTripDraft,
+  hydrateLocalDetectedTripDraftPhotos,
   type LocalDetectedTripDraft,
 } from '@/services/photoImport/localDetectedTripDraftStore';
 import type { PhotoImportTripCandidate } from '@/services/photoImport/types';
@@ -184,6 +185,59 @@ function createDetectedDraftDestination(
   };
 }
 
+function normalizeDetectedTripHeaderTitle(value?: string | null) {
+  const rawTitle = value?.trim();
+
+  if (!rawTitle) {
+    return null;
+  }
+
+  if (
+    rawTitle === '사진첩 여행 후보' ||
+    /^\d{4}\.\s?\d{1,2}\.\s?\d{1,2}/.test(rawTitle)
+  ) {
+    return null;
+  }
+
+  const baseTitle = rawTitle
+    .replace(/\s*여행\s*후보$/u, '')
+    .replace(/\s*여행$/u, '')
+    .trim();
+
+  if (!baseTitle) {
+    return null;
+  }
+
+  if (baseTitle.includes('서울')) {
+    const neighborhood = baseTitle.match(/([가-힣]+동)/u)?.[1];
+    const district = baseTitle.match(/([가-힣]+)구/u)?.[1];
+    return `${neighborhood ?? district ?? '서울'} 여행`;
+  }
+
+  const metroCity = baseTitle.match(/(부산|대구|인천|광주|대전|울산)(?:광역시)?/u)?.[1];
+
+  if (metroCity) {
+    return `${metroCity} 여행`;
+  }
+
+  const cityOrCounty = baseTitle.match(/([가-힣]+)(?:시|군)/u)?.[1];
+
+  if (cityOrCounty) {
+    return `${cityOrCounty} 여행`;
+  }
+
+  if (/^[A-Za-z]/.test(baseTitle)) {
+    const words = baseTitle.split(/\s+/);
+    const titleCore = words[0] === 'Massa' && words[1] === 'Lubrense'
+      ? 'Massa Lubrense'
+      : words[0];
+
+    return `${titleCore} 여행`;
+  }
+
+  return rawTitle.endsWith('여행') ? rawTitle : `${baseTitle} 여행`;
+}
+
 function isDetectedTripRoute(entryPoint?: string, mode?: string, tripId?: string) {
   return (
     entryPoint === 'detectedTrip' ||
@@ -319,7 +373,9 @@ function createLocalDetectedTripEntries(
       latitude: group.latitude,
       longitude: group.longitude,
       photoCount: group.photos.length,
-      photoUris: group.photos.map((photo) => photo.uri),
+      photoUris: group.photos
+        .map((photo) => photo.displayUri)
+        .filter((uri): uri is string => Boolean(uri)),
       place: group.label,
       placeId: group.id,
       placeName: group.label,
@@ -904,6 +960,7 @@ function DayFilterBar({ days, selectedId, onSelectAll, onSelectDay }: DayFilterB
 
 export default function RecordDayDetailScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const routeParams = useLocalSearchParams<{
     tripId?: string | string[];
@@ -918,10 +975,12 @@ export default function RecordDayDetailScreen() {
     mode?: string | string[];
     detectedTripId?: string | string[];
     cityName?: string | string[];
+    displayTitle?: string | string[];
     countryName?: string | string[];
     startDate?: string | string[];
     endDate?: string | string[];
     photoCount?: string | string[];
+    tripTitle?: string | string[];
   }>();
   const tripId = readRouteParam(routeParams.tripId);
   const dayId = readRouteParam(routeParams.dayId);
@@ -935,16 +994,20 @@ export default function RecordDayDetailScreen() {
   const mode = readRouteParam(routeParams.mode);
   const detectedTripId = readRouteParam(routeParams.detectedTripId);
   const cityName = readRouteParam(routeParams.cityName);
+  const displayTitle = readRouteParam(routeParams.displayTitle);
   const countryName = readRouteParam(routeParams.countryName);
   const startDate = readRouteParam(routeParams.startDate);
   const endDate = readRouteParam(routeParams.endDate);
   const photoCount = readRouteParam(routeParams.photoCount);
+  const tripTitle = readRouteParam(routeParams.tripTitle);
   const routeTripId = tripId;
   const routeTripDayId = tripDayId ?? dayId;
-  const localDetectedTripDraft = useMemo(
+  const routeLocalDetectedTripDraft = useMemo(
     () => getLocalDetectedTripDraft(routeTripId),
     [routeTripId],
   );
+  const [localDetectedTripDraft, setLocalDetectedTripDraft] =
+    useState<LocalDetectedTripDraft | undefined>(() => routeLocalDetectedTripDraft);
   const isLocalDetectedPhotoDraftRoute = entryPoint === 'detectedPhotoDraft';
   const isDetectedTripPreviewRoute = isDetectedTripRoute(entryPoint, mode, routeTripId);
   const isExplicitMockRecordRoute = isExplicitMockRoute(entryPoint, mode, routeTripId);
@@ -955,6 +1018,35 @@ export default function RecordDayDetailScreen() {
   const deletePlaceRecordMutation = useDeletePlaceRecord();
   const updatePlaceRecordMutation = useUpdatePlaceRecord();
   const { data: supabaseTripDays } = useTripDays(isSupabaseTripRoute ? routeTripId : undefined);
+
+  useEffect(() => {
+    setLocalDetectedTripDraft(routeLocalDetectedTripDraft);
+
+    if (!routeLocalDetectedTripDraft) {
+      return;
+    }
+
+    let active = true;
+
+    hydrateLocalDetectedTripDraftPhotos(routeTripId).then((hydratedDraft) => {
+      if (!active || !hydratedDraft) {
+        return;
+      }
+
+      setLocalDetectedTripDraft({
+        ...hydratedDraft,
+        days: [...hydratedDraft.days],
+      });
+    }).catch((error) => {
+      if (__DEV__) {
+        console.warn('[record-day-detail] detected draft photo hydration failed', error);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [routeLocalDetectedTripDraft, routeTripId]);
 
   useEffect(() => {
     if (!__DEV__) {
@@ -1377,6 +1469,80 @@ export default function RecordDayDetailScreen() {
     ],
   );
   const photoGridSources = useMemo(() => getPhotoSources(photoGridEntry), [photoGridEntry]);
+  const headerTitleInfo = useMemo(() => {
+    const dateHeaderTitle = formatHeaderDate(selectedDay);
+    const isDetectedHeaderRoute =
+      !shouldUseSupabaseRecordDay &&
+      (
+        entryPoint === 'detectedTrips' ||
+        entryPoint === 'detectedPhotoDraft' ||
+        Boolean(localDetectedTripDraft)
+      );
+
+    if (!isDetectedHeaderRoute) {
+      return {
+        source: 'date',
+        title: dateHeaderTitle,
+      };
+    }
+
+    const titleCandidates = [
+      { source: 'routeDisplayTitle', value: displayTitle },
+      { source: 'routeTripTitle', value: tripTitle },
+      { source: 'routeCityName', value: cityName },
+      { source: 'localDetectedDraftDisplayTitle', value: localDetectedTripDraft?.displayTitle },
+      { source: 'localDetectedDraftTitle', value: localDetectedTripDraft?.title },
+      { source: 'localDetectedDraftLocationLabel', value: localDetectedTripDraft?.locationLabel },
+    ];
+
+    for (const candidate of titleCandidates) {
+      const title = normalizeDetectedTripHeaderTitle(candidate.value);
+
+      if (title) {
+        return {
+          source: candidate.source,
+          title,
+        };
+      }
+    }
+
+    return {
+      source: 'pendingLocation',
+      title: '지역 확인 중',
+    };
+  }, [
+    cityName,
+    displayTitle,
+    entryPoint,
+    localDetectedTripDraft,
+    selectedDay,
+    shouldUseSupabaseRecordDay,
+    tripTitle,
+  ]);
+
+  useEffect(() => {
+    if (!__DEV__) {
+      return;
+    }
+
+    console.info('[record-day-detail header title]', {
+      headerTitleAfter: headerTitleInfo.title,
+      headerTitleBefore: formatHeaderDate(selectedDay),
+      headerTitleSource: headerTitleInfo.source,
+      isDetectedTripRoute: isDetectedTripPreviewRoute,
+      localDetectedDraftDisplayTitle: localDetectedTripDraft?.displayTitle,
+      localDetectedDraftTitle: localDetectedTripDraft?.title,
+      routeCityName: cityName,
+    });
+  }, [
+    cityName,
+    headerTitleInfo.source,
+    headerTitleInfo.title,
+    isDetectedTripPreviewRoute,
+    localDetectedTripDraft?.displayTitle,
+    localDetectedTripDraft?.title,
+    selectedDay,
+  ]);
 
   const handleClosePlaceEntryModal = () => {
     setPlaceEntryModalVisible(false);
@@ -2005,7 +2171,7 @@ export default function RecordDayDetailScreen() {
         balancedSlots
         onBackPress={() => router.back()}
         centerSlot={
-          <Text style={styles.headerDateText}>{formatHeaderDate(selectedDay)}</Text>
+          <Text style={styles.headerDateText}>{headerTitleInfo.title}</Text>
         }
         rightSlot={
           <Pressable
@@ -2194,7 +2360,10 @@ export default function RecordDayDetailScreen() {
         onRequestClose={handleClosePhotoGrid}
         visible={photoGridEntry != null}
       >
-        <SafeAreaView style={styles.photoGridScreen} edges={['top', 'bottom']}>
+        <SafeAreaView
+          style={[styles.photoGridScreen, { paddingTop: insets.top }]}
+          edges={['bottom']}
+        >
           <View style={styles.photoGridHeader}>
             <Pressable
               accessibilityRole="button"

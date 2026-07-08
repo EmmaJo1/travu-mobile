@@ -30,6 +30,10 @@ const LINK_MIN_GAP = 16;
 const LINK_TO_CTA_GAP = 24;
 const CTA_HEIGHT = 48;
 const CTA_BOTTOM_MIN = 16;
+const INITIAL_COVER_HYDRATION_LIMIT = 15;
+const VIEWABILITY_CONFIG = {
+  itemVisiblePercentThreshold: 40,
+};
 
 export default function DetectedTrips() {
   const router = useRouter();
@@ -39,14 +43,36 @@ export default function DetectedTrips() {
     candidates,
     selectedCandidateIds,
     toggleCandidate,
+    hydrateCandidateCovers,
     openPhotoImportResults,
     saveSelectedPhotoImportResults,
   } = usePhotoImportFlow();
   const [isSaving, setIsSaving] = React.useState(false);
+  const initialHydrationCandidateIds = React.useMemo(
+    () => candidates
+      .slice(0, INITIAL_COVER_HYDRATION_LIMIT)
+      .map((candidate) => candidate.id),
+    [candidates],
+  );
+  const initialHydrationCandidateKey = initialHydrationCandidateIds.join('|');
+  const requestedInitialHydrationKeyRef = React.useRef<string | undefined>(undefined);
 
   React.useEffect(() => {
     openPhotoImportResults();
   }, [openPhotoImportResults]);
+
+  React.useEffect(() => {
+    if (initialHydrationCandidateIds.length === 0) {
+      return;
+    }
+
+    if (requestedInitialHydrationKeyRef.current === initialHydrationCandidateKey) {
+      return;
+    }
+
+    requestedInitialHydrationKeyRef.current = initialHydrationCandidateKey;
+    void hydrateCandidateCovers(initialHydrationCandidateIds);
+  }, [hydrateCandidateCovers, initialHydrationCandidateIds, initialHydrationCandidateKey]);
 
   const selectedCount = selectedCandidateIds.length;
   const canSave = selectedCount > 0;
@@ -85,15 +111,20 @@ export default function DetectedTrips() {
 
   const handleOpenCandidate = React.useCallback(
     (candidateId: string) => {
+      const candidateTitle = candidates.find((candidate) => candidate.id === candidateId)?.city;
+
       router.push({
         pathname: '/record-day-detail',
         params: {
-          tripId: candidateId,
+          cityName: candidateTitle,
+          displayTitle: candidateTitle,
           entryPoint: 'detectedTrips',
+          tripTitle: candidateTitle,
+          tripId: candidateId,
         },
       } as Href);
     },
-    [router],
+    [candidates, router],
   );
 
   const handleOpenManualCreate = React.useCallback(() => {
@@ -117,6 +148,20 @@ export default function DetectedTrips() {
     [handleOpenCandidate, isSaving, selectedCandidateIds, toggleCandidate],
   );
 
+  const handleViewableItemsChanged = React.useRef(({
+    viewableItems,
+  }: {
+    viewableItems: { item?: PhotoImportTripCandidate }[];
+  }) => {
+    const visibleCandidateIds = viewableItems
+      .map((viewableItem) => viewableItem.item?.id)
+      .filter((candidateId): candidateId is string => Boolean(candidateId));
+
+    if (visibleCandidateIds.length > 0) {
+      void hydrateCandidateCovers(visibleCandidateIds);
+    }
+  }).current;
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar style="dark" />
@@ -133,7 +178,9 @@ export default function DetectedTrips() {
           keyExtractor={(item) => item.id}
           renderItem={renderCandidate}
           ItemSeparatorComponent={CandidateSeparator}
+          onViewableItemsChanged={handleViewableItemsChanged}
           showsVerticalScrollIndicator={false}
+          viewabilityConfig={VIEWABILITY_CONFIG}
           bounces={isListScrollable}
           scrollEnabled={isListScrollable}
         />

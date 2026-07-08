@@ -5,7 +5,6 @@ import { type Href, useRouter } from 'expo-router';
 import React from 'react';
 import {
   Animated,
-  Alert,
   Image,
   Modal,
   Pressable,
@@ -18,7 +17,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Text from '@/components/common/AppText';
 import { useIsActiveTraveling } from '@/constants/activeTravelSession';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
-import { pickPhotoLibraryDetectedTripDraft } from '@/services/photoImport/localDetectedTripDraftStore';
 
 const TAB_ICONS = {
   index: require('./tab-home.png'),
@@ -68,35 +66,7 @@ export default function TravuTabBar({ state, navigation }: BottomTabBarProps) {
 
   const openPhotoImportFlow = React.useCallback(() => {
     closeMenu();
-    pickPhotoLibraryDetectedTripDraft()
-      .then((draft) => {
-        if (!draft) {
-          return;
-        }
-
-        router.push({
-          pathname: '/record-day-detail',
-          params: {
-            entryPoint: 'detectedPhotoDraft',
-            tripId: draft.id,
-          },
-        });
-      })
-      .catch((error) => {
-        if (error instanceof Error && error.message === 'photo-library-permission-denied') {
-          Alert.alert(
-            '\uC0AC\uC9C4 \uAD8C\uD55C\uC774 \uD544\uC694\uD574\uC694',
-            '\uC0AC\uC9C4\uCCA9\uC5D0\uC11C \uC5EC\uD589\uC744 \uCC3E\uC73C\uB824\uBA74 \uC0AC\uC9C4 \uC811\uADFC \uAD8C\uD55C\uC744 \uD5C8\uC6A9\uD574\uC8FC\uC138\uC694.',
-          );
-          return;
-        }
-
-        console.warn('[TravuTabBar] photo import failed', error);
-        Alert.alert(
-          '\uC0AC\uC9C4\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694',
-          '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
-        );
-      });
+    router.push('/find-trips-loading' as Href);
   }, [closeMenu, router]);
 
   const openManualTripFlow = React.useCallback(() => {

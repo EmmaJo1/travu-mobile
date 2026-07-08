@@ -30,6 +30,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
+import PhotoAnalysisProgressSection from '@/components/photo-import/PhotoAnalysisProgressSection';
 import { FIGMA_IMAGES } from '@/constants/figmaImages';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
@@ -67,6 +68,8 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
   const pageWidth = Math.min(windowWidth, PAGE_MAX_WIDTH);
   const {
     candidates,
+    progress,
+    scanProgress,
     selectedCandidateIds,
     toggleCandidate,
     openPhotoImportResults,
@@ -233,7 +236,12 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
         onConnect={handleConnectPhotoLibrary}
         onSkip={handleSkip}
       />,
-      <AnalyzingPage key="analyzing" onGoHome={handleGoHome} />,
+      <AnalyzingPage
+        key="analyzing"
+        progress={progress}
+        scanProgress={scanProgress}
+        onGoHome={handleGoHome}
+      />,
       <ResultsPage
         key="results"
         candidates={candidates}
@@ -254,6 +262,8 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
       handleSkip,
       insets.bottom,
       isSaving,
+      progress,
+      scanProgress,
       selectedCandidateIds,
       animateToPage,
       toggleCandidate,
@@ -513,14 +523,33 @@ function PhotoLibraryPage({
   );
 }
 
-function AnalyzingPage({ onGoHome }: { onGoHome: () => void }) {
+function AnalyzingPage({
+  progress,
+  scanProgress,
+  onGoHome,
+}: {
+  progress: number;
+  scanProgress?: {
+    scannedAssetCount: number;
+    totalAssetCount: number;
+  };
+  onGoHome: () => void;
+}) {
+  const displayProgress = scanProgress?.totalAssetCount ? progress : 63;
+
   return (
     <View style={styles.page}>
       <Text style={styles.analyzingTitle}>지난 여행을 찾고 있어요</Text>
       <Text style={styles.analyzingDescription}>
-        사진의 시간과 위치를 기준으로{'\n'}여행의 순간을 정리하고 있어요
+        사진의 시간과 위치를 기준으로{'\n'}여행을 정리하고 있어요
       </Text>
-      <Text style={styles.photoCountCaption}>사진 1400장을 확인하는 중이에요</Text>
+      <View style={styles.onboardingAnalysisProgressSection}>
+        <PhotoAnalysisProgressSection
+          progress={displayProgress}
+          scannedAssetCount={scanProgress?.scannedAssetCount}
+          totalAssetCount={scanProgress?.totalAssetCount}
+        />
+      </View>
 
       <View style={styles.progressCard}>
         <ProgressRow state="completed" label="사진 시간 정보 확인" top="16.67%" />
@@ -1292,22 +1321,20 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     letterSpacing: 0,
   },
-  photoCountCaption: {
+  onboardingAnalysisProgressSection: {
     position: 'absolute',
-    top: 333,
+    top: 306,
     left: 0,
     right: 0,
-    ...Typography.body2Regular,
-    color: Colors.foundation.grey400,
-    textAlign: 'center',
-    letterSpacing: 0,
+    alignItems: 'center',
   },
   progressCard: {
     position: 'absolute',
-    top: '46.68%',
-    left: '11.54%',
-    right: '11.54%',
-    height: '28.44%',
+    top: 428,
+    left: '50%',
+    width: 300,
+    height: 200,
+    marginLeft: -150,
     borderRadius: Radius.sm,
     backgroundColor: Colors.foundation.white,
   },

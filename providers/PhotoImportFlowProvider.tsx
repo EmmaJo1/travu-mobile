@@ -2,17 +2,16 @@ import React from 'react';
 
 import { addSavedPhotoImportCandidates } from '@/constants/savedMyPageTrips';
 import {
-  MOCK_PHOTO_IMPORT_CANDIDATES,
-  mockPhotoImportProvider,
-} from '@/services/photoImport/mockPhotoImportProvider';
+  hydrateLocalDetectedTripDraftCovers,
+  scanEntirePhotoLibraryForTrips,
+  type PhotoLibraryScanProgress,
+  type PhotoLibraryScanResult,
+} from '@/services/photoImport/localDetectedTripDraftStore';
 import type {
   PhotoImportDetectionState,
   PhotoImportStatus,
   PhotoImportTripCandidate,
 } from '@/services/photoImport/types';
-
-const MOCK_ANALYSIS_DELAY_MS = 1600;
-const MOCK_ANALYSIS_PROGRESS = 62;
 
 interface PhotoImportFlowContextValue {
   status: PhotoImportStatus;
@@ -25,9 +24,12 @@ interface PhotoImportFlowContextValue {
   hasDeferredPhotoImportResults: boolean;
   hasSavedPhotoImportResults: boolean;
   lastSavedTripCount: number;
+  lastScanResult?: PhotoLibraryScanResult;
+  scanProgress?: PhotoLibraryScanProgress;
   startPhotoImportAnalysis: () => void;
   requestAccessAndStartAnalysis: () => Promise<void>;
   runPhotoImportDetection: () => Promise<PhotoImportDetectionState>;
+  hydrateCandidateCovers: (candidateIds: string[]) => Promise<void>;
   toggleCandidate: (candidateId: string) => void;
   openPhotoImportResults: () => void;
   deferPhotoImportResults: () => void;
@@ -45,14 +47,10 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
   const [detectionState, setDetectionState] =
     React.useState<PhotoImportDetectionState>('idle');
   const [errorMessage, setErrorMessage] = React.useState<string>();
-  const [candidates, setCandidates] = React.useState<PhotoImportTripCandidate[]>(
-    MOCK_PHOTO_IMPORT_CANDIDATES,
-  );
-  const [selectedCandidateIds, setSelectedCandidateIds] = React.useState<string[]>(
-    MOCK_PHOTO_IMPORT_CANDIDATES
-      .filter((candidate) => candidate.initiallySelected)
-      .map((candidate) => candidate.id),
-  );
+  const [candidates, setCandidates] = React.useState<PhotoImportTripCandidate[]>([]);
+  const [selectedCandidateIds, setSelectedCandidateIds] = React.useState<string[]>([]);
+  const [lastScanResult, setLastScanResult] = React.useState<PhotoLibraryScanResult>();
+  const [scanProgress, setScanProgress] = React.useState<PhotoLibraryScanProgress>();
   const [hasOpenedPhotoImportResults, setHasOpenedPhotoImportResults] =
     React.useState(false);
   const [hasDeferredPhotoImportResults, setHasDeferredPhotoImportResults] =
@@ -60,19 +58,6 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
   const [hasSavedPhotoImportResults, setHasSavedPhotoImportResults] =
     React.useState(false);
   const [lastSavedTripCount, setLastSavedTripCount] = React.useState(0);
-
-  React.useEffect(() => {
-    if (status !== 'analyzing') {
-      return undefined;
-    }
-
-    // TODO: Replace mock delay with real photo library analysis status.
-    const timer = setTimeout(() => {
-      setStatus('results_ready');
-    }, MOCK_ANALYSIS_DELAY_MS);
-
-    return () => clearTimeout(timer);
-  }, [status]);
 
   const startPhotoImportAnalysis = React.useCallback(() => {
     setStatus('analyzing');
@@ -82,26 +67,41 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
     setHasDeferredPhotoImportResults(false);
     setHasSavedPhotoImportResults(false);
     setLastSavedTripCount(0);
+    setLastScanResult(undefined);
+    setScanProgress(undefined);
   }, []);
 
   const runPhotoImportDetection = React.useCallback(async () => {
     startPhotoImportAnalysis();
 
     try {
-      const permission = await mockPhotoImportProvider.requestPhotoLibraryAccess();
+      const scanResult = await scanEntirePhotoLibraryForTrips({
+        onCandidatesUpdated: (updatedCandidates) => {
+          setCandidates(updatedCandidates);
+          setSelectedCandidateIds(
+            updatedCandidates
+              .filter((candidate) => candidate.initiallySelected)
+              .map((candidate) => candidate.id),
+          );
+        },
+        onProgress: setScanProgress,
+      });
 
-      if (permission !== 'granted') {
+      if (scanResult.permissionState === 'denied') {
         setStatus('not_started');
         setDetectionState('permissionDenied');
+        setLastScanResult(scanResult);
         return 'permissionDenied';
       }
 
-      await mockPhotoImportProvider.startAnalysis();
-      const detectedCandidates = await mockPhotoImportProvider.getCandidates();
+      const detectedCandidates = scanResult.candidates;
+      const hasVisibleOrPendingCandidates =
+        detectedCandidates.length > 0 || scanResult.pendingEnrichmentCandidateCount > 0;
       const nextState: PhotoImportDetectionState =
-        detectedCandidates.length > 0 ? 'success' : 'empty';
+        hasVisibleOrPendingCandidates ? 'success' : 'empty';
 
       setCandidates(detectedCandidates);
+      setLastScanResult(scanResult);
       setSelectedCandidateIds(
         detectedCandidates
           .filter((candidate) => candidate.initiallySelected)
@@ -116,12 +116,36 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
       setDetectionState('error');
       setErrorMessage(error instanceof Error ? error.message : 'Photo import detection failed');
       return 'error';
+    } finally {
+      if (__DEV__) {
+        console.info('[photo-import scan] cleanup executed');
+      }
     }
   }, [startPhotoImportAnalysis]);
 
   const requestAccessAndStartAnalysis = React.useCallback(async () => {
     await runPhotoImportDetection();
   }, [runPhotoImportDetection]);
+
+  const hydrateCandidateCovers = React.useCallback(async (candidateIds: string[]) => {
+    await hydrateLocalDetectedTripDraftCovers(candidateIds, {
+      onCandidatesUpdated: (updatedCandidates) => {
+        setCandidates(updatedCandidates);
+        setSelectedCandidateIds((current) => {
+          const availableIds = new Set(updatedCandidates.map((candidate) => candidate.id));
+          const retainedIds = current.filter((candidateId) => availableIds.has(candidateId));
+
+          if (retainedIds.length > 0) {
+            return retainedIds;
+          }
+
+          return updatedCandidates
+            .filter((candidate) => candidate.initiallySelected)
+            .map((candidate) => candidate.id);
+        });
+      },
+    });
+  }, []);
 
   const toggleCandidate = React.useCallback((candidateId: string) => {
     setSelectedCandidateIds((current) => {
@@ -156,7 +180,6 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
       return;
     }
 
-    await mockPhotoImportProvider.saveCandidates(idsToSave);
     const selectedCandidates = candidates.filter((candidate) =>
       idsToSave.includes(candidate.id),
     );
@@ -172,7 +195,6 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
   }, [saveSelectedPhotoImportResults, selectedCandidateIds]);
 
   const skipOnboarding = React.useCallback(async () => {
-    await mockPhotoImportProvider.skipOnboarding();
     setStatus('skipped');
   }, []);
 
@@ -183,7 +205,11 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
       errorMessage,
       progress:
         detectionState === 'detecting'
-          ? MOCK_ANALYSIS_PROGRESS
+          ? scanProgress?.totalAssetCount
+            ? scanProgress.hasNextPage
+              ? Math.min(99, Math.round((scanProgress.scannedAssetCount / scanProgress.totalAssetCount) * 100))
+              : 100
+            : 1
           : status === 'results_ready'
             ? 100
             : 0,
@@ -193,9 +219,12 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
       hasDeferredPhotoImportResults,
       hasSavedPhotoImportResults,
       lastSavedTripCount,
+      lastScanResult,
+      scanProgress,
       startPhotoImportAnalysis,
       requestAccessAndStartAnalysis,
       runPhotoImportDetection,
+      hydrateCandidateCovers,
       toggleCandidate,
       openPhotoImportResults,
       deferPhotoImportResults,
@@ -215,7 +244,10 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
       hasDeferredPhotoImportResults,
       hasOpenedPhotoImportResults,
       hasSavedPhotoImportResults,
+      hydrateCandidateCovers,
       lastSavedTripCount,
+      lastScanResult,
+      scanProgress,
       openPhotoImportResults,
       requestAccessAndStartAnalysis,
       runPhotoImportDetection,
