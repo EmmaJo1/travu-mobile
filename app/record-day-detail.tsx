@@ -258,7 +258,21 @@ function isExplicitMockRoute(entryPoint?: string, mode?: string, tripId?: string
 
 function parseDetectedDateRange(dateRange?: string) {
   const normalized = dateRange?.replace(/\s+/g, '') ?? '';
+  const singleDateMatched = normalized.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})$/);
   const matched = normalized.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})-(?:(\d{4})\.)?(\d{1,2})\.(\d{1,2})$/);
+
+  const formatDateKey = (year: number, month: number, day: number) =>
+    `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+  if (singleDateMatched) {
+    const dateKey = formatDateKey(
+      Number(singleDateMatched[1]),
+      Number(singleDateMatched[2]),
+      Number(singleDateMatched[3]),
+    );
+
+    return { endDate: dateKey, startDate: dateKey };
+  }
 
   if (!matched) {
     return { endDate: undefined, startDate: undefined };
@@ -270,8 +284,6 @@ function parseDetectedDateRange(dateRange?: string) {
   const endYear = Number(matched[4] ?? matched[1]);
   const endMonth = Number(matched[5]);
   const endDay = Number(matched[6]);
-  const formatDateKey = (year: number, month: number, day: number) =>
-    `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 
   return {
     endDate: formatDateKey(endYear, endMonth, endDay),

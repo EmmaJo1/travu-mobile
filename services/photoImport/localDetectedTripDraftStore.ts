@@ -20,10 +20,19 @@ const MAX_CONTINUOUS_TRIP_DAYS = 10;
 const MAX_PHOTOS_PER_TRIP_CANDIDATE = 200;
 const TRIP_LOCATION_SPLIT_DISTANCE_METERS = 30000;
 const MIN_REAL_PHOTOS_PER_VISIBLE_CANDIDATE = 10;
+const MIN_SHORT_TRIP_REAL_PHOTOS = 15;
+const MIN_LONG_TRIP_REAL_PHOTOS = 30;
 const MIN_SINGLE_DAY_VISIBLE_PHOTOS = 20;
-const MIN_MULTI_DAY_VISIBLE_PHOTOS = 15;
+const MIN_ONE_DAY_STRICT_REAL_PHOTOS = 30;
+const MIN_ONE_DAY_STRICT_GPS_PHOTOS = 10;
+const MIN_ONE_DAY_RELAXED_DISTANCE_KM = 10;
 const MIN_VISIBLE_GPS_PHOTOS = 5;
 const MIN_SINGLE_DAY_DISTANCE_KM = 3;
+const LONG_TRIP_MIN_DAYS = 8;
+const LONG_TRIP_MAX_DAYS = 45;
+const LONG_TRIP_MERGE_MAX_GAP_DAYS = 5;
+const LONG_TRIP_MERGE_MAX_CENTROID_DISTANCE_KM = 2500;
+const SAVED_IMAGE_HEAVY_RATIO = 0.5;
 const MOSTLY_SCREENSHOT_RATIO = 0.5;
 const CONFIDENCE_HIGH_THRESHOLD = 70;
 const CONFIDENCE_MEDIUM_THRESHOLD = 40;
@@ -62,7 +71,11 @@ export interface LocalDetectedPhoto {
   height: number;
   takenAt: string;
   filename?: string;
+  fileExtension?: string;
+  hasCameraExif: boolean;
   isScreenshot: boolean;
+  isLikelyCameraPhoto: boolean;
+  isLikelySavedImage: boolean;
   mediaType?: string;
   mediaSubtypes?: string[];
   latitude?: number;
@@ -139,6 +152,7 @@ export interface PhotoLibraryScanResult {
   hiddenScreenshotCandidateCount: number;
   hiddenTooFewRealPhotosCandidateCount: number;
   hiddenWeakSingleDayCandidateCount: number;
+  hiddenLowGpsPhotoCandidateCount: number;
   pendingEnrichmentCandidateCount: number;
   photosAfterScreenshotFilterCount: number;
   drafts: LocalDetectedTripDraft[];
@@ -168,6 +182,19 @@ interface CandidatePhotoChunk {
   splitReason: PhotoImportCandidateSplitReason;
   dateGapSplitCount: number;
   oversizedSplitCount: number;
+}
+
+interface CandidateGenerationStats {
+  candidateCountAfterLongTripMerge: number;
+  initialRangeCandidateCount: number;
+  longTripCandidateCount: number;
+  longTripPostMergeCount: number;
+  oneDayCandidateCount: number;
+  rawDateBucketCount: number;
+  shortTripCandidateCount: number;
+  splitByDateGapCount: number;
+  splitByDistanceCount: number;
+  splitByGpsMixedCount: number;
 }
 
 const drafts = new Map<string, LocalDetectedTripDraft>();
@@ -396,15 +423,98 @@ function containsScreenshotText(value?: string | null) {
   return Boolean(value && /screenshot|screen shot|simulator screen shot|스크린샷|화면\s*캡처/i.test(value));
 }
 
+function readAssetFilename(asset: ScannedAsset | PickedPhotoAsset): string | undefined {
+  const object = readObject(asset);
+
+  if (!object) {
+    return undefined;
+  }
+
+  return typeof object.filename === 'string'
+    ? object.filename
+    : typeof object.fileName === 'string'
+      ? object.fileName
+      : undefined;
+}
+
+function getFileExtension(filename?: string | null) {
+  const matched = filename?.toLowerCase().match(/\.([a-z0-9]+)(?:\?.*)?$/);
+  return matched?.[1];
+}
+
+function readExif(asset: ScannedAsset | PickedPhotoAsset) {
+  const object = readObject(asset);
+  return object && readObject(object.exif);
+}
+
+function hasCameraExif(asset: ScannedAsset | PickedPhotoAsset) {
+  const exif = readExif(asset);
+
+  if (!exif) {
+    return false;
+  }
+
+  return Boolean(
+    exif.Make ||
+    exif.Model ||
+    exif.LensModel ||
+    exif.DateTimeOriginal ||
+    exif.DateTimeDigitized,
+  );
+}
+
+function hasCameraFilenamePattern(filename?: string | null) {
+  return Boolean(filename && /^(IMG_|DSC_|PXL_|VID_|MVIMG_|DJI_)/i.test(filename));
+}
+
+function hasSavedImageFilenamePattern(filename?: string | null) {
+  return Boolean(filename && /download|downloaded|save|saved|image|web|kakao|kakaotalk|instagram|pinterest/i.test(filename));
+}
+
+function isLikelySavedImageAsset(
+  asset: ScannedAsset | PickedPhotoAsset,
+  options: {
+    coordinates: { latitude: number; longitude: number } | null;
+    isScreenshot: boolean;
+  },
+) {
+  if (options.isScreenshot || options.coordinates || hasCameraExif(asset)) {
+    return false;
+  }
+
+  const filename = readAssetFilename(asset);
+  const extension = getFileExtension(filename);
+
+  return (
+    hasSavedImageFilenamePattern(filename) ||
+    ['png', 'webp', 'gif'].includes(extension ?? '')
+  );
+}
+
+function isLikelyCameraPhotoAsset(
+  asset: ScannedAsset | PickedPhotoAsset,
+  options: {
+    coordinates: { latitude: number; longitude: number } | null;
+    isLikelySavedImage: boolean;
+    isScreenshot: boolean;
+  },
+) {
+  if (options.isScreenshot || options.isLikelySavedImage) {
+    return false;
+  }
+
+  return Boolean(
+    options.coordinates ||
+    hasCameraExif(asset) ||
+    hasCameraFilenamePattern(readAssetFilename(asset)),
+  );
+}
+
 function isScreenshotAsset(asset: ScannedAsset | PickedPhotoAsset): boolean {
   const object = readObject(asset);
   const exif = object && readObject(object.exif);
   const mediaSubtypes = readMediaSubtypes(asset);
-  const filename = object && typeof object.filename === 'string'
-    ? object.filename
-    : object && typeof object.fileName === 'string'
-      ? object.fileName
-      : undefined;
+  const filename = readAssetFilename(asset);
 
   if (mediaSubtypes.some((subtype) => subtype.includes('screenshot') || subtype.includes('screen'))) {
     return true;
@@ -881,6 +991,12 @@ function countLocatedGroups(days: LocalDetectedTripDraftDay[]) {
   ), 0);
 }
 
+function countGpsActiveDays(days: LocalDetectedTripDraftDay[]) {
+  return days.filter((day) => (
+    day.groups.some((group) => group.photos.some((photo) => Boolean(getPhotoCoordinates(photo))))
+  )).length;
+}
+
 function calculateCandidateDebugMetadata({
   candidateId,
   dateGapSplitCount,
@@ -903,14 +1019,19 @@ function calculateCandidateDebugMetadata({
   const centroid = calculateCentroid(photos);
   const photoCount = photos.length;
   const screenshotPhotoCount = photos.filter((photo) => photo.isScreenshot).length;
-  const realPhotoCount = photoCount - screenshotPhotoCount;
+  const savedImageCount = photos.filter((photo) => photo.isLikelySavedImage).length;
+  const realPhotoCount = photos.filter((photo) => (
+    photo.isLikelyCameraPhoto && !photo.isScreenshot && !photo.isLikelySavedImage
+  )).length;
   const gpsPhotoCount = photos.filter((photo) => getPhotoCoordinates(photo)).length;
   const noGpsPhotoCount = photoCount - gpsPhotoCount;
   const displayablePhotoCount = photos.filter((photo) => isRenderableImageUri(photo.displayUri)).length;
   const gpsRatio = photoCount > 0 ? gpsPhotoCount / photoCount : 0;
   const noGpsRatio = photoCount > 0 ? noGpsPhotoCount / photoCount : 0;
+  const savedImageRatio = photoCount > 0 ? savedImageCount / photoCount : 0;
   const displayableRatio = photoCount > 0 ? displayablePhotoCount / photoCount : 0;
   const dayCount = days.length;
+  const gpsActiveDayCount = countGpsActiveDays(days);
   const locationClusterCount = countLocatedGroups(days);
   const maxDistanceKm = calculateMaxDistanceKmFromCentroid(photos, centroid);
   const warningReasons: string[] = [];
@@ -926,6 +1047,15 @@ function calculateCandidateDebugMetadata({
   if (realPhotoCount < MIN_REAL_PHOTOS_PER_VISIBLE_CANDIDATE) {
     confidenceScore -= 25;
     warningReasons.push('too_few_real_photos');
+  }
+
+  if (savedImageCount > 0) {
+    warningReasons.push('contains_saved_images');
+  }
+
+  if (savedImageRatio >= SAVED_IMAGE_HEAVY_RATIO) {
+    confidenceScore -= 20;
+    warningReasons.push('possible_downloaded_images');
   }
 
   if (photoCount > 0 && screenshotPhotoCount / photoCount >= MOSTLY_SCREENSHOT_RATIO) {
@@ -976,20 +1106,30 @@ function calculateCandidateDebugMetadata({
     warningReasons.push('few_displayable_thumbnails');
   }
 
+  if (gpsPhotoCount > 0 && gpsPhotoCount < MIN_VISIBLE_GPS_PHOTOS) {
+    confidenceScore -= 15;
+    warningReasons.push('low_gps_photo_count');
+  }
+
   if (
     dayCount === 1 &&
-    (
-      photoCount < MIN_SINGLE_DAY_VISIBLE_PHOTOS ||
-      gpsPhotoCount < MIN_VISIBLE_GPS_PHOTOS ||
-      maxDistanceKm < MIN_SINGLE_DAY_DISTANCE_KM
-    )
+    realPhotoCount < MIN_SINGLE_DAY_VISIBLE_PHOTOS &&
+    maxDistanceKm < MIN_SINGLE_DAY_DISTANCE_KM
   ) {
     confidenceScore -= 20;
     warningReasons.push('weak_single_day_candidate');
   }
 
-  if (dayCount === 1 && photoCount <= MIN_SINGLE_DAY_VISIBLE_PHOTOS && maxDistanceKm < MIN_SINGLE_DAY_DISTANCE_KM) {
+  if (
+    dayCount === 1 &&
+    realPhotoCount <= MIN_SINGLE_DAY_VISIBLE_PHOTOS &&
+    maxDistanceKm < MIN_SINGLE_DAY_DISTANCE_KM
+  ) {
     warningReasons.push('possible_daily_life_candidate');
+  }
+
+  if (dayCount >= LONG_TRIP_MIN_DAYS) {
+    warningReasons.push(dayCount <= LONG_TRIP_MAX_DAYS ? 'long_trip_candidate' : 'weak_long_trip_candidate');
   }
 
   const normalizedScore = clampScore(confidenceScore);
@@ -1008,13 +1148,17 @@ function calculateCandidateDebugMetadata({
     dayCount,
     displayablePhotoCount,
     endDate,
+    gpsActiveDayCount,
     gpsPhotoCount,
+    isLongTripCandidate: dayCount >= LONG_TRIP_MIN_DAYS,
     locationClusterCount,
     maxDistanceKm,
     noGpsPhotoCount,
     oversizedSplitCount,
     photoCount,
     realPhotoCount,
+    savedImageCount,
+    savedImageRatio,
     screenshotPhotoCount,
     splitReason,
     startDate,
@@ -1027,16 +1171,23 @@ function createPhotoFromScannedAsset(asset: ScannedAsset, takenDate: Date): Loca
   const localUri = 'localUri' in asset ? asset.localUri ?? null : null;
   const displayUri = isRenderableImageUri(localUri) ? localUri : null;
   const mediaSubtypes = readMediaSubtypes(asset);
+  const isScreenshot = isScreenshotAsset(asset);
+  const filename = readAssetFilename(asset);
+  const isLikelySavedImage = isLikelySavedImageAsset(asset, { coordinates, isScreenshot });
 
   return {
     assetId: asset.id,
     assetUri: asset.uri,
     displayUri,
-    filename: asset.filename,
+    fileExtension: getFileExtension(filename),
+    filename,
+    hasCameraExif: hasCameraExif(asset),
     hasLocation: Boolean(coordinates),
     height: asset.height,
     id: asset.id,
-    isScreenshot: isScreenshotAsset(asset),
+    isScreenshot,
+    isLikelyCameraPhoto: isLikelyCameraPhotoAsset(asset, { coordinates, isLikelySavedImage, isScreenshot }),
+    isLikelySavedImage,
     latitude: coordinates?.latitude,
     longitude: coordinates?.longitude,
     localUri,
@@ -1052,16 +1203,23 @@ function createPhotoFromPickedAsset(asset: PickedPhotoAsset, takenDate: Date): L
   const coordinates = getPickedAssetCoordinates(asset);
   const displayUri = isRenderableImageUri(asset.uri) ? asset.uri : null;
   const mediaSubtypes = readMediaSubtypes(asset);
+  const isScreenshot = isScreenshotAsset(asset);
+  const filename = readAssetFilename(asset);
+  const isLikelySavedImage = isLikelySavedImageAsset(asset, { coordinates, isScreenshot });
 
   return {
     assetId: asset.assetId ?? undefined,
     assetUri: asset.uri,
     displayUri,
-    filename: asset.fileName ?? undefined,
+    fileExtension: getFileExtension(filename),
+    filename,
+    hasCameraExif: hasCameraExif(asset),
     hasLocation: Boolean(coordinates),
     height: asset.height,
     id: asset.assetId ?? asset.uri,
-    isScreenshot: isScreenshotAsset(asset),
+    isScreenshot,
+    isLikelyCameraPhoto: isLikelyCameraPhotoAsset(asset, { coordinates, isLikelySavedImage, isScreenshot }),
+    isLikelySavedImage,
     latitude: coordinates?.latitude,
     longitude: coordinates?.longitude,
     mediaType: asset.type ?? 'image',
@@ -1180,22 +1338,46 @@ function buildDraftFromPhotos(
     splitReason,
     startDate,
   });
+  const isSavedImageHeavy =
+    debugMetadata.savedImageRatio >= SAVED_IMAGE_HEAVY_RATIO &&
+    debugMetadata.realPhotoCount < MIN_SINGLE_DAY_VISIBLE_PHOTOS;
+  const isOneDayVisibleEnough =
+    debugMetadata.dayCount !== 1 ||
+    (
+      debugMetadata.realPhotoCount >= MIN_ONE_DAY_STRICT_REAL_PHOTOS &&
+      debugMetadata.gpsPhotoCount >= MIN_ONE_DAY_STRICT_GPS_PHOTOS &&
+      (
+        debugMetadata.maxDistanceKm >= MIN_SINGLE_DAY_DISTANCE_KM ||
+        debugMetadata.locationClusterCount >= 2
+      )
+    ) ||
+    (
+      debugMetadata.maxDistanceKm >= MIN_ONE_DAY_RELAXED_DISTANCE_KM &&
+      debugMetadata.realPhotoCount >= MIN_SHORT_TRIP_REAL_PHOTOS &&
+      debugMetadata.gpsPhotoCount >= MIN_VISIBLE_GPS_PHOTOS
+    );
+  const isMultiDayVisibleEnough =
+    debugMetadata.dayCount === 1 ||
+    (
+      debugMetadata.dayCount < LONG_TRIP_MIN_DAYS &&
+      debugMetadata.realPhotoCount >= MIN_SHORT_TRIP_REAL_PHOTOS
+    ) ||
+    (
+      debugMetadata.dayCount >= LONG_TRIP_MIN_DAYS &&
+      debugMetadata.realPhotoCount >= MIN_LONG_TRIP_REAL_PHOTOS &&
+      debugMetadata.gpsPhotoCount >= MIN_ONE_DAY_STRICT_GPS_PHOTOS &&
+      debugMetadata.gpsActiveDayCount >= 2
+    );
   const hasTitleCandidate =
     debugMetadata.confidenceLevel !== 'low' &&
-    debugMetadata.gpsPhotoCount > 0 &&
     debugMetadata.gpsPhotoCount >= MIN_VISIBLE_GPS_PHOTOS &&
     debugMetadata.realPhotoCount >= MIN_REAL_PHOTOS_PER_VISIBLE_CANDIDATE &&
     isFiniteCoordinateValue(debugMetadata.centroidLat) &&
     isFiniteCoordinateValue(debugMetadata.centroidLng) &&
     !debugMetadata.warningReasons.includes('screenshot_only_or_mostly_screenshot') &&
-    (
-      debugMetadata.dayCount > 1 ||
-      (
-        debugMetadata.photoCount >= MIN_SINGLE_DAY_VISIBLE_PHOTOS &&
-        debugMetadata.maxDistanceKm >= MIN_SINGLE_DAY_DISTANCE_KM
-      )
-    ) &&
-    (debugMetadata.dayCount === 1 || debugMetadata.photoCount >= MIN_MULTI_DAY_VISIBLE_PHOTOS);
+    !isSavedImageHeavy &&
+    isOneDayVisibleEnough &&
+    isMultiDayVisibleEnough;
 
   return {
     centroidLat: draftCentroid?.latitude,
@@ -1250,7 +1432,23 @@ function getCandidateSegmentSplitReason(
     return null;
   }
 
-  if (getDateGapDays(lastBucket.dateKey, nextBucket.dateKey) > TRIP_DAY_GAP_THRESHOLD_DAYS) {
+  const dateGapDays = getDateGapDays(lastBucket.dateKey, nextBucket.dateKey);
+  const currentPhotos = currentSegment.flatMap((bucket) => bucket.photos);
+  const currentCentroid = calculateCentroid(currentPhotos);
+
+  if (dateGapDays > 1) {
+    const isNearbyGap =
+      dateGapDays <= 3 &&
+      currentCentroid &&
+      nextBucket.centroid &&
+      getDistanceMeters(currentCentroid, nextBucket.centroid) <= TRIP_LOCATION_SPLIT_DISTANCE_METERS;
+
+    if (!isNearbyGap && dateGapDays > TRIP_DAY_GAP_THRESHOLD_DAYS) {
+      return 'date_gap';
+    }
+  }
+
+  if (dateGapDays > LONG_TRIP_MERGE_MAX_GAP_DAYS) {
     return 'date_gap';
   }
 
@@ -1264,21 +1462,16 @@ function getCandidateSegmentSplitReason(
     return 'max_photos_exceeded';
   }
 
-  const currentPhotos = currentSegment.flatMap((bucket) => bucket.photos);
-  const currentCentroid = calculateCentroid(currentPhotos);
-
   if (currentCentroid && nextBucket.centroid) {
-    return getDistanceMeters(currentCentroid, nextBucket.centroid) > TRIP_LOCATION_SPLIT_DISTANCE_METERS
+    return (
+      currentSegment.length >= MAX_CONTINUOUS_TRIP_DAYS &&
+      getDistanceMeters(currentCentroid, nextBucket.centroid) > TRIP_LOCATION_SPLIT_DISTANCE_METERS
+    )
       ? 'distance_exceeded'
       : null;
   }
 
-  const currentHasLocation = currentPhotos.some((photo) => getPhotoCoordinates(photo));
-  const nextHasLocation = nextBucket.photos.some((photo) => getPhotoCoordinates(photo));
-
-  return currentHasLocation !== nextHasLocation && currentPhotoCount >= MIN_PHOTOS_PER_TRIP_CANDIDATE
-    ? 'gps_mixed_with_no_gps'
-    : null;
+  return null;
 }
 
 function splitOversizedSegment(
@@ -1313,9 +1506,141 @@ function splitOversizedSegment(
   return chunks;
 }
 
+function getDraftPhotos(draft: LocalDetectedTripDraft) {
+  return draft.days.flatMap((day) => day.groups.flatMap((group) => group.photos));
+}
+
+function getInclusiveDateSpanDays(startDate: string, endDate: string) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return 1;
+  }
+
+  return Math.max(1, Math.round((end.getTime() - start.getTime()) / DAY_MS) + 1);
+}
+
+function getDraftDateGapDays(left: LocalDetectedTripDraft, right: LocalDetectedTripDraft) {
+  const leftEnd = new Date(`${left.endDate}T00:00:00`);
+  const rightStart = new Date(`${right.startDate}T00:00:00`);
+
+  if (Number.isNaN(leftEnd.getTime()) || Number.isNaN(rightStart.getTime())) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return Math.max(0, Math.round((rightStart.getTime() - leftEnd.getTime()) / DAY_MS) - 1);
+}
+
+function canPostMergeDrafts(currentDrafts: LocalDetectedTripDraft[], nextDraft: LocalDetectedTripDraft) {
+  const firstDraft = currentDrafts[0];
+
+  if (!firstDraft) {
+    return false;
+  }
+
+  if (getDraftDateGapDays(currentDrafts[currentDrafts.length - 1], nextDraft) > LONG_TRIP_MERGE_MAX_GAP_DAYS) {
+    return false;
+  }
+
+  const mergedStartDate = firstDraft.startDate < nextDraft.startDate ? firstDraft.startDate : nextDraft.startDate;
+  const mergedEndDate = currentDrafts.reduce((latest, draft) => (
+    latest.localeCompare(draft.endDate) >= 0 ? latest : draft.endDate
+  ), nextDraft.endDate);
+  const mergedSpanDays = getInclusiveDateSpanDays(mergedStartDate, mergedEndDate);
+
+  if (mergedSpanDays > LONG_TRIP_MAX_DAYS) {
+    return false;
+  }
+
+  const currentCentroid = calculateCentroid(currentDrafts.flatMap(getDraftPhotos));
+  const nextCentroid = calculateCentroid(getDraftPhotos(nextDraft));
+
+  if (!currentCentroid || !nextCentroid) {
+    return false;
+  }
+
+  return getDistanceMeters(currentCentroid, nextCentroid) / 1000 <= LONG_TRIP_MERGE_MAX_CENTROID_DISTANCE_KM;
+}
+
+function buildMergedLongTripDraft(
+  draftsToMerge: LocalDetectedTripDraft[],
+): LocalDetectedTripDraft | null {
+  const photos = draftsToMerge.flatMap(getDraftPhotos);
+  const draft = buildDraftFromPhotos(
+    photos,
+    createDraftId('photo-scan-long'),
+    'long_trip_post_merged',
+    draftsToMerge.reduce((total, draft) => total + draft.debugMetadata.dateGapSplitCount, 0),
+    draftsToMerge.reduce((total, draft) => total + draft.debugMetadata.oversizedSplitCount, 0),
+  );
+
+  if (!draft) {
+    return null;
+  }
+
+  draft.debugMetadata.mergedFromCandidateCount = draftsToMerge.length;
+  draft.debugMetadata.isLongTripCandidate = true;
+  addWarningReason(draft, 'long_trip_post_merged');
+
+  return draft;
+}
+
+function canKeepMergedLongTrip(draft: LocalDetectedTripDraft) {
+  const metadata = draft.debugMetadata;
+  const isSavedImageHeavy = metadata.savedImageRatio >= SAVED_IMAGE_HEAVY_RATIO && metadata.realPhotoCount < 20;
+
+  return (
+    metadata.dayCount >= LONG_TRIP_MIN_DAYS &&
+    metadata.dayCount <= LONG_TRIP_MAX_DAYS &&
+    metadata.realPhotoCount >= MIN_LONG_TRIP_REAL_PHOTOS &&
+    metadata.gpsPhotoCount >= MIN_ONE_DAY_STRICT_GPS_PHOTOS &&
+    metadata.gpsActiveDayCount >= 2 &&
+    !isSavedImageHeavy &&
+    !metadata.warningReasons.includes('screenshot_only_or_mostly_screenshot')
+  );
+}
+
+function postMergeLongTripDrafts(draftsToMerge: LocalDetectedTripDraft[]) {
+  const sortedDrafts = [...draftsToMerge].sort((left, right) => left.startDate.localeCompare(right.startDate));
+  const mergedDrafts: LocalDetectedTripDraft[] = [];
+  let longTripPostMergeCount = 0;
+  let index = 0;
+
+  while (index < sortedDrafts.length) {
+    const group = [sortedDrafts[index]];
+    let cursor = index + 1;
+
+    while (cursor < sortedDrafts.length && canPostMergeDrafts(group, sortedDrafts[cursor])) {
+      group.push(sortedDrafts[cursor]);
+      cursor += 1;
+    }
+
+    if (group.length > 1) {
+      const mergedDraft = buildMergedLongTripDraft(group);
+
+      if (mergedDraft && canKeepMergedLongTrip(mergedDraft)) {
+        mergedDrafts.push(mergedDraft);
+        longTripPostMergeCount += 1;
+        index = cursor;
+        continue;
+      }
+    }
+
+    mergedDrafts.push(sortedDrafts[index]);
+    index += 1;
+  }
+
+  return {
+    drafts: mergedDrafts,
+    longTripPostMergeCount,
+  };
+}
+
 function splitPhotosIntoTripDrafts(photos: LocalDetectedPhoto[]): {
   drafts: LocalDetectedTripDraft[];
   oversizedCandidateSplitCount: number;
+  stats: CandidateGenerationStats;
 } {
   const buckets = createDateBuckets(photos);
   const segments: Array<{
@@ -1369,7 +1694,7 @@ function splitPhotosIntoTripDrafts(photos: LocalDetectedPhoto[]): {
       splitReason: oversizedSplitCount > 0 ? 'max_photos_exceeded' : segment.splitReason,
     }));
   });
-  const drafts = candidatePhotoChunks
+  const initialDrafts = candidatePhotoChunks
     .filter((chunk) => chunk.photos.length >= MIN_PHOTOS_PER_TRIP_CANDIDATE)
     .map((chunk) => buildDraftFromPhotos(
       chunk.photos,
@@ -1379,8 +1704,33 @@ function splitPhotosIntoTripDrafts(photos: LocalDetectedPhoto[]): {
       chunk.oversizedSplitCount,
     ))
     .filter((draft): draft is LocalDetectedTripDraft => Boolean(draft));
+  const { drafts, longTripPostMergeCount } = postMergeLongTripDrafts(initialDrafts);
+  const countBySplitReason = (reason: PhotoImportCandidateSplitReason) => (
+    candidatePhotoChunks.filter((chunk) => chunk.splitReason === reason).length
+  );
+  const countByDuration = (minDays: number, maxDays = Number.POSITIVE_INFINITY) => (
+    drafts.filter((draft) => (
+      draft.debugMetadata.dayCount >= minDays &&
+      draft.debugMetadata.dayCount <= maxDays
+    )).length
+  );
 
-  return { drafts, oversizedCandidateSplitCount };
+  return {
+    drafts,
+    oversizedCandidateSplitCount,
+    stats: {
+      candidateCountAfterLongTripMerge: drafts.length,
+      initialRangeCandidateCount: initialDrafts.length,
+      longTripCandidateCount: countByDuration(LONG_TRIP_MIN_DAYS, LONG_TRIP_MAX_DAYS),
+      longTripPostMergeCount,
+      oneDayCandidateCount: countByDuration(1, 1),
+      rawDateBucketCount: buckets.length,
+      shortTripCandidateCount: countByDuration(2, 7),
+      splitByDateGapCount: countBySplitReason('date_gap'),
+      splitByDistanceCount: countBySplitReason('distance_exceeded'),
+      splitByGpsMixedCount: countBySplitReason('gps_mixed_with_no_gps'),
+    },
+  };
 }
 
 async function hydrateDraftCoverPhoto(draft: LocalDetectedTripDraft) {
@@ -1528,6 +1878,9 @@ function getCandidateHiddenReasons(draft: LocalDetectedTripDraft) {
   const hasValidCentroid =
     isFiniteCoordinateValue(metadata.centroidLat) &&
     isFiniteCoordinateValue(metadata.centroidLng);
+  const isSavedImageHeavy =
+    metadata.savedImageRatio >= SAVED_IMAGE_HEAVY_RATIO &&
+    metadata.realPhotoCount < MIN_SINGLE_DAY_VISIBLE_PHOTOS;
 
   if (metadata.confidenceLevel === 'low') {
     reasons.push('confidence_low');
@@ -1535,6 +1888,8 @@ function getCandidateHiddenReasons(draft: LocalDetectedTripDraft) {
 
   if (metadata.gpsPhotoCount <= 0) {
     reasons.push('no_gps_for_title');
+  } else if (metadata.gpsPhotoCount < MIN_VISIBLE_GPS_PHOTOS) {
+    reasons.push('low_gps_photo_count');
   }
 
   if (!hasValidCentroid) {
@@ -1545,22 +1900,50 @@ function getCandidateHiddenReasons(draft: LocalDetectedTripDraft) {
     reasons.push('screenshot_only_or_mostly_screenshot');
   }
 
+  if (isSavedImageHeavy) {
+    reasons.push('saved_image_heavy_candidate');
+  }
+
   if (metadata.realPhotoCount < MIN_REAL_PHOTOS_PER_VISIBLE_CANDIDATE) {
     reasons.push('too_few_real_photos');
   }
 
-  if (
-    (metadata.dayCount === 1 && metadata.photoCount < MIN_SINGLE_DAY_VISIBLE_PHOTOS) ||
-    (metadata.dayCount > 1 && metadata.photoCount < MIN_MULTI_DAY_VISIBLE_PHOTOS)
-  ) {
-    reasons.push('too_few_real_photos');
-  }
+  if (metadata.dayCount === 1) {
+    const oneDayStrictEnough =
+      metadata.realPhotoCount >= MIN_ONE_DAY_STRICT_REAL_PHOTOS &&
+      metadata.gpsPhotoCount >= MIN_ONE_DAY_STRICT_GPS_PHOTOS &&
+      (
+        metadata.maxDistanceKm >= MIN_SINGLE_DAY_DISTANCE_KM ||
+        metadata.locationClusterCount >= 2
+      );
+    const oneDayRelaxedForMovement =
+      metadata.maxDistanceKm >= MIN_ONE_DAY_RELAXED_DISTANCE_KM &&
+      metadata.realPhotoCount >= MIN_SHORT_TRIP_REAL_PHOTOS &&
+      metadata.gpsPhotoCount >= MIN_VISIBLE_GPS_PHOTOS;
 
-  if (
-    metadata.dayCount === 1 &&
-    (metadata.gpsPhotoCount < MIN_VISIBLE_GPS_PHOTOS || metadata.maxDistanceKm < MIN_SINGLE_DAY_DISTANCE_KM)
+    if (!oneDayStrictEnough && !oneDayRelaxedForMovement) {
+      reasons.push('weak_one_day_candidate');
+    }
+
+    if (metadata.realPhotoCount < MIN_ONE_DAY_STRICT_REAL_PHOTOS && !oneDayRelaxedForMovement) {
+      reasons.push('too_few_camera_photos_for_one_day');
+    }
+
+    if (metadata.maxDistanceKm < MIN_SINGLE_DAY_DISTANCE_KM && metadata.locationClusterCount < 2) {
+      reasons.push('too_static_one_day_candidate');
+      reasons.push('likely_daily_event_not_trip');
+    }
+  } else if (metadata.dayCount < LONG_TRIP_MIN_DAYS) {
+    if (metadata.realPhotoCount < MIN_SHORT_TRIP_REAL_PHOTOS) {
+      reasons.push('too_few_camera_photos_for_short_trip');
+    }
+  } else if (
+    metadata.realPhotoCount < MIN_LONG_TRIP_REAL_PHOTOS ||
+    metadata.gpsPhotoCount < MIN_ONE_DAY_STRICT_GPS_PHOTOS ||
+    metadata.gpsActiveDayCount < 2 ||
+    isSavedImageHeavy
   ) {
-    reasons.push('weak_single_day_candidate');
+    reasons.push('weak_long_trip_candidate');
   }
 
   return [...new Set(reasons)];
@@ -1629,8 +2012,8 @@ function enrichDraftTitlesInBackground(
 }
 
 function createCandidateFromDraft(draft: LocalDetectedTripDraft): PhotoImportTripCandidate {
-  const start = draft.startDate.replaceAll('-', '.');
-  const end = draft.endDate.replaceAll('-', '.');
+  const start = formatCandidateCardDate(draft.startDate);
+  const end = formatCandidateCardDate(draft.endDate);
 
   return {
     city: draft.displayTitle,
@@ -1644,6 +2027,16 @@ function createCandidateFromDraft(draft: LocalDetectedTripDraft): PhotoImportTri
     initiallySelected: true,
     photoCount: draft.photoCount,
   };
+}
+
+function formatCandidateCardDate(dateKey: string) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+
+  if (!year || !month || !day) {
+    return dateKey.replaceAll('-', '.');
+  }
+
+  return `${year}.${month}.${day}`;
 }
 
 export async function hydrateLocalDetectedTripDraftCovers(
@@ -1914,6 +2307,7 @@ async function scanPhotoLibraryForTripDrafts(
       hiddenScreenshotCandidateCount: 0,
       hiddenTooFewRealPhotosCandidateCount: 0,
       hiddenWeakSingleDayCandidateCount: 0,
+      hiddenLowGpsPhotoCandidateCount: 0,
       oversizedCandidateSplitCount: 0,
       pageCount: 0,
       pendingEnrichmentCandidateCount: 0,
@@ -1988,7 +2382,11 @@ async function scanPhotoLibraryForTripDrafts(
   const skippedPhUriCount = photos.filter((photo) => (
     photo.assetUri?.startsWith('ph://') && !isRenderableImageUri(photo.displayUri)
   )).length;
-  const { drafts: nextDrafts, oversizedCandidateSplitCount } = splitPhotosIntoTripDrafts(candidatePhotos);
+  const {
+    drafts: nextDrafts,
+    oversizedCandidateSplitCount,
+    stats: candidateGenerationStats,
+  } = splitPhotosIntoTripDrafts(candidatePhotos);
 
   storeDrafts(nextDrafts);
   options.onProgress?.({
@@ -2030,6 +2428,24 @@ async function scanPhotoLibraryForTripDrafts(
   const hiddenWeakSingleDayCandidateCount = nextDrafts.filter(
     (draft) => getCandidateHiddenReasons(draft).includes('weak_single_day_candidate'),
   ).length;
+  const hiddenLowGpsPhotoCandidateCount = nextDrafts.filter(
+    (draft) => getCandidateHiddenReasons(draft).includes('low_gps_photo_count'),
+  ).length;
+  const hiddenWeakOneDayCandidateCount = nextDrafts.filter(
+    (draft) => getCandidateHiddenReasons(draft).includes('weak_one_day_candidate'),
+  ).length;
+  const hiddenSavedImageHeavyCandidateCount = nextDrafts.filter(
+    (draft) => getCandidateHiddenReasons(draft).includes('saved_image_heavy_candidate'),
+  ).length;
+  const hiddenTooFewCameraPhotosCandidateCount = nextDrafts.filter((draft) => (
+    getCandidateHiddenReasons(draft).some((reason) => (
+      reason === 'too_few_camera_photos_for_one_day' ||
+      reason === 'too_few_camera_photos_for_short_trip'
+    ))
+  )).length;
+  const hiddenWeakLongTripCandidateCount = nextDrafts.filter(
+    (draft) => getCandidateHiddenReasons(draft).includes('weak_long_trip_candidate'),
+  ).length;
   const pendingEnrichmentCandidateCount = nextDrafts.filter((draft) => (
     draft.debugMetadata.confidenceLevel !== 'low' &&
     draft.debugMetadata.gpsPhotoCount > 0 &&
@@ -2042,6 +2458,48 @@ async function scanPhotoLibraryForTripDrafts(
     isFiniteCoordinateValue(draft.debugMetadata.centroidLat) &&
     isFiniteCoordinateValue(draft.debugMetadata.centroidLng)
   )).length;
+  const candidateCountBeforeVisibilityFilter = nextDrafts.length;
+  const candidateCountAfterConfidenceFilter = nextDrafts.filter(
+    (draft) => !getCandidateHiddenReasons(draft).includes('confidence_low'),
+  ).length;
+  const candidateCountAfterGpsFilter = nextDrafts.filter((draft) => (
+    !getCandidateHiddenReasons(draft).some((reason) => (
+      reason === 'no_gps_for_title' ||
+      reason === 'invalid_centroid' ||
+      reason === 'low_gps_photo_count'
+    ))
+  )).length;
+  const candidateCountAfterRealPhotoFilter = nextDrafts.filter((draft) => (
+    !getCandidateHiddenReasons(draft).some((reason) => (
+      reason === 'too_few_real_photos' ||
+      reason === 'too_few_camera_photos_for_one_day' ||
+      reason === 'too_few_camera_photos_for_short_trip'
+    ))
+  )).length;
+  const candidateCountAfterSavedImageFilter = nextDrafts.filter(
+    (draft) => !getCandidateHiddenReasons(draft).includes('saved_image_heavy_candidate'),
+  ).length;
+  const candidateCountAfterOneDayStrictFilter = nextDrafts.filter((draft) => (
+    draft.debugMetadata.dayCount !== 1 ||
+    !getCandidateHiddenReasons(draft).some((reason) => (
+      reason === 'weak_one_day_candidate' ||
+      reason === 'too_static_one_day_candidate' ||
+      reason === 'likely_daily_event_not_trip'
+    ))
+  )).length;
+  const candidateCountAfterShortTripFilter = nextDrafts.filter((draft) => (
+    draft.debugMetadata.dayCount < 2 ||
+    draft.debugMetadata.dayCount >= LONG_TRIP_MIN_DAYS ||
+    !getCandidateHiddenReasons(draft).includes('too_few_camera_photos_for_short_trip')
+  )).length;
+  const oneDayVisibleCandidateCount = visibleDrafts.filter((draft) => draft.debugMetadata.dayCount === 1).length;
+  const shortTripVisibleCandidateCount = visibleDrafts.filter((draft) => (
+    draft.debugMetadata.dayCount >= 2 &&
+    draft.debugMetadata.dayCount < LONG_TRIP_MIN_DAYS
+  )).length;
+  const longTripVisibleCandidateCount = visibleDrafts.filter(
+    (draft) => draft.debugMetadata.dayCount >= LONG_TRIP_MIN_DAYS,
+  ).length;
 
   enrichDraftTitlesInBackground(nextDrafts, options.onCandidatesUpdated);
   options.onProgress?.({
@@ -2061,6 +2519,7 @@ async function scanPhotoLibraryForTripDrafts(
         displayTitle: draft.displayTitle,
         displayablePhotoCount: draft.debugMetadata.displayablePhotoCount,
         endDate: draft.debugMetadata.endDate,
+        gpsActiveDayCount: draft.debugMetadata.gpsActiveDayCount,
         gpsPhotoCount: draft.debugMetadata.gpsPhotoCount,
         centroidLat: draft.debugMetadata.centroidLat,
         centroidLng: draft.debugMetadata.centroidLng,
@@ -2073,12 +2532,16 @@ async function scanPhotoLibraryForTripDrafts(
         locationLabel: draft.locationLabel,
         enrichmentStatus: draft.enrichmentStatus,
         maxDistanceKm: draft.debugMetadata.maxDistanceKm,
+        mergedFromCandidateCount: draft.debugMetadata.mergedFromCandidateCount,
         noGpsPhotoCount: draft.debugMetadata.noGpsPhotoCount,
         photoCount: draft.debugMetadata.photoCount,
         realPhotoCount: draft.debugMetadata.realPhotoCount,
+        savedImageCount: draft.debugMetadata.savedImageCount,
+        savedImageRatio: draft.debugMetadata.savedImageRatio,
         screenshotPhotoCount: draft.debugMetadata.screenshotPhotoCount,
         splitReason: draft.debugMetadata.splitReason,
         startDate: draft.debugMetadata.startDate,
+        isLongTripCandidate: draft.debugMetadata.isLongTripCandidate,
         title: draft.title,
         warningReasons: draft.debugMetadata.warningReasons,
       });
@@ -2089,6 +2552,14 @@ async function scanPhotoLibraryForTripDrafts(
       assetsWithDisplayUriCount,
       assetsWithoutLocationCount,
       assetsWithoutDisplayUriCount,
+      candidateCountAfterConfidenceFilter,
+      candidateCountAfterGpsFilter,
+      candidateCountAfterLongTripMerge: candidateGenerationStats.candidateCountAfterLongTripMerge,
+      candidateCountAfterOneDayStrictFilter,
+      candidateCountAfterRealPhotoFilter,
+      candidateCountAfterSavedImageFilter,
+      candidateCountAfterShortTripFilter,
+      candidateCountBeforeVisibilityFilter,
       candidatesWithGpsCount,
       candidatesWithValidCentroidCount,
       candidatesShownWithPendingLocationCount: visibleDrafts.filter(
@@ -2097,28 +2568,51 @@ async function scanPhotoLibraryForTripDrafts(
       coverPhotoUrisRenderable: nextDrafts.map((draft) => isRenderableImageUri(draft.coverPhotoUri)),
       detectedTripCandidateCount: nextDrafts.length,
       generatedDraftIds: nextDrafts.map((draft) => draft.id),
+      hiddenSavedImageHeavyCandidateCount,
+      hiddenTooFewCameraPhotosCandidateCount,
       hiddenNoLocationTitleCandidateCount,
       hiddenLowConfidenceCandidateCount,
       hiddenScreenshotCandidateCount,
       hiddenTooFewRealPhotosCandidateCount,
       hiddenWeakSingleDayCandidateCount,
+      hiddenWeakOneDayCandidateCount,
+      hiddenWeakLongTripCandidateCount,
+      hiddenLowGpsPhotoCandidateCount,
+      initialRangeCandidateCount: candidateGenerationStats.initialRangeCandidateCount,
+      longTripCandidateCount: candidateGenerationStats.longTripCandidateCount,
+      longTripPostMergeCount: candidateGenerationStats.longTripPostMergeCount,
+      longTripVisibleCandidateCount,
+      oneDayCandidateCount: candidateGenerationStats.oneDayCandidateCount,
+      oneDayVisibleCandidateCount,
       oversizedCandidateSplitCount,
       pageCount,
       pendingEnrichmentCandidateCount,
       photosAfterScreenshotFilterCount,
       photosWithCoordinatesCount,
+      rawDateBucketCount: candidateGenerationStats.rawDateBucketCount,
       scannedAssetCount: photos.length,
+      shortTripCandidateCount: candidateGenerationStats.shortTripCandidateCount,
+      shortTripVisibleCandidateCount,
       skippedScreenshotCount,
       skippedPhUriCount,
+      splitByDateGapCount: candidateGenerationStats.splitByDateGapCount,
+      splitByDistanceCount: candidateGenerationStats.splitByDistanceCount,
+      splitByGpsMixedCount: candidateGenerationStats.splitByGpsMixedCount,
       totalAssetCount,
       visibleDetectedTripCandidateCount: candidates.length,
     });
     console.info('[photo-import enrichment] title phase scheduled', {
+      candidateCountAfterLongTripMerge: candidateGenerationStats.candidateCountAfterLongTripMerge,
       hiddenNoLocationTitleCandidateCount,
       hiddenLowConfidenceCandidateCount,
       hiddenScreenshotCandidateCount,
       hiddenTooFewRealPhotosCandidateCount,
       hiddenWeakSingleDayCandidateCount,
+      hiddenLowGpsPhotoCandidateCount,
+      hiddenSavedImageHeavyCandidateCount,
+      hiddenTooFewCameraPhotosCandidateCount,
+      hiddenWeakLongTripCandidateCount,
+      hiddenWeakOneDayCandidateCount,
       visibleDetectedTripCandidateCount: candidates.length,
     });
   }
@@ -2136,6 +2630,7 @@ async function scanPhotoLibraryForTripDrafts(
     hiddenScreenshotCandidateCount,
     hiddenTooFewRealPhotosCandidateCount,
     hiddenWeakSingleDayCandidateCount,
+    hiddenLowGpsPhotoCandidateCount,
     oversizedCandidateSplitCount,
     pageCount,
     pendingEnrichmentCandidateCount,

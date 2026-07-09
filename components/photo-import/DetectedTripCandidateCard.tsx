@@ -75,7 +75,12 @@ export default function DetectedTripCandidateCard({
               {country}
             </Text>
           </View>
-          <Text style={styles.dateRange} numberOfLines={1}>
+          <Text
+            adjustsFontSizeToFit
+            minimumFontScale={0.85}
+            style={styles.dateRange}
+            numberOfLines={1}
+          >
             {dateRange}
           </Text>
           <View style={styles.photoRow}>

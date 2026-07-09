@@ -25,6 +25,7 @@ export type PhotoImportCandidateSplitReason =
   | 'max_photos_exceeded'
   | 'distance_exceeded'
   | 'gps_mixed_with_no_gps'
+  | 'long_trip_post_merged'
   | 'final_chunk';
 
 export interface PhotoImportCandidateDebugMetadata {
@@ -34,8 +35,11 @@ export interface PhotoImportCandidateDebugMetadata {
   dayCount: number;
   photoCount: number;
   screenshotPhotoCount: number;
+  savedImageCount: number;
+  savedImageRatio: number;
   realPhotoCount: number;
   gpsPhotoCount: number;
+  gpsActiveDayCount: number;
   noGpsPhotoCount: number;
   displayablePhotoCount: number;
   locationClusterCount: number;
@@ -44,6 +48,8 @@ export interface PhotoImportCandidateDebugMetadata {
   maxDistanceKm: number;
   dateGapSplitCount: number;
   oversizedSplitCount: number;
+  mergedFromCandidateCount?: number;
+  isLongTripCandidate?: boolean;
   splitReason: PhotoImportCandidateSplitReason;
   confidenceScore: number;
   confidenceLevel: PhotoImportConfidenceLevel;
