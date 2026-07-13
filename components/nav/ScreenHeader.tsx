@@ -34,7 +34,9 @@ export default function ScreenHeader({
     return (
       <View style={[styles.header, styles.headerBalanced, style]}>
         <View style={[styles.balancedSideSlot, styles.balancedLeftSlot]}>
-          {onBackPress ? (
+          {leftSlot ? (
+            leftSlot
+          ) : onBackPress ? (
             <TouchableOpacity onPress={onBackPress} activeOpacity={0.75} style={styles.sideBtn}>
               <Image
                 source={require('../../assets/images/screenheader-back.png')}

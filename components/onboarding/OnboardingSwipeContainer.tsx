@@ -27,6 +27,7 @@ const SPRING_CONFIG = {
 const ONBOARDING_ROUTES = [
   { key: 'intro', href: '/onboarding' },
   { key: 'photo-library', href: '/onboarding/photo-library' },
+  { key: 'living-area', href: '/onboarding/living-area' },
   { key: 'analyzing', href: '/onboarding/analyzing' },
   { key: 'results', href: '/onboarding/results' },
 ] as const;

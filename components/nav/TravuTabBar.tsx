@@ -66,7 +66,7 @@ export default function TravuTabBar({ state, navigation }: BottomTabBarProps) {
 
   const openPhotoImportFlow = React.useCallback(() => {
     closeMenu();
-    router.push('/find-trips-loading' as Href);
+    router.push('/find-trips-start' as Href);
   }, [closeMenu, router]);
 
   const openManualTripFlow = React.useCallback(() => {

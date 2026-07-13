@@ -6,14 +6,15 @@ import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
+  TextInput,
   useWindowDimensions,
   View,
-  type DimensionValue,
   type GestureResponderEvent,
   type ImageSourcePropType,
   type StyleProp,
@@ -34,9 +35,11 @@ import PhotoAnalysisProgressSection from '@/components/photo-import/PhotoAnalysi
 import { FIGMA_IMAGES } from '@/constants/figmaImages';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
+import { usePrimaryLivingArea } from '@/hooks/usePrimaryLivingArea';
+import { searchLivingAreas, type LivingArea } from '@/services/location/livingAreas';
 import type { PhotoImportTripCandidate } from '@/services/photoImport/types';
 
-const STEPS = ['intro', 'photo-library', 'analyzing', 'results'] as const;
+const STEPS = ['intro', 'photo-library', 'living-area', 'analyzing', 'results'] as const;
 export type OnboardingStepKey = (typeof STEPS)[number];
 
 const SWIPE_WIDTH_RATIO = 0.28;
@@ -45,7 +48,6 @@ const EDGE_RESISTANCE = 0.32;
 const PAGE_MAX_WIDTH = 430;
 const DESIGN_WIDTH = 390;
 const DESIGN_HEIGHT = 844;
-const MOCK_ANALYSIS_PREVIEW_MS = 1800;
 const MOCK_SAVE_DELAY_MS = 650;
 const BACKGROUND = Colors.warm.white;
 const GREY_200 = '#C3C3C3';
@@ -66,6 +68,7 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const pageWidth = Math.min(windowWidth, PAGE_MAX_WIDTH);
+  const { saveLivingArea } = usePrimaryLivingArea();
   const {
     candidates,
     progress,
@@ -74,14 +77,18 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
     toggleCandidate,
     openPhotoImportResults,
     deferPhotoImportResults,
-    startPhotoImportAnalysis,
+    runPhotoImportDetection,
     saveSelectedPhotoImportResults,
     skipOnboarding,
   } = usePhotoImportFlow();
   const initialIndex = Math.max(0, STEPS.indexOf(initialStep));
   const [currentPage, setCurrentPage] = React.useState(initialIndex);
   const [isSaving, setIsSaving] = React.useState(false);
+  const [isSavingLivingArea, setIsSavingLivingArea] = React.useState(false);
+  const [onboardingLivingArea, setOnboardingLivingArea] = React.useState<LivingArea | null>(null);
+  const [skipLivingAreaForOnboardingScan, setSkipLivingAreaForOnboardingScan] = React.useState(false);
   const hasAutoAdvancedRef = React.useRef(false);
+  const hasStartedOnboardingScanRef = React.useRef(false);
   const translateX = useSharedValue(-initialIndex * pageWidth);
   const currentIndex = useSharedValue(initialIndex);
   const selectedCount = selectedCandidateIds.length;
@@ -106,25 +113,43 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
   }, [currentIndex, pageWidth, translateX]);
 
   React.useEffect(() => {
-    if (currentPage !== 2 || hasAutoAdvancedRef.current) {
+    if (currentPage !== 3 || hasAutoAdvancedRef.current) {
       return undefined;
     }
 
-    const timer = setTimeout(() => {
-      if (currentIndex.value !== 2 || hasAutoAdvancedRef.current) {
+    if (hasStartedOnboardingScanRef.current) {
+      return undefined;
+    }
+
+    hasStartedOnboardingScanRef.current = true;
+    runPhotoImportDetection({
+      livingArea: skipLivingAreaForOnboardingScan ? null : onboardingLivingArea,
+      source: 'onboarding',
+    }).then(() => {
+      if (currentIndex.value !== 3 || hasAutoAdvancedRef.current) {
         return;
       }
 
       hasAutoAdvancedRef.current = true;
       openPhotoImportResults();
-      animateToPage(3);
-    }, MOCK_ANALYSIS_PREVIEW_MS);
+      animateToPage(4);
+    }).catch((error) => {
+      console.warn('[onboarding photo import] scan failed', error);
+    });
 
-    return () => clearTimeout(timer);
-  }, [animateToPage, currentIndex, currentPage, openPhotoImportResults]);
+    return undefined;
+  }, [
+    animateToPage,
+    currentIndex,
+    currentPage,
+    onboardingLivingArea,
+    openPhotoImportResults,
+    runPhotoImportDetection,
+    skipLivingAreaForOnboardingScan,
+  ]);
 
   React.useEffect(() => {
-    if (currentPage === 3) {
+    if (currentPage === 4) {
       openPhotoImportResults();
     }
   }, [currentPage, openPhotoImportResults]);
@@ -134,16 +159,45 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
     animateToPage(2);
   }, [animateToPage]);
 
+  const handleSaveLivingArea = React.useCallback(async (area: LivingArea) => {
+    if (isSavingLivingArea) {
+      return;
+    }
+
+    setIsSavingLivingArea(true);
+
+    try {
+      await saveLivingArea(area);
+      setOnboardingLivingArea(area);
+      setSkipLivingAreaForOnboardingScan(false);
+      animateToPage(3);
+    } catch (error) {
+      console.warn('[onboarding living area] failed to save living area', error);
+      Alert.alert('생활 지역을 저장하지 못했어요', '잠시 후 다시 시도해주세요.');
+    } finally {
+      setIsSavingLivingArea(false);
+    }
+  }, [animateToPage, isSavingLivingArea, saveLivingArea]);
+
+  const handleSkipLivingArea = React.useCallback(() => {
+    if (isSavingLivingArea) {
+      return;
+    }
+
+    setOnboardingLivingArea(null);
+    setSkipLivingAreaForOnboardingScan(true);
+    animateToPage(3);
+  }, [animateToPage, isSavingLivingArea]);
+
   const handleSkip = React.useCallback(async () => {
     await skipOnboarding();
     router.replace('/(tabs)' as Href);
   }, [router, skipOnboarding]);
 
   const handleGoHome = React.useCallback(() => {
-    startPhotoImportAnalysis();
     deferPhotoImportResults();
     router.replace('/(tabs)' as Href);
-  }, [deferPhotoImportResults, router, startPhotoImportAnalysis]);
+  }, [deferPhotoImportResults, router]);
 
   const handleDeferResults = React.useCallback(() => {
     if (isSaving) {
@@ -236,6 +290,13 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
         onConnect={handleConnectPhotoLibrary}
         onSkip={handleSkip}
       />,
+      <LivingAreaPage
+        key="living-area"
+        bottomInset={insets.bottom}
+        isSaving={isSavingLivingArea}
+        onSave={handleSaveLivingArea}
+        onSkip={handleSkipLivingArea}
+      />,
       <AnalyzingPage
         key="analyzing"
         progress={progress}
@@ -259,9 +320,12 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
       handleDeferResults,
       handleGoHome,
       handleSave,
+      handleSaveLivingArea,
       handleSkip,
+      handleSkipLivingArea,
       insets.bottom,
       isSaving,
+      isSavingLivingArea,
       progress,
       scanProgress,
       selectedCandidateIds,
@@ -523,6 +587,189 @@ function PhotoLibraryPage({
   );
 }
 
+function LivingAreaPage({
+  bottomInset,
+  isSaving,
+  onSave,
+  onSkip,
+}: {
+  bottomInset: number;
+  isSaving: boolean;
+  onSave: (area: LivingArea) => void;
+  onSkip: () => void;
+}) {
+  const { width: windowWidth, height: pageHeight } = useWindowDimensions();
+  const pageWidth = Math.min(windowWidth, PAGE_MAX_WIDTH);
+  const layoutScale = Math.min(pageWidth / DESIGN_WIDTH, pageHeight / DESIGN_HEIGHT, 1);
+  const [query, setQuery] = React.useState('');
+  const [selectedArea, setSelectedArea] = React.useState<LivingArea | null>(null);
+  const debouncedQuery = useDebouncedValue(query, 350);
+  const results = React.useMemo(
+    () => searchLivingAreas(debouncedQuery),
+    [debouncedQuery],
+  );
+  const trimmedQuery = query.trim();
+  const canSubmit = Boolean(selectedArea) && !isSaving;
+  const bottomOffset = Math.max(bottomInset + 28, 36 * layoutScale);
+  const helperBottom = bottomOffset;
+  const skipBottom = bottomOffset + 24 * layoutScale;
+  const primaryBottom = bottomOffset + 60 * layoutScale;
+
+  const handleChangeQuery = React.useCallback((nextQuery: string) => {
+    setQuery(nextQuery);
+    setSelectedArea(null);
+  }, []);
+
+  const handleSelectArea = React.useCallback((area: LivingArea) => {
+    setSelectedArea(area);
+    setQuery(area.displayName);
+  }, []);
+
+  return (
+    <View style={styles.page}>
+      <View style={styles.contentLayer}>
+        <View
+          style={[
+            styles.livingAreaCopyBlock,
+            {
+              top: 220 * layoutScale,
+              left: 20 * layoutScale,
+              right: 20 * layoutScale,
+            },
+          ]}
+        >
+          <Text style={styles.livingAreaTitle}>
+            주로 생활하는 지역을{'\n'}알려주세요
+          </Text>
+          <Text style={styles.livingAreaDescription}>
+          주로 머무는 지역을 기준으로{'\n'}일상과 여행을 구분해드릴게요
+          </Text>
+        </View>
+
+        <View
+          style={[
+            styles.livingAreaForm,
+            {
+              top: 440 * layoutScale,
+              left: 20 * layoutScale,
+              right: 20 * layoutScale,
+            },
+          ]}
+        >
+          <Text style={styles.livingAreaFieldLabel}>주 생활 지역</Text>
+          <View style={styles.livingAreaSearchBox}>
+            <Feather name="search" size={18} color={Colors.foundation.grey600} />
+            <TextInput
+              value={query}
+              onChangeText={handleChangeQuery}
+              placeholder="도시 또는 지역 검색"
+              placeholderTextColor={Colors.foundation.grey500}
+              style={styles.livingAreaInput}
+              autoCorrect={false}
+              returnKeyType="search"
+              allowFontScaling={false}
+            />
+          </View>
+
+          {selectedArea ? (
+            <View style={styles.selectedLivingAreaPill}>
+              <Feather name="map-pin" size={14} color={Colors.foundation.black} />
+              <Text style={styles.selectedLivingAreaText} numberOfLines={1}>
+                {selectedArea.displayName}
+              </Text>
+            </View>
+          ) : null}
+
+          {!selectedArea && trimmedQuery.length >= 2 ? (
+            <View style={styles.livingAreaResults}>
+              {results.length > 0 ? (
+                results.map((area) => (
+                  <Pressable
+                    key={area.id}
+                    accessibilityRole="button"
+                    onPress={() => handleSelectArea(area)}
+                    style={({ pressed }) => [
+                      styles.livingAreaResultRow,
+                      pressed && styles.buttonPressed,
+                    ]}
+                  >
+                    <Feather name="map-pin" size={16} color={Colors.foundation.grey600} />
+                    <View style={styles.livingAreaResultTextBlock}>
+                      <Text style={styles.livingAreaResultTitle}>{area.displayName}</Text>
+                      <Text style={styles.livingAreaResultMeta}>
+                        {[area.administrativeArea, area.countryName].filter(Boolean).join(' · ')}
+                      </Text>
+                    </View>
+                    <Feather name="chevron-right" size={18} color={Colors.foundation.grey500} />
+                  </Pressable>
+                ))
+              ) : (
+                <Text style={styles.livingAreaEmptyText}>검색 결과가 없어요</Text>
+              )}
+            </View>
+          ) : null}
+
+          <Text style={styles.livingAreaHint}>정확한 주소는 필요하지 않아요</Text>
+          <View style={styles.livingAreaHelperInline}>
+            <Feather name="info" size={12} color={Colors.foundation.grey400} />
+            <Text style={styles.livingAreaHelperText}>
+              선택한 지역은 여행을 찾는 기준으로만 사용할게요
+            </Text>
+          </View>
+        </View>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="이 지역으로 설정"
+          disabled={!canSubmit}
+          onPress={() => {
+            if (selectedArea) {
+              onSave(selectedArea);
+            }
+          }}
+          style={({ pressed }) => [
+            styles.connectButton,
+            {
+              left: 35 * layoutScale,
+              right: 35 * layoutScale,
+              bottom: primaryBottom,
+            },
+            canSubmit ? styles.livingAreaButtonActive : styles.livingAreaButtonDisabled,
+            pressed && canSubmit && styles.buttonPressed,
+          ]}
+        >
+          {isSaving ? (
+            <View style={styles.livingAreaSavingContent}>
+              <ActivityIndicator size="small" color={Colors.foundation.white} />
+              <Text style={styles.connectButtonLabel}>저장 중</Text>
+            </View>
+          ) : (
+            <Text style={[styles.connectButtonLabel, !canSubmit && styles.livingAreaButtonLabelDisabled]}>
+              이 지역으로 설정
+            </Text>
+          )}
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="나중에 할게요"
+          disabled={isSaving}
+          hitSlop={8}
+          onPress={onSkip}
+          style={[styles.photoSkipButton, { bottom: skipBottom }]}
+        >
+          <Text style={styles.skipLabel}>나중에 할게요</Text>
+        </Pressable>
+
+        <View style={[styles.photoHelperRow, { bottom: helperBottom }]}>
+          <Feather name="info" size={12} color={Colors.foundation.grey400} />
+          <Text style={styles.helperText}>언제든 설정에서 수정할 수 있어요</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 function AnalyzingPage({
   progress,
   scanProgress,
@@ -539,24 +786,18 @@ function AnalyzingPage({
 
   return (
     <View style={styles.page}>
-      <Text style={styles.analyzingTitle}>지난 여행을 찾고 있어요</Text>
-      <Text style={styles.analyzingDescription}>
-        사진의 시간과 위치를 기준으로{'\n'}여행을 정리하고 있어요
-      </Text>
-      <View style={styles.onboardingAnalysisProgressSection}>
-        <PhotoAnalysisProgressSection
-          progress={displayProgress}
-          scannedAssetCount={scanProgress?.scannedAssetCount}
-          totalAssetCount={scanProgress?.totalAssetCount}
-        />
-      </View>
-
-      <View style={styles.progressCard}>
-        <ProgressRow state="completed" label="사진 시간 정보 확인" top="16.67%" />
-        <VerticalDashConnector active top="31.25%" />
-        <ProgressRow state="loading" label="촬영 위치 후보 정리" top="45.42%" />
-        <VerticalDashConnector active={false} top="60%" />
-        <ProgressRow state="pending" label="여행 후보 만들기" top="74.17%" />
+      <View style={styles.analyzingContent}>
+        <Text style={styles.analyzingTitle}>지난 여행을 찾고 있어요</Text>
+        <Text style={styles.analyzingDescription}>
+          사진의 시간과 위치를 기준으로{'\n'}여행을 정리하고 있어요
+        </Text>
+        <View style={styles.onboardingAnalysisProgressSection}>
+          <PhotoAnalysisProgressSection
+            progress={displayProgress}
+            scannedAssetCount={scanProgress?.scannedAssetCount}
+            totalAssetCount={scanProgress?.totalAssetCount}
+          />
+        </View>
       </View>
 
       <Pressable
@@ -703,9 +944,9 @@ function ResultsPage({
 function PageIndicator({ activeIndex }: { activeIndex: number }) {
   return (
     <View pointerEvents="none" style={styles.pageIndicator}>
-      {[0, 1, 2, 3].map((index) => (
+      {STEPS.map((step, index) => (
         <View
-          key={index}
+          key={step}
           style={[styles.pageDot, index === activeIndex && styles.pageDotActive]}
         />
       ))}
@@ -861,52 +1102,6 @@ function BackgroundPolaroidCard({
   );
 }
 
-function ProgressRow({
-  state,
-  label,
-  top,
-}: {
-  state: 'completed' | 'loading' | 'pending';
-  label: string;
-  top: DimensionValue;
-}) {
-  return (
-    <View style={[styles.progressRow, { top }]}>
-      <View style={styles.progressIconSlot}>
-        {state === 'completed' ? (
-          <View style={styles.completedIconCircle}>
-            <Feather name="check" size={14} color={Colors.foundation.white} />
-          </View>
-        ) : null}
-        {state === 'loading' ? <ActivityIndicator size={20} color={Colors.foundation.black} /> : null}
-        {state === 'pending' ? <PendingCheckIcon /> : null}
-      </View>
-      <Text style={[styles.progressLabel, state === 'pending' && styles.progressLabelPending]}>
-        {label}
-      </Text>
-    </View>
-  );
-}
-
-function PendingCheckIcon() {
-  return (
-    <View style={styles.pendingIconCircle}>
-      <View style={styles.pendingIconRing} />
-      <View style={styles.pendingIconCheck} />
-    </View>
-  );
-}
-
-function VerticalDashConnector({ active, top }: { active: boolean; top: DimensionValue }) {
-  return (
-    <View style={[styles.dashConnector, { top }]}>
-      {[0, 1, 2, 3].map((dash) => (
-        <View key={dash} style={[styles.dash, active ? styles.dashActive : styles.dashPending]} />
-      ))}
-    </View>
-  );
-}
-
 function ResultTripCard({
   city,
   country,
@@ -989,6 +1184,20 @@ function wait(ms: number) {
   });
 }
 
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [debouncedValue, setDebouncedValue] = React.useState(value);
+
+  React.useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delayMs);
+
+    return () => clearTimeout(timeoutId);
+  }, [delayMs, value]);
+
+  return debouncedValue;
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
@@ -1033,13 +1242,13 @@ const styles = StyleSheet.create({
     top: 88,
     left: '50%',
     zIndex: 10,
-    width: 108,
+    width: 140,
     height: 12,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     gap: 20,
-    transform: [{ translateX: -54 }],
+    transform: [{ translateX: -70 }],
   },
   pageDot: {
     width: 12,
@@ -1301,9 +1510,144 @@ const styles = StyleSheet.create({
     color: Colors.foundation.grey400,
     letterSpacing: 0,
   },
+  livingAreaCopyBlock: {
+    position: 'absolute',
+  },
+  livingAreaTitle: {
+    width: 300,
+    ...Typography.title1,
+    color: Colors.foundation.black,
+    letterSpacing: 0,
+  },
+  livingAreaDescription: {
+    marginTop: Spacing.md,
+    maxWidth: 320,
+    ...Typography.body1Regular,
+    color: GREY_700,
+    letterSpacing: 0,
+  },
+  livingAreaForm: {
+    position: 'absolute',
+    gap: Spacing.sm,
+  },
+  livingAreaFieldLabel: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+    letterSpacing: 0,
+  },
+  livingAreaSearchBox: {
+    height: 56,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: Colors.light.borderDefault,
+    backgroundColor: Colors.foundation.white,
+    paddingHorizontal: Spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  livingAreaInput: {
+    flex: 1,
+    minWidth: 0,
+    height: '100%',
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.black,
+    textAlignVertical: 'center',
+  },
+  selectedLivingAreaPill: {
+    minHeight: 36,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.foundation.white,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    alignSelf: 'flex-start',
+  },
+  selectedLivingAreaText: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.black,
+    letterSpacing: 0,
+  },
+  livingAreaResults: {
+    maxHeight: 180,
+    borderRadius: Radius.sm,
+    overflow: 'hidden',
+    backgroundColor: Colors.foundation.white,
+  },
+  livingAreaResultRow: {
+    minHeight: 52,
+    paddingHorizontal: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.borderDefault,
+  },
+  livingAreaResultTextBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  livingAreaResultTitle: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.black,
+    letterSpacing: 0,
+  },
+  livingAreaResultMeta: {
+    marginTop: 2,
+    ...Typography.captionRegular,
+    color: Colors.foundation.grey600,
+    letterSpacing: 0,
+  },
+  livingAreaEmptyText: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.lg,
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey500,
+    textAlign: 'center',
+    letterSpacing: 0,
+  },
+  livingAreaHint: {
+    marginTop: Spacing.sm,
+    ...Typography.captionEmphasized,
+    color: Colors.foundation.grey600,
+    letterSpacing: 0,
+  },
+  livingAreaHelperInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  livingAreaHelperText: {
+    ...Typography.captionRegular,
+    color: Colors.foundation.grey400,
+    letterSpacing: 0,
+  },
+  livingAreaButtonActive: {
+    backgroundColor: Colors.foundation.black,
+  },
+  livingAreaButtonDisabled: {
+    borderWidth: 1,
+    borderColor: Colors.light.borderDefault,
+    backgroundColor: Colors.foundation.white,
+  },
+  livingAreaButtonLabelDisabled: {
+    color: Colors.light.textDisabled,
+  },
+  livingAreaSavingContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+  },
+  analyzingContent: {
+    ...StyleSheet.absoluteFillObject,
+  },
   analyzingTitle: {
     position: 'absolute',
-    top: 181,
+    top: 200,
     left: 0,
     right: 0,
     ...Typography.title1,
@@ -1313,7 +1657,7 @@ const styles = StyleSheet.create({
   },
   analyzingDescription: {
     position: 'absolute',
-    top: 237,
+    top: 256,
     left: 0,
     right: 0,
     ...Typography.body1Regular,
@@ -1323,92 +1667,10 @@ const styles = StyleSheet.create({
   },
   onboardingAnalysisProgressSection: {
     position: 'absolute',
-    top: 306,
+    top: 360,
     left: 0,
     right: 0,
     alignItems: 'center',
-  },
-  progressCard: {
-    position: 'absolute',
-    top: 428,
-    left: '50%',
-    width: 300,
-    height: 200,
-    marginLeft: -150,
-    borderRadius: Radius.sm,
-    backgroundColor: Colors.foundation.white,
-  },
-  progressRow: {
-    position: 'absolute',
-    left: '9.33%',
-    height: 22,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 22,
-  },
-  progressIconSlot: {
-    width: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  completedIconCircle: {
-    width: 20,
-    height: 20,
-    borderRadius: Radius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.foundation.black,
-  },
-  pendingIconCircle: {
-    width: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pendingIconRing: {
-    width: 16.67,
-    height: 16.67,
-    borderRadius: Radius.full,
-    borderWidth: 1.5,
-    borderColor: Colors.foundation.grey300,
-  },
-  pendingIconCheck: {
-    position: 'absolute',
-    left: 6,
-    top: 6.25,
-    width: 8.33,
-    height: 5.83,
-    borderLeftWidth: 1.5,
-    borderBottomWidth: 1.5,
-    borderColor: Colors.foundation.grey300,
-    transform: [{ rotate: '-45deg' }],
-  },
-  progressLabel: {
-    ...Typography.body1Emphasized,
-    color: Colors.foundation.black,
-    letterSpacing: 0,
-  },
-  progressLabelPending: {
-    color: Colors.foundation.grey300,
-  },
-  dashConnector: {
-    position: 'absolute',
-    left: '12.33%',
-    width: 2,
-    height: '9.17%',
-    gap: 2,
-  },
-  dash: {
-    width: 2,
-    height: 4,
-    borderRadius: Radius.xs,
-  },
-  dashActive: {
-    backgroundColor: Colors.foundation.black,
-  },
-  dashPending: {
-    backgroundColor: Colors.foundation.grey400,
   },
   homePreviewButton: {
     position: 'absolute',

@@ -1,8 +1,8 @@
 import { Feather } from '@expo/vector-icons';
-import { type Href, useRouter } from 'expo-router';
+import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
@@ -17,6 +17,7 @@ const GREY_700 = '#595959';
 
 export default function FindTripsLoading() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ skipLivingArea?: string; source?: string }>();
   const insets = useSafeAreaInsets();
   const {
     status,
@@ -52,8 +53,11 @@ export default function FindTripsLoading() {
 
   const startDetection = React.useCallback(() => {
     hasStartedRef.current = true;
-    runPhotoImportDetection().then(routeDetectionResult).catch(() => undefined);
-  }, [routeDetectionResult, runPhotoImportDetection]);
+    runPhotoImportDetection({
+      livingArea: params.skipLivingArea === 'true' ? null : undefined,
+      source: params.source === 'onboarding' ? 'onboarding' : 'home',
+    }).then(routeDetectionResult).catch(() => undefined);
+  }, [params.skipLivingArea, params.source, routeDetectionResult, runPhotoImportDetection]);
 
   React.useEffect(() => {
     if (hasStartedRef.current) {
@@ -86,7 +90,6 @@ export default function FindTripsLoading() {
     deferPhotoImportResults();
     router.replace('/(tabs)' as Href);
   }, [deferPhotoImportResults, router]);
-
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar style="dark" />
@@ -123,14 +126,6 @@ export default function FindTripsLoading() {
             </View>
           </View>
 
-          <View style={styles.progressCard}>
-            <ProgressRow state="completed" label="사진 시간 정보 확인" top="16.67%" />
-            <DashConnector active top="31.25%" />
-            <ProgressRow state="loading" label="촬영 위치 후보 정리" top="45.42%" />
-            <DashConnector active={false} top="60%" />
-            <ProgressRow state="pending" label="여행 후보 만들기" top="74.17%" />
-          </View>
-
           <View style={[styles.helperRow, { bottom: Math.max(insets.bottom + 88, 112) }]}>
             <Feather name="info" size={12} color={Colors.foundation.grey400} />
             <Text style={styles.helperText}>홈으로 돌아가도 분석은 계속됩니다</Text>
@@ -150,54 +145,6 @@ export default function FindTripsLoading() {
         <Text style={styles.homeLinkText}>홈 화면으로 돌아가기</Text>
       </Pressable>
     </SafeAreaView>
-  );
-}
-
-function ProgressRow({
-  state,
-  label,
-  top,
-}: {
-  state: 'completed' | 'loading' | 'pending';
-  label: string;
-  top: `${number}%`;
-}) {
-  return (
-    <View style={[styles.progressRow, { top }]}>
-      <View style={styles.progressIconSlot}>
-        {state === 'completed' ? (
-          <View style={styles.completedIcon}>
-            <Feather name="check" size={14} color={Colors.foundation.white} />
-          </View>
-        ) : null}
-        {state === 'loading' ? (
-          <ActivityIndicator size={20} color={Colors.foundation.black} />
-        ) : null}
-        {state === 'pending' ? <PendingCheckIcon /> : null}
-      </View>
-      <Text style={[styles.progressLabel, state === 'pending' && styles.progressLabelPending]}>
-        {label}
-      </Text>
-    </View>
-  );
-}
-
-function DashConnector({ active, top }: { active: boolean; top: `${number}%` }) {
-  return (
-    <View style={[styles.dashConnector, { top }]}>
-      {[0, 1, 2, 3].map((dash) => (
-        <View key={dash} style={[styles.dash, active ? styles.dashActive : styles.dashPending]} />
-      ))}
-    </View>
-  );
-}
-
-function PendingCheckIcon() {
-  return (
-    <View style={styles.pendingIcon}>
-      <View style={styles.pendingIconRing} />
-      <View style={styles.pendingIconCheck} />
-    </View>
   );
 }
 
@@ -230,88 +177,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   analysisProgressSection: {
-    marginTop: 40,
+    marginTop: 44,
     alignItems: 'center',
-  },
-  progressCard: {
-    position: 'absolute',
-    top: 430,
-    alignSelf: 'center',
-    width: 300,
-    height: 200,
-    borderRadius: Radius.sm,
-    backgroundColor: Colors.foundation.white,
-  },
-  progressRow: {
-    position: 'absolute',
-    left: '9.33%',
-    height: 22,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 22,
-  },
-  progressIconSlot: {
-    width: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  completedIcon: {
-    width: 20,
-    height: 20,
-    borderRadius: Radius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.foundation.black,
-  },
-  progressLabel: {
-    ...Typography.body1Emphasized,
-    color: Colors.foundation.black,
-  },
-  progressLabelPending: {
-    color: Colors.foundation.grey300,
-  },
-  dashConnector: {
-    position: 'absolute',
-    left: '12.33%',
-    width: 2,
-    height: '9.17%',
-    gap: 2,
-  },
-  dash: {
-    width: 2,
-    height: 4,
-    borderRadius: Radius.xs,
-  },
-  dashActive: {
-    backgroundColor: Colors.foundation.black,
-  },
-  dashPending: {
-    backgroundColor: Colors.foundation.grey400,
-  },
-  pendingIcon: {
-    width: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pendingIconRing: {
-    width: 16.67,
-    height: 16.67,
-    borderRadius: Radius.full,
-    borderWidth: 1.5,
-    borderColor: Colors.foundation.grey300,
-  },
-  pendingIconCheck: {
-    position: 'absolute',
-    left: 6,
-    top: 6.25,
-    width: 8.33,
-    height: 5.83,
-    borderLeftWidth: 1.5,
-    borderBottomWidth: 1.5,
-    borderColor: Colors.foundation.grey300,
-    transform: [{ rotate: '-45deg' }],
   },
   homeLink: {
     position: 'absolute',

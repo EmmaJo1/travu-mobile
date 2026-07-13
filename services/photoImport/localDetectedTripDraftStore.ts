@@ -3,9 +3,14 @@ import * as Location from 'expo-location';
 import * as MediaLibrary from 'expo-media-library';
 import type { ImageSourcePropType } from 'react-native';
 
+import type { LivingArea } from '@/services/location/livingAreas';
 import type {
   PhotoImportCandidateDebugMetadata,
+  PhotoImportOverseasTitleSource,
+  PhotoImportCandidateQualityType,
   PhotoImportCandidateSplitReason,
+  PhotoImportCandidateTitleCoordinateSource,
+  PhotoImportCandidateTitleLocationSource,
   PhotoImportConfidenceLevel,
   PhotoImportTripCandidate,
 } from '@/services/photoImport/types';
@@ -30,8 +35,14 @@ const MIN_VISIBLE_GPS_PHOTOS = 5;
 const MIN_SINGLE_DAY_DISTANCE_KM = 3;
 const LONG_TRIP_MIN_DAYS = 8;
 const LONG_TRIP_MAX_DAYS = 45;
+const LONG_STAY_MIN_DAYS = 15;
+const LONG_STAY_MAX_DAYS = 90;
 const LONG_TRIP_MERGE_MAX_GAP_DAYS = 5;
 const LONG_TRIP_MERGE_MAX_CENTROID_DISTANCE_KM = 2500;
+const REPEATED_LOCAL_CLUSTER_GRID_DEGREES = 0.05;
+const REPEATED_LOCAL_CLUSTER_HIDE_COUNT = 5;
+const REPEATED_LOCAL_EVENT_HIDE_COUNT = 3;
+const REPEATED_LOCAL_LOW_COUNT = 2;
 const SAVED_IMAGE_HEAVY_RATIO = 0.5;
 const MOSTLY_SCREENSHOT_RATIO = 0.5;
 const CONFIDENCE_HIGH_THRESHOLD = 70;
@@ -44,6 +55,9 @@ const UNKNOWN_LOCATION_LABEL = '\uC704\uCE58 \uC815\uBCF4 \uC5C6\uB294 \uC0AC\uC
 const LOCATED_PHOTO_LABEL = '\uC704\uCE58 \uADF8\uB8F9';
 const DETECTED_TRIP_TITLE = '\uC0AC\uC9C4\uCCA9 \uC5EC\uD589 \uD6C4\uBCF4';
 const PENDING_LOCATION_TITLE = '\uC9C0\uC5ED \uD655\uC778 \uC911';
+const LOCATION_BASED_TRIP_TITLE = '\uC704\uCE58 \uAE30\uBC18 \uC5EC\uD589';
+const OVERSEAS_TRIP_TITLE = '\uD574\uC678 \uC5EC\uD589';
+const UNRESOLVED_REGION_TITLE = '\uC9C0\uC5ED \uBBF8\uD655\uC778 \uC5EC\uD589';
 const SAFE_PLACEHOLDER_IMAGE_URI =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const COVER_HYDRATION_MAX_ASSETS_PER_CANDIDATE = 5;
@@ -52,8 +66,10 @@ const COVER_HYDRATION_DELAY_MS = 400;
 const COVER_HYDRATION_TIMEOUT_MS = 4000;
 const DETAIL_HYDRATION_MAX_PHOTOS_PER_GROUP = 3;
 const DETAIL_HYDRATION_MAX_TOTAL_PHOTOS = 15;
-const INITIAL_REVERSE_GEOCODE_CANDIDATE_LIMIT = 20;
+const TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT = 50;
 const REVERSE_GEOCODE_DELAY_MS = 400;
+const PENDING_TITLE_MAX_AGE_MS = 20000;
+const LIVING_AREA_EXCLUSION_RADIUS_KM = 15;
 const WEEKDAY_LABELS = ['\uC77C', '\uC6D4', '\uD654', '\uC218', '\uBAA9', '\uAE08', '\uD1A0'] as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -92,6 +108,8 @@ export interface LocalDetectedPlaceGroup {
   longitude?: number;
   centroidLat?: number;
   centroidLng?: number;
+  groupDisplayName?: string;
+  groupLocationLabel?: string;
 }
 
 export interface LocalDetectedTripDraftDay {
@@ -119,7 +137,14 @@ export interface LocalDetectedTripDraft {
   coverAssetId?: string;
   debugMetadata: PhotoImportCandidateDebugMetadata;
   displayTitle: string;
-  enrichmentStatus: 'pending' | 'success' | 'failed' | 'rate_limited';
+  enrichmentStatus:
+    | 'pending'
+    | 'pending_background'
+    | 'success'
+    | 'failed'
+    | 'rate_limited'
+    | 'skipped'
+    | 'finalized_without_label';
   fallbackTitle: string;
   locationLabel?: string;
   regionLabel?: string;
@@ -153,6 +178,11 @@ export interface PhotoLibraryScanResult {
   hiddenTooFewRealPhotosCandidateCount: number;
   hiddenWeakSingleDayCandidateCount: number;
   hiddenLowGpsPhotoCandidateCount: number;
+  duplicateCandidateCount: number;
+  livingAreaApplied: boolean;
+  livingAreaDisplayName?: string;
+  livingAreaExcludedPhotoCount: number;
+  livingAreaUnclassifiedPhotoCount: number;
   pendingEnrichmentCandidateCount: number;
   photosAfterScreenshotFilterCount: number;
   drafts: LocalDetectedTripDraft[];
@@ -162,9 +192,11 @@ export interface PhotoLibraryScanResult {
 
 interface PhotoLibraryScanOptions {
   createdAfter?: Date | number;
+  livingArea?: LivingArea | null;
   pageSize?: number;
   onProgress?: (progress: PhotoLibraryScanProgress) => void;
   onCandidatesUpdated?: (candidates: PhotoImportTripCandidate[]) => void;
+  source?: 'home' | 'onboarding';
 }
 
 type PickedPhotoAsset = ImagePicker.ImagePickerAsset;
@@ -175,6 +207,12 @@ type ReverseGeocodeResult = {
   failed: boolean;
   label: string | null;
   rateLimited: boolean;
+};
+
+type DetectedTripDisplayTitleResult = {
+  displayTitle: string;
+  overseasTitleSource?: PhotoImportOverseasTitleSource;
+  reason: string;
 };
 
 interface CandidatePhotoChunk {
@@ -198,6 +236,7 @@ interface CandidateGenerationStats {
 }
 
 const drafts = new Map<string, LocalDetectedTripDraft>();
+const processedCandidateFingerprints = new Set<string>();
 const assetDisplayUriCache = new Map<string, Promise<string | null>>();
 const coverHydrationFailedDraftIds = new Set<string>();
 const coverHydrationInFlightDraftIds = new Set<string>();
@@ -644,6 +683,102 @@ function getPhotoCoordinates(photo: LocalDetectedPhoto) {
     : null;
 }
 
+function isPhotoInsideLivingArea(photo: LocalDetectedPhoto, livingArea?: LivingArea | null) {
+  if (!livingArea || !isFiniteCoordinateValue(livingArea.latitude) || !isFiniteCoordinateValue(livingArea.longitude)) {
+    return false;
+  }
+
+  const coordinates = getPhotoCoordinates(photo);
+
+  if (!coordinates) {
+    return false;
+  }
+
+  const distanceKm = getDistanceMeters(coordinates, {
+    latitude: livingArea.latitude,
+    longitude: livingArea.longitude,
+  }) / 1000;
+
+  return distanceKm <= LIVING_AREA_EXCLUSION_RADIUS_KM;
+}
+
+function filterPhotosByLivingArea(photos: LocalDetectedPhoto[], livingArea?: LivingArea | null) {
+  if (!livingArea) {
+    return {
+      excludedPhotoCount: 0,
+      photos,
+      unclassifiedPhotoCount: 0,
+    };
+  }
+
+  let excludedPhotoCount = 0;
+  let unclassifiedPhotoCount = 0;
+  const filteredPhotos: LocalDetectedPhoto[] = [];
+
+  for (const photo of photos) {
+    if (!getPhotoCoordinates(photo)) {
+      unclassifiedPhotoCount += 1;
+      filteredPhotos.push(photo);
+      continue;
+    }
+
+    if (isPhotoInsideLivingArea(photo, livingArea)) {
+      excludedPhotoCount += 1;
+      continue;
+    }
+
+    filteredPhotos.push(photo);
+  }
+
+  return {
+    excludedPhotoCount,
+    photos: filteredPhotos,
+    unclassifiedPhotoCount,
+  };
+}
+
+function createCandidateFingerprint(draft: LocalDetectedTripDraft) {
+  const assetIds = draft.days
+    .flatMap((day) => day.groups)
+    .flatMap((group) => group.photos)
+    .map((photo) => photo.assetId ?? photo.id)
+    .filter(Boolean)
+    .sort()
+    .join(',');
+  const centroidKey = isFiniteCoordinateValue(draft.centroidLat) && isFiniteCoordinateValue(draft.centroidLng)
+    ? `${draft.centroidLat.toFixed(2)},${draft.centroidLng.toFixed(2)}`
+    : 'no-centroid';
+
+  return [
+    draft.startDate,
+    draft.endDate,
+    centroidKey,
+    assetIds,
+  ].join('|');
+}
+
+function filterDuplicateCandidateDrafts(draftsToFilter: LocalDetectedTripDraft[]) {
+  const uniqueDrafts: LocalDetectedTripDraft[] = [];
+  let duplicateCandidateCount = 0;
+
+  for (const draft of draftsToFilter) {
+    const fingerprint = createCandidateFingerprint(draft);
+
+    if (processedCandidateFingerprints.has(fingerprint)) {
+      duplicateCandidateCount += 1;
+      continue;
+    }
+
+    processedCandidateFingerprints.add(fingerprint);
+    uniqueDrafts.push(draft);
+  }
+
+  return {
+    duplicateCandidateCount,
+    drafts: uniqueDrafts,
+  };
+}
+
 function calculateCentroid(photos: LocalDetectedPhoto[]) {
   const locatedPhotos = photos.filter((photo) => (
     isFiniteCoordinateValue(photo.latitude) && isFiniteCoordinateValue(photo.longitude)
@@ -700,6 +835,10 @@ function createLocationLabel(address?: Location.LocationGeocodedAddress | null) 
   return parts.slice(0, 2).join(' ') || null;
 }
 
+function getAddressCountry(address?: Location.LocationGeocodedAddress | null) {
+  return normalizeRegionPart(address?.country)?.toLowerCase() ?? '';
+}
+
 function normalizeKoreanRegionName(value?: string | null) {
   const normalized = normalizeRegionPart(value)
     ?.replace(/특별자치시|특별자치도|특별시|광역시|자치구|시|군|구$/u, '')
@@ -735,7 +874,7 @@ function getAddressParts(address?: Location.LocationGeocodedAddress | null, loca
 function buildDomesticDisplayTitle(
   address?: Location.LocationGeocodedAddress | null,
   locationLabel?: string | null,
-) {
+): DetectedTripDisplayTitleResult {
   const parts = getAddressParts(address, locationLabel);
   const hasSeoul = parts.some((part) => /서울/u.test(part));
 
@@ -779,27 +918,173 @@ function buildDomesticDisplayTitle(
 function buildOverseasDisplayTitle(
   address?: Location.LocationGeocodedAddress | null,
   locationLabel?: string | null,
-) {
-  const city = normalizeRegionPart(address?.city);
-  const fallbackPart = locationLabel?.split(/\s+/u).map(normalizeRegionPart).find(Boolean);
-  const titleCore = city ?? fallbackPart;
+  latitude?: number,
+  longitude?: number,
+): DetectedTripDisplayTitleResult {
+  const majorCity = getMajorOverseasCityTitle(address, locationLabel, latitude, longitude);
+  const city = normalizeOverseasCityName(normalizeRegionPart(address?.city));
+  const subregion = normalizeOverseasCityName(normalizeRegionPart(address?.subregion));
+  const region = normalizeOverseasCityName(normalizeRegionPart(address?.region));
+  const fallbackPart = locationLabel?.split(/\s+/u).map((part) => (
+    normalizeOverseasCityName(normalizeRegionPart(part))
+  )).find(Boolean);
+  const titleCore = majorCity?.titleCore ?? city ?? subregion ?? region ?? fallbackPart;
+  const overseasTitleSource = majorCity?.source ?? (
+    city ? 'placemark_city' : titleCore ? 'region_fallback' : 'country_fallback'
+  );
 
   return titleCore
-    ? { displayTitle: `${titleCore} 여행`, reason: 'overseas_city' }
-    : { displayTitle: PENDING_LOCATION_TITLE, reason: 'pending_location' };
+    ? {
+      displayTitle: `${titleCore} 여행`,
+      overseasTitleSource,
+      reason: overseasTitleSource === 'placemark_city' ? 'overseas_city' : overseasTitleSource,
+    }
+    : {
+      displayTitle: PENDING_LOCATION_TITLE,
+      overseasTitleSource: 'country_fallback' as const,
+      reason: 'pending_location',
+    };
+}
+
+function normalizeOverseasCityName(value?: string | null) {
+  const trimmed = value?.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const normalized = trimmed
+    .replace(/\s+\d+(?:st|nd|rd|th)?\s+Arr\.?$/i, '')
+    .replace(/\s+Arrondissement$/i, '')
+    .replace(/\s+Centro\s+Storico$/i, '')
+    .replace(/\s+County$/i, '')
+    .replace(/\s+City\s+Council$/i, '')
+    .trim();
+
+  return normalized || trimmed;
+}
+
+function isCoordinateInsideBox(
+  latitude: number | undefined,
+  longitude: number | undefined,
+  box: { maxLat: number; maxLng: number; minLat: number; minLng: number },
+) {
+  return (
+    isFiniteCoordinateValue(latitude) &&
+    isFiniteCoordinateValue(longitude) &&
+    latitude >= box.minLat &&
+    latitude <= box.maxLat &&
+    longitude >= box.minLng &&
+    longitude <= box.maxLng
+  );
+}
+
+function getMajorCityByCoordinate(
+  latitude?: number,
+  longitude?: number,
+): { source: PhotoImportOverseasTitleSource; titleCore: string } | null {
+  if (isCoordinateInsideBox(latitude, longitude, {
+    minLat: -34.2,
+    maxLat: -33.4,
+    minLng: 150.5,
+    maxLng: 151.5,
+  })) {
+    return { source: 'major_city_bbox', titleCore: 'Sydney' };
+  }
+
+  if (isCoordinateInsideBox(latitude, longitude, {
+    minLat: 48.7,
+    maxLat: 49.05,
+    minLng: 2.1,
+    maxLng: 2.65,
+  })) {
+    return { source: 'major_city_bbox', titleCore: 'Paris' };
+  }
+
+  if (isCoordinateInsideBox(latitude, longitude, {
+    minLat: 45.35,
+    maxLat: 45.6,
+    minLng: 9.0,
+    maxLng: 9.35,
+  })) {
+    return { source: 'major_city_bbox', titleCore: 'Milan' };
+  }
+
+  if (isCoordinateInsideBox(latitude, longitude, {
+    minLat: 35.45,
+    maxLat: 35.9,
+    minLng: 139.45,
+    maxLng: 140.05,
+  })) {
+    return { source: 'major_city_bbox', titleCore: 'Tokyo' };
+  }
+
+  return null;
+}
+
+function getMajorCityByAddress(
+  address?: Location.LocationGeocodedAddress | null,
+  locationLabel?: string | null,
+): { source: PhotoImportOverseasTitleSource; titleCore: string } | null {
+  const normalizedParts = [
+    address?.city,
+    address?.district,
+    address?.subregion,
+    address?.region,
+    locationLabel,
+  ]
+    .map((part) => normalizeRegionPart(part)?.toLowerCase())
+    .filter((part): part is string => Boolean(part));
+  const combined = normalizedParts.join(' ');
+  const country = getAddressCountry(address);
+
+  if (
+    country === 'australia' &&
+    /sydney|willoughby|chatswood|north sydney|bondi|surry hills/u.test(combined)
+  ) {
+    return { source: 'major_city_alias', titleCore: 'Sydney' };
+  }
+
+  if (/paris|île-de-france|ile-de-france|arr\./u.test(combined)) {
+    return { source: 'major_city_alias', titleCore: 'Paris' };
+  }
+
+  if (/milan|milano|centro storico/u.test(combined)) {
+    return { source: 'major_city_alias', titleCore: 'Milan' };
+  }
+
+  if (/tokyo/u.test(combined)) {
+    return { source: 'major_city_alias', titleCore: 'Tokyo' };
+  }
+
+  return null;
+}
+
+function getMajorOverseasCityTitle(
+  address?: Location.LocationGeocodedAddress | null,
+  locationLabel?: string | null,
+  latitude?: number,
+  longitude?: number,
+) {
+  return (
+    getMajorCityByCoordinate(latitude, longitude) ??
+    getMajorCityByAddress(address, locationLabel)
+  );
 }
 
 function buildDetectedTripDisplayTitle(
   address?: Location.LocationGeocodedAddress | null,
   locationLabel?: string | null,
-) {
+  latitude?: number,
+  longitude?: number,
+): DetectedTripDisplayTitleResult {
   if (!locationLabel) {
     return { displayTitle: PENDING_LOCATION_TITLE, reason: 'pending_location' };
   }
 
   return isKoreanAddress(address, locationLabel)
     ? buildDomesticDisplayTitle(address, locationLabel)
-    : buildOverseasDisplayTitle(address, locationLabel);
+    : buildOverseasDisplayTitle(address, locationLabel, latitude, longitude);
 }
 
 function getReverseGeocodeCacheKey(latitude: number, longitude: number) {
@@ -885,6 +1170,239 @@ function addWarningReason(draft: LocalDetectedTripDraft, reason: string) {
   draft.debugMetadata.warningReasons.push(reason);
 }
 
+function isLocatedPhotoGroup(group: LocalDetectedPlaceGroup) {
+  return (
+    isFiniteCoordinateValue(group.centroidLat) &&
+    isFiniteCoordinateValue(group.centroidLng)
+  ) || group.photos.some((photo) => Boolean(getPhotoCoordinates(photo)));
+}
+
+function isResolvedLocatedGroupLabel(label?: string | null) {
+  const trimmed = label?.trim();
+
+  return Boolean(
+    trimmed &&
+    trimmed !== UNKNOWN_LOCATION_LABEL &&
+    !trimmed.startsWith(LOCATED_PHOTO_LABEL),
+  );
+}
+
+function getLocatedGroups(draft: LocalDetectedTripDraft) {
+  return draft.days
+    .flatMap((day) => day.groups)
+    .filter(isLocatedPhotoGroup);
+}
+
+function getGroupTitleCoordinates(group?: LocalDetectedPlaceGroup): {
+  latitude: number;
+  longitude: number;
+  usedRepresentativeGps: boolean;
+} | null {
+  if (!group) {
+    return null;
+  }
+
+  if (
+    isFiniteCoordinateValue(group.centroidLat) &&
+    isFiniteCoordinateValue(group.centroidLng)
+  ) {
+    return {
+      latitude: group.centroidLat,
+      longitude: group.centroidLng,
+      usedRepresentativeGps: false,
+    };
+  }
+
+  const representativePhoto = group.photos.find((photo) => Boolean(getPhotoCoordinates(photo)));
+
+  const coordinates = representativePhoto ? getPhotoCoordinates(representativePhoto) : null;
+
+  return coordinates
+    ? {
+      ...coordinates,
+      usedRepresentativeGps: true,
+    }
+    : null;
+}
+
+type CandidateTitleCoordinate = {
+  latitude?: number;
+  longitude?: number;
+  representativeGroupPhotoCount?: number;
+  source: PhotoImportCandidateTitleCoordinateSource;
+};
+
+function getCandidateTitleCoordinateAttempts(draft: LocalDetectedTripDraft): CandidateTitleCoordinate[] {
+  const attempts: CandidateTitleCoordinate[] = [];
+  const locatedGroups = getLocatedGroups(draft);
+  const firstLocatedGroup = locatedGroups[0];
+  const firstLocatedGroupCoordinates = getGroupTitleCoordinates(firstLocatedGroup);
+
+  if (firstLocatedGroup) {
+    draft.debugMetadata.firstLocatedGroupLabel =
+      firstLocatedGroup.groupLocationLabel ?? firstLocatedGroup.groupDisplayName ?? firstLocatedGroup.label;
+    draft.debugMetadata.firstLocatedGroupCentroidLat = firstLocatedGroupCoordinates?.latitude;
+    draft.debugMetadata.firstLocatedGroupCentroidLng = firstLocatedGroupCoordinates?.longitude;
+    draft.debugMetadata.firstLocatedGroupPhotoCount = firstLocatedGroup.photos.length;
+    draft.debugMetadata.firstLocatedGroupRepresentativeGpsLat =
+      firstLocatedGroupCoordinates?.usedRepresentativeGps ? firstLocatedGroupCoordinates.latitude : undefined;
+    draft.debugMetadata.firstLocatedGroupRepresentativeGpsLng =
+      firstLocatedGroupCoordinates?.usedRepresentativeGps ? firstLocatedGroupCoordinates.longitude : undefined;
+  }
+
+  if (firstLocatedGroupCoordinates) {
+    attempts.push({
+      latitude: firstLocatedGroupCoordinates.latitude,
+      longitude: firstLocatedGroupCoordinates.longitude,
+      representativeGroupPhotoCount: firstLocatedGroup?.photos.length,
+      source: firstLocatedGroupCoordinates.usedRepresentativeGps
+        ? 'first_located_group_representative_gps'
+        : 'first_located_group_centroid',
+    });
+  }
+
+  const largestLocatedGroups = [...locatedGroups]
+    .sort((left, right) => right.photos.length - left.photos.length);
+  const largestLocatedGroup = largestLocatedGroups[0];
+  const largestLocatedGroupCoordinates = getGroupTitleCoordinates(largestLocatedGroup);
+
+  if (largestLocatedGroupCoordinates) {
+    attempts.push({
+      latitude: largestLocatedGroupCoordinates.latitude,
+      longitude: largestLocatedGroupCoordinates.longitude,
+      representativeGroupPhotoCount: largestLocatedGroup?.photos.length,
+      source: 'largest_located_group_centroid',
+    });
+  }
+
+  if (
+    isFiniteCoordinateValue(draft.centroidLat) &&
+    isFiniteCoordinateValue(draft.centroidLng)
+  ) {
+    attempts.push({
+      latitude: draft.centroidLat,
+      longitude: draft.centroidLng,
+      source: 'candidate_centroid',
+    });
+  }
+
+  const representativePhoto = draft.days
+    .flatMap((day) => day.groups.flatMap((group) => group.photos))
+    .find((photo) => Boolean(getPhotoCoordinates(photo)));
+  const coordinates = representativePhoto ? getPhotoCoordinates(representativePhoto) : null;
+
+  if (coordinates) {
+    attempts.push({
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+      representativeGroupPhotoCount: 1,
+      source: 'representative_gps_photo',
+    });
+  }
+
+  const seen = new Set<string>();
+
+  return attempts.filter((attempt) => {
+    if (!isFiniteCoordinateValue(attempt.latitude) || !isFiniteCoordinateValue(attempt.longitude)) {
+      return false;
+    }
+
+    const key = `${attempt.latitude.toFixed(5)},${attempt.longitude.toFixed(5)}`;
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function getCandidateTitleCoordinate(draft: LocalDetectedTripDraft): CandidateTitleCoordinate {
+  return getCandidateTitleCoordinateAttempts(draft)[0] ?? { source: 'none' };
+}
+
+function getReverseGeocodeLocationSource(
+  coordinateSource: PhotoImportCandidateTitleCoordinateSource,
+): PhotoImportCandidateTitleLocationSource {
+  if (coordinateSource === 'candidate_centroid') {
+    return 'reverse_geocode_candidate_centroid';
+  }
+
+  if (coordinateSource === 'first_located_group_centroid') {
+    return 'first_located_group_centroid';
+  }
+
+  if (coordinateSource === 'first_located_group_representative_gps') {
+    return 'first_located_group_representative_gps';
+  }
+
+  if (coordinateSource === 'largest_located_group_centroid') {
+    return 'largest_located_group_centroid';
+  }
+
+  if (coordinateSource === 'representative_gps_photo') {
+    return 'reverse_geocode_representative_photo';
+  }
+
+  return 'fallback';
+}
+
+function syncCandidateTitleCoordinateMetadata(draft: LocalDetectedTripDraft) {
+  const titleCoordinate = getCandidateTitleCoordinate(draft);
+  draft.debugMetadata.candidateTitleCoordinateSource = titleCoordinate.source;
+  draft.debugMetadata.representativeGpsLat = titleCoordinate.latitude;
+  draft.debugMetadata.representativeGpsLng = titleCoordinate.longitude;
+  draft.debugMetadata.representativeGroupPhotoCount = titleCoordinate.representativeGroupPhotoCount;
+  draft.debugMetadata.isOverseasCandidate = isOverseasCoordinate(
+    titleCoordinate.latitude,
+    titleCoordinate.longitude,
+  );
+
+  return titleCoordinate;
+}
+
+function applyLocatedGroupLabelTitle(draft: LocalDetectedTripDraft) {
+  const locatedGroups = getLocatedGroups(draft);
+  const firstResolvedGroup = locatedGroups.find((group) => (
+    isResolvedLocatedGroupLabel(group.groupLocationLabel ?? group.groupDisplayName ?? group.label)
+  ));
+
+  if (!firstResolvedGroup) {
+    return false;
+  }
+
+  const label = firstResolvedGroup.groupLocationLabel ?? firstResolvedGroup.groupDisplayName ?? firstResolvedGroup.label;
+  const { displayTitle, reason } = buildDetectedTripDisplayTitle(null, label);
+
+  if (displayTitle === PENDING_LOCATION_TITLE) {
+    return false;
+  }
+
+  draft.displayTitle = displayTitle;
+  draft.title = displayTitle;
+  draft.locationLabel = label;
+  draft.regionLabel = label;
+  draft.enrichmentStatus = 'success';
+  draft.debugMetadata.titleResolveState = 'success';
+  draft.debugMetadata.candidateTitleLocationSource =
+    firstResolvedGroup === locatedGroups[0] ? 'first_located_group_label' : 'largest_located_group_label';
+  draft.debugMetadata.normalizedCityName = displayTitle.replace(/\s+\S+$/, '');
+  draft.debugMetadata.titleFinalizeReason = 'success';
+  draft.debugMetadata.titleEnrichmentFinalizedAt = new Date().toISOString();
+
+  if (__DEV__) {
+    console.info('[photo-import candidate title] applied located group label', {
+      draftId: draft.id,
+      groupLabel: label,
+      titleAfter: draft.title,
+      titleNormalizationReason: reason,
+    });
+  }
+
+  return true;
+}
+
 async function getHydratedAssetDisplayUri(assetId?: string) {
   if (!assetId) {
     return null;
@@ -931,6 +1449,99 @@ function getDateGapDays(previousDateKey: string, nextDateKey: string) {
   const nextDate = new Date(`${nextDateKey}T00:00:00`);
 
   return Math.round((nextDate.getTime() - previousDate.getTime()) / DAY_MS);
+}
+
+function getDateSpanDays(startDate: string, endDate: string) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return 1;
+  }
+
+  return Math.max(1, Math.round((end.getTime() - start.getTime()) / DAY_MS) + 1);
+}
+
+function getMonthKey(dateKey: string) {
+  return dateKey.slice(0, 7);
+}
+
+function getRepeatedLocalClusterKey(latitude?: number, longitude?: number) {
+  if (!isFiniteCoordinateValue(latitude) || !isFiniteCoordinateValue(longitude)) {
+    return undefined;
+  }
+
+  const latGrid = Math.round(latitude / REPEATED_LOCAL_CLUSTER_GRID_DEGREES);
+  const lngGrid = Math.round(longitude / REPEATED_LOCAL_CLUSTER_GRID_DEGREES);
+
+  return `${latGrid}:${lngGrid}`;
+}
+
+function isCoordinateInKorea(latitude?: number, longitude?: number) {
+  return (
+    isFiniteCoordinateValue(latitude) &&
+    isFiniteCoordinateValue(longitude) &&
+    latitude >= 33 &&
+    latitude <= 39.5 &&
+    longitude >= 124 &&
+    longitude <= 132
+  );
+}
+
+function isOverseasCoordinate(latitude?: number, longitude?: number) {
+  return (
+    isFiniteCoordinateValue(latitude) &&
+    isFiniteCoordinateValue(longitude) &&
+    !isCoordinateInKorea(latitude, longitude)
+  );
+}
+
+function getLocationFallbackTitle(latitude?: number, longitude?: number) {
+  return UNRESOLVED_REGION_TITLE;
+}
+
+function isGenericLocationFallbackTitle(title?: string | null) {
+  return title === LOCATION_BASED_TRIP_TITLE || title === OVERSEAS_TRIP_TITLE;
+}
+
+function isUnresolvedRegionFallbackTitle(title?: string | null) {
+  return title === UNRESOLVED_REGION_TITLE;
+}
+
+function isBlockedUserFacingDetectedTitle(title?: string | null) {
+  return (
+    isGenericLocationFallbackTitle(title) ||
+    title === DETECTED_TRIP_TITLE ||
+    Boolean(title && /\uC5EC\uD589\s*\uD6C4\uBCF4/u.test(title)) ||
+    Boolean(title && /^\d{4}\.\s?\d{1,2}\.\s?\d{1,2}/.test(title))
+  );
+}
+
+function hasResolvedCandidateDisplayTitle(draft: LocalDetectedTripDraft) {
+  return (
+    Boolean(draft.locationLabel) ||
+    draft.enrichmentStatus === 'success' ||
+    (
+      isUnresolvedRegionFallbackTitle(draft.displayTitle) &&
+      draft.enrichmentStatus !== 'pending'
+    )
+  );
+}
+
+function getUserFacingDetectedTitle(title?: string | null) {
+  const trimmed = title?.trim();
+
+  if (!trimmed) {
+    return UNRESOLVED_REGION_TITLE;
+  }
+
+  if (trimmed === PENDING_LOCATION_TITLE || trimmed === UNRESOLVED_REGION_TITLE) {
+    return trimmed;
+  }
+
+  return isBlockedUserFacingDetectedTitle(trimmed)
+    ? UNRESOLVED_REGION_TITLE
+    : trimmed;
 }
 
 function clampScore(score: number) {
@@ -1130,6 +1741,11 @@ function calculateCandidateDebugMetadata({
 
   if (dayCount >= LONG_TRIP_MIN_DAYS) {
     warningReasons.push(dayCount <= LONG_TRIP_MAX_DAYS ? 'long_trip_candidate' : 'weak_long_trip_candidate');
+  }
+
+  if (dayCount >= LONG_STAY_MIN_DAYS && dayCount <= LONG_STAY_MAX_DAYS) {
+    warningReasons.push('long_stay_candidate');
+    warningReasons.push('possible_long_stay_candidate');
   }
 
   const normalizedScore = clampScore(confidenceScore);
@@ -1549,7 +2165,7 @@ function canPostMergeDrafts(currentDrafts: LocalDetectedTripDraft[], nextDraft: 
   ), nextDraft.endDate);
   const mergedSpanDays = getInclusiveDateSpanDays(mergedStartDate, mergedEndDate);
 
-  if (mergedSpanDays > LONG_TRIP_MAX_DAYS) {
+  if (mergedSpanDays > LONG_STAY_MAX_DAYS) {
     return false;
   }
 
@@ -1592,7 +2208,7 @@ function canKeepMergedLongTrip(draft: LocalDetectedTripDraft) {
 
   return (
     metadata.dayCount >= LONG_TRIP_MIN_DAYS &&
-    metadata.dayCount <= LONG_TRIP_MAX_DAYS &&
+    metadata.dayCount <= LONG_STAY_MAX_DAYS &&
     metadata.realPhotoCount >= MIN_LONG_TRIP_REAL_PHOTOS &&
     metadata.gpsPhotoCount >= MIN_ONE_DAY_STRICT_GPS_PHOTOS &&
     metadata.gpsActiveDayCount >= 2 &&
@@ -1635,6 +2251,66 @@ function postMergeLongTripDrafts(draftsToMerge: LocalDetectedTripDraft[]) {
     drafts: mergedDrafts,
     longTripPostMergeCount,
   };
+}
+
+function applyRepeatedLocalClusterMetadata(draftsToAnalyze: LocalDetectedTripDraft[]) {
+  const clusters = new Map<string, LocalDetectedTripDraft[]>();
+
+  for (const draft of draftsToAnalyze) {
+    const clusterKey = getRepeatedLocalClusterKey(
+      draft.debugMetadata.centroidLat,
+      draft.debugMetadata.centroidLng,
+    );
+
+    if (!clusterKey) {
+      continue;
+    }
+
+    const clusterDrafts = clusters.get(clusterKey) ?? [];
+    clusterDrafts.push(draft);
+    clusters.set(clusterKey, clusterDrafts);
+  }
+
+  for (const [clusterKey, clusterDrafts] of clusters) {
+    const sortedDrafts = [...clusterDrafts].sort((left, right) => left.startDate.localeCompare(right.startDate));
+    const firstDraft = sortedDrafts[0];
+    const lastDraft = sortedDrafts[sortedDrafts.length - 1];
+    const activeMonths = new Set<string>();
+
+    for (const draft of sortedDrafts) {
+      activeMonths.add(getMonthKey(draft.startDate));
+      activeMonths.add(getMonthKey(draft.endDate));
+    }
+
+    const dateSpanDays = firstDraft && lastDraft
+      ? getDateSpanDays(firstDraft.startDate, lastDraft.endDate)
+      : 1;
+
+    for (const draft of clusterDrafts) {
+      draft.debugMetadata.repeatedLocalClusterKey = clusterKey;
+      draft.debugMetadata.repeatedLocalClusterCandidateCount = clusterDrafts.length;
+      draft.debugMetadata.repeatedLocalClusterActiveMonthCount = activeMonths.size;
+      draft.debugMetadata.repeatedLocalClusterDateSpanDays = dateSpanDays;
+
+      if (
+        draft.debugMetadata.dayCount >= LONG_STAY_MIN_DAYS &&
+        draft.debugMetadata.dayCount <= LONG_STAY_MAX_DAYS &&
+        draft.debugMetadata.gpsActiveDayCount >= 2 &&
+        draft.debugMetadata.maxDistanceKm < MIN_SINGLE_DAY_DISTANCE_KM
+      ) {
+        addWarningReason(draft, 'long_stay_candidate');
+        addWarningReason(draft, 'possible_long_stay_candidate');
+        addWarningReason(draft, 'static_long_stay_candidate');
+        addWarningReason(draft, 'possible_daily_life_long_range');
+      } else if (
+        draft.debugMetadata.dayCount >= LONG_TRIP_MIN_DAYS &&
+        draft.debugMetadata.gpsActiveDayCount >= 2 &&
+        draft.debugMetadata.maxDistanceKm < MIN_SINGLE_DAY_DISTANCE_KM
+      ) {
+        addWarningReason(draft, 'possible_daily_life_long_range');
+      }
+    }
+  }
 }
 
 function splitPhotosIntoTripDrafts(photos: LocalDetectedPhoto[]): {
@@ -1806,16 +2482,37 @@ async function hydrateDraftCoverPhoto(draft: LocalDetectedTripDraft) {
 
 async function hydrateDraftTitle(draft: LocalDetectedTripDraft) {
   const titleBefore = draft.title;
-  const hasCentroid =
-    isFiniteCoordinateValue(draft.centroidLat) &&
-    isFiniteCoordinateValue(draft.centroidLng);
+  const startedAt = draft.debugMetadata.titleEnrichmentStartedAt ?? new Date().toISOString();
+  draft.debugMetadata.titleEnrichmentStartedAt = startedAt;
+  draft.debugMetadata.titleGeocodingQueued = true;
+
+  if (applyLocatedGroupLabelTitle(draft)) {
+    draft.debugMetadata.titleEnrichmentElapsedMs =
+      Date.now() - new Date(startedAt).getTime();
+    return;
+  }
+
+  const titleCoordinates = getCandidateTitleCoordinateAttempts(draft);
+  const primaryTitleCoordinate = syncCandidateTitleCoordinateMetadata(draft);
   const hasGpsPhotos = draft.debugMetadata.gpsPhotoCount > 0;
 
   draft.fallbackTitle = formatCandidateDateTitle(draft.startDate, draft.endDate);
 
-  if (hasCentroid && hasGpsPhotos) {
+  if (titleCoordinates.length > 0 && hasGpsPhotos) {
+    draft.enrichmentStatus = 'pending';
+    draft.displayTitle = PENDING_LOCATION_TITLE;
+    draft.title = PENDING_LOCATION_TITLE;
+    draft.debugMetadata.candidateTitleLocationSource = 'pending';
+    draft.debugMetadata.titleGeocodingInFlight = true;
+    draft.debugMetadata.titleGeocodingRetryable = true;
+    draft.debugMetadata.titleResolveState = 'pending';
+
+    let didResolveTitle = false;
+    let didHitRateLimit = false;
+
+    for (const titleCoordinate of titleCoordinates) {
     const result = await withTimeout(
-      reverseGeocodeLocationLabel(draft.centroidLat, draft.centroidLng),
+      reverseGeocodeLocationLabel(titleCoordinate.latitude, titleCoordinate.longitude),
       REVERSE_GEOCODE_TIMEOUT_MS,
       { address: null, failed: true, label: null, rateLimited: false },
     );
@@ -1824,36 +2521,120 @@ async function hydrateDraftTitle(draft: LocalDetectedTripDraft) {
 
     if (result.label) {
       const titleBeforeNormalization = draft.title;
-      const { displayTitle, reason } = buildDetectedTripDisplayTitle(result.address, result.label);
+      const wasShowingGenericFallback =
+        isGenericLocationFallbackTitle(draft.displayTitle) ||
+        isUnresolvedRegionFallbackTitle(draft.displayTitle);
+      draft.debugMetadata.rawLocationLabel = result.label ?? undefined;
+      draft.debugMetadata.rawPlacemarkCity = result.address?.city ?? undefined;
+      draft.debugMetadata.rawPlacemarkCountry = result.address?.country ?? undefined;
+      draft.debugMetadata.rawPlacemarkDistrict = result.address?.district ?? undefined;
+      draft.debugMetadata.rawPlacemarkRegion = result.address?.region ?? undefined;
+      draft.debugMetadata.rawPlacemarkSubregion = result.address?.subregion ?? undefined;
+
+      const { displayTitle, overseasTitleSource, reason } = buildDetectedTripDisplayTitle(
+        result.address,
+        result.label,
+        titleCoordinate.latitude,
+        titleCoordinate.longitude,
+      );
       draft.enrichmentStatus = 'success';
       draft.displayTitle = displayTitle;
       draft.title = displayTitle;
+      draft.debugMetadata.candidateTitleLocationSource = getReverseGeocodeLocationSource(titleCoordinate.source);
+      draft.debugMetadata.normalizedCityName = displayTitle.replace(/\s+\S+$/, '');
+      draft.debugMetadata.overseasTitleSource = overseasTitleSource;
+      draft.debugMetadata.genericFallbackSuppressed = undefined;
+      draft.debugMetadata.unresolvedRegionFallbackTitle = undefined;
+      draft.debugMetadata.unresolvedTitleFallbackSource = undefined;
+      draft.debugMetadata.titleEnrichmentElapsedMs =
+        Date.now() - new Date(startedAt).getTime();
+      draft.debugMetadata.titleEnrichmentFinalizedAt = new Date().toISOString();
+      draft.debugMetadata.titleFinalizeReason =
+        wasShowingGenericFallback
+          ? 'late_success'
+          : 'success';
+      draft.debugMetadata.titleGeocodingInFlight = false;
+      draft.debugMetadata.titleGeocodingRetryable = false;
+      draft.debugMetadata.titleResolveState = 'success';
+      didResolveTitle = true;
 
       if (__DEV__) {
         console.info('[photo-import title normalization]', {
+          candidateTitleCoordinateSource: titleCoordinate.source,
+          candidateTitleLocationSource: draft.debugMetadata.candidateTitleLocationSource,
           normalizedDisplayTitle: displayTitle,
+          overseasTitleSource,
+          rawPlacemarkCity: result.address?.city,
+          rawPlacemarkCountry: result.address?.country,
+          rawPlacemarkDistrict: result.address?.district,
+          rawPlacemarkRegion: result.address?.region,
+          rawPlacemarkSubregion: result.address?.subregion,
           rawLocationLabel: result.label,
           titleAfter: draft.title,
           titleBefore: titleBeforeNormalization,
           titleNormalizationReason: reason,
         });
       }
+      break;
     } else if (result.rateLimited) {
       draft.enrichmentStatus = 'rate_limited';
       draft.displayTitle = PENDING_LOCATION_TITLE;
       draft.title = PENDING_LOCATION_TITLE;
+      draft.debugMetadata.candidateTitleLocationSource = 'pending';
+      draft.debugMetadata.genericFallbackSuppressed = undefined;
+      draft.debugMetadata.unresolvedRegionFallbackTitle = undefined;
+      draft.debugMetadata.unresolvedTitleFallbackSource = 'rate_limited';
+      draft.debugMetadata.titleEnrichmentElapsedMs =
+        Date.now() - new Date(startedAt).getTime();
+      draft.debugMetadata.titleEnrichmentFinalizedAt = new Date().toISOString();
+      draft.debugMetadata.titleFinalizeReason = 'rate_limited';
+      draft.debugMetadata.titleGeocodingInFlight = false;
+      draft.debugMetadata.titleGeocodingRetryable = true;
+      draft.debugMetadata.titleResolveState = 'pending';
       addWarningReason(draft, 'reverse_geocode_rate_limited');
+      didHitRateLimit = true;
+      break;
     } else {
-      draft.enrichmentStatus = 'failed';
-      draft.displayTitle = PENDING_LOCATION_TITLE;
-      draft.title = PENDING_LOCATION_TITLE;
       addWarningReason(draft, 'reverse_geocode_failed');
+    }
+    }
+
+    if (!didResolveTitle && !didHitRateLimit) {
+      draft.enrichmentStatus = 'failed';
+      const fallbackTitle = getLocationFallbackTitle(primaryTitleCoordinate.latitude, primaryTitleCoordinate.longitude);
+      draft.displayTitle = fallbackTitle;
+      draft.title = fallbackTitle;
+      draft.debugMetadata.candidateTitleLocationSource = 'unresolved_region_fallback';
+      draft.debugMetadata.genericFallbackSuppressed = true;
+      draft.debugMetadata.unresolvedRegionFallbackTitle = fallbackTitle;
+      draft.debugMetadata.unresolvedTitleFallbackSource = 'failed';
+      draft.debugMetadata.titleEnrichmentElapsedMs =
+        Date.now() - new Date(startedAt).getTime();
+      draft.debugMetadata.titleEnrichmentFinalizedAt = new Date().toISOString();
+      draft.debugMetadata.titleFinalizeReason = 'failed';
+      draft.debugMetadata.titleGeocodingInFlight = false;
+      draft.debugMetadata.titleGeocodingRetryable = false;
+      draft.debugMetadata.titleResolveState = 'unresolved';
       addWarningReason(draft, 'no_location_label');
     }
   } else {
     draft.enrichmentStatus = 'failed';
-    draft.displayTitle = DETECTED_TRIP_TITLE;
-    draft.title = DETECTED_TRIP_TITLE;
+    const fallbackTitle = hasGpsPhotos
+      ? getLocationFallbackTitle(primaryTitleCoordinate.latitude, primaryTitleCoordinate.longitude)
+      : DETECTED_TRIP_TITLE;
+    draft.displayTitle = fallbackTitle;
+    draft.title = fallbackTitle;
+    draft.debugMetadata.candidateTitleLocationSource = hasGpsPhotos ? 'unresolved_region_fallback' : 'pending';
+    draft.debugMetadata.genericFallbackSuppressed = hasGpsPhotos;
+    draft.debugMetadata.unresolvedRegionFallbackTitle = hasGpsPhotos ? fallbackTitle : undefined;
+    draft.debugMetadata.unresolvedTitleFallbackSource = hasGpsPhotos ? 'finalized_without_label' : undefined;
+    draft.debugMetadata.titleEnrichmentElapsedMs =
+      Date.now() - new Date(startedAt).getTime();
+    draft.debugMetadata.titleEnrichmentFinalizedAt = new Date().toISOString();
+    draft.debugMetadata.titleFinalizeReason = hasGpsPhotos ? 'finalized_without_label' : 'failed';
+    draft.debugMetadata.titleGeocodingInFlight = false;
+    draft.debugMetadata.titleGeocodingRetryable = false;
+    draft.debugMetadata.titleResolveState = hasGpsPhotos ? 'unresolved' : 'failed';
     addWarningReason(draft, hasGpsPhotos ? 'invalid_centroid' : 'no_gps_for_title');
   }
 
@@ -1868,44 +2649,289 @@ async function hydrateDraftTitle(draft: LocalDetectedTripDraft) {
   }
 }
 
-function canShowDraftAsCandidate(draft: LocalDetectedTripDraft) {
-  return getCandidateHiddenReasons(draft).length === 0;
+function finalizePendingTitleForUi(
+  draft: LocalDetectedTripDraft,
+  reason: 'skipped' | 'ui_timeout' | 'finalized_without_label',
+) {
+  if (
+    draft.enrichmentStatus !== 'pending' ||
+    draft.displayTitle !== PENDING_LOCATION_TITLE
+  ) {
+    return false;
+  }
+
+  if (applyLocatedGroupLabelTitle(draft)) {
+    return true;
+  }
+
+  const titleCoordinate = syncCandidateTitleCoordinateMetadata(draft);
+  const now = new Date();
+  const startedAt = draft.debugMetadata.titleEnrichmentStartedAt
+    ? new Date(draft.debugMetadata.titleEnrichmentStartedAt)
+    : now;
+
+  draft.enrichmentStatus = reason === 'ui_timeout' ? 'pending_background' : 'pending';
+  draft.displayTitle = PENDING_LOCATION_TITLE;
+  draft.title = PENDING_LOCATION_TITLE;
+  draft.debugMetadata.candidateTitleLocationSource = 'pending';
+  draft.debugMetadata.genericFallbackSuppressed = undefined;
+  draft.debugMetadata.unresolvedRegionFallbackTitle = undefined;
+  draft.debugMetadata.unresolvedTitleFallbackSource = reason;
+  draft.debugMetadata.titleEnrichmentElapsedMs = now.getTime() - startedAt.getTime();
+  draft.debugMetadata.titleFinalizeReason = reason;
+  draft.debugMetadata.titleGeocodingRetryable = true;
+  draft.debugMetadata.titleResolveState = 'pending';
+
+  if (reason === 'skipped') {
+    draft.debugMetadata.titleGeocodingSkippedReason = 'visible_queue_limit';
+  }
+
+  if (__DEV__) {
+    console.info('[photo-import candidate title] finalized pending UI title', {
+      draftId: draft.id,
+      displayTitle: draft.displayTitle,
+      reason,
+      titleCoordinateSource: titleCoordinate.source,
+    });
+  }
+
+  return true;
 }
 
-function getCandidateHiddenReasons(draft: LocalDetectedTripDraft) {
+function canShowDraftAsCandidate(draft: LocalDetectedTripDraft) {
+  const quality = syncCandidateQualityMetadata(draft);
+  return (
+    quality.hiddenReasons.length === 0 &&
+    (
+      quality.candidateQualityType === 'high_confidence_trip' ||
+      quality.candidateQualityType === 'long_stay_candidate'
+    )
+  );
+}
+
+function canQueueDraftTitleEnrichment(draft: LocalDetectedTripDraft) {
+  const quality = syncCandidateQualityMetadata(draft);
+  const blockingReasons = quality.hiddenReasons.filter((reason) => (
+    reason !== 'location_title_unresolved_low_confidence'
+  ));
+  const titleCoordinate = getCandidateTitleCoordinate(draft);
+
+  return (
+    blockingReasons.length === 0 &&
+    quality.isLocationTitlePending &&
+    draft.debugMetadata.gpsPhotoCount > 0 &&
+    isFiniteCoordinateValue(titleCoordinate.latitude) &&
+    isFiniteCoordinateValue(titleCoordinate.longitude)
+  );
+}
+
+function evaluateCandidateQuality(draft: LocalDetectedTripDraft): {
+  candidateQualityScore: number;
+  candidateQualityType: PhotoImportCandidateQualityType;
+  hiddenReasons: string[];
+  isHighConfidenceTrip: boolean;
+  isLikelyDailyLifeCandidate: boolean;
+  isLocationTitlePending: boolean;
+  isLowMobilityCandidate: boolean;
+  reviewNeededReasons: string[];
+} {
   const reasons: string[] = [];
+  const reviewNeededReasons: string[] = [];
   const metadata = draft.debugMetadata;
   const hasValidCentroid =
     isFiniteCoordinateValue(metadata.centroidLat) &&
     isFiniteCoordinateValue(metadata.centroidLng);
+  const isOverseasCandidate =
+    hasValidCentroid &&
+    !isCoordinateInKorea(metadata.centroidLat, metadata.centroidLng);
+  const hasLocationTitle = hasResolvedCandidateDisplayTitle(draft);
+  const isLocationTitlePending =
+    draft.enrichmentStatus === 'pending' ||
+    draft.displayTitle === PENDING_LOCATION_TITLE ||
+    draft.title === PENDING_LOCATION_TITLE;
   const isSavedImageHeavy =
     metadata.savedImageRatio >= SAVED_IMAGE_HEAVY_RATIO &&
     metadata.realPhotoCount < MIN_SINGLE_DAY_VISIBLE_PHOTOS;
+  const isLongTripPostMerged = metadata.splitReason === 'long_trip_post_merged';
+  const isProtectedLongStayCandidate =
+    metadata.dayCount >= LONG_STAY_MIN_DAYS &&
+    metadata.dayCount <= LONG_STAY_MAX_DAYS &&
+    metadata.realPhotoCount >= MIN_LONG_TRIP_REAL_PHOTOS &&
+    metadata.gpsPhotoCount >= MIN_ONE_DAY_STRICT_GPS_PHOTOS &&
+    metadata.gpsActiveDayCount >= 2 &&
+    !metadata.warningReasons.includes('screenshot_only_or_mostly_screenshot') &&
+    !isSavedImageHeavy;
+  const repeatedCount = metadata.repeatedLocalClusterCandidateCount ?? 0;
+  const isRepeatedLow = repeatedCount < REPEATED_LOCAL_LOW_COUNT;
+  const hasMobility =
+    metadata.maxDistanceKm >= 5 ||
+    metadata.locationClusterCount >= 2 ||
+    isOverseasCandidate;
+  const isLikelyRepeatedLocalCandidate =
+    repeatedCount >= REPEATED_LOCAL_CLUSTER_HIDE_COUNT &&
+    metadata.maxDistanceKm < MIN_SINGLE_DAY_DISTANCE_KM &&
+    metadata.locationClusterCount <= 1 &&
+    metadata.dayCount <= 2 &&
+    isCoordinateInKorea(metadata.centroidLat, metadata.centroidLng) &&
+    !isLongTripPostMerged;
+  const isLikelyDailyPhotoEvent =
+    metadata.dayCount === 1 &&
+    repeatedCount >= REPEATED_LOCAL_EVENT_HIDE_COUNT &&
+    metadata.maxDistanceKm < 2 &&
+    metadata.realPhotoCount < 40;
+  const dateSpanDays = getDateSpanDays(metadata.startDate, metadata.endDate);
+  const isNonContinuousMultiDayCandidate = dateSpanDays > metadata.dayCount;
+  const isLowMobilityMultiDayCandidate =
+    metadata.dayCount >= 2 &&
+    metadata.dayCount <= 5 &&
+    metadata.maxDistanceKm < 5 &&
+    metadata.locationClusterCount <= 1 &&
+    repeatedCount >= REPEATED_LOCAL_LOW_COUNT &&
+    !isOverseasCandidate &&
+    !isProtectedLongStayCandidate &&
+    metadata.maxDistanceKm < MIN_ONE_DAY_RELAXED_DISTANCE_KM;
+  const isLowMobilityCandidate =
+    metadata.dayCount <= 2 &&
+    metadata.gpsActiveDayCount <= 1 &&
+    metadata.maxDistanceKm < 5 &&
+    metadata.locationClusterCount <= 1 &&
+    repeatedCount >= REPEATED_LOCAL_LOW_COUNT &&
+    !isOverseasCandidate &&
+    !isProtectedLongStayCandidate;
+  const hasGoodBaseEvidence =
+    hasValidCentroid &&
+    metadata.confidenceLevel !== 'low' &&
+    metadata.gpsPhotoCount >= MIN_VISIBLE_GPS_PHOTOS &&
+    metadata.realPhotoCount >= MIN_REAL_PHOTOS_PER_VISIBLE_CANDIDATE &&
+    !isSavedImageHeavy &&
+    !metadata.warningReasons.includes('screenshot_only_or_mostly_screenshot');
+  const isOneDayException =
+    metadata.dayCount === 1 &&
+    (
+      metadata.maxDistanceKm >= 20 ||
+      isOverseasCandidate
+    ) &&
+    metadata.realPhotoCount >= MIN_ONE_DAY_STRICT_REAL_PHOTOS &&
+    metadata.gpsPhotoCount >= MIN_ONE_DAY_STRICT_GPS_PHOTOS &&
+    metadata.locationClusterCount >= 2 &&
+    hasLocationTitle &&
+    isRepeatedLow &&
+    hasGoodBaseEvidence;
+  const isGeneralTripCandidate =
+    metadata.dayCount >= 2 &&
+    metadata.dayCount <= 14 &&
+    metadata.gpsActiveDayCount >= 2 &&
+    metadata.realPhotoCount >= MIN_SHORT_TRIP_REAL_PHOTOS &&
+    metadata.gpsPhotoCount >= MIN_VISIBLE_GPS_PHOTOS &&
+    hasGoodBaseEvidence &&
+    hasLocationTitle &&
+    (isRepeatedLow || hasMobility);
+  const isHighMobilityCandidate =
+    metadata.maxDistanceKm >= MIN_ONE_DAY_RELAXED_DISTANCE_KM &&
+    metadata.realPhotoCount >= MIN_SHORT_TRIP_REAL_PHOTOS &&
+    metadata.gpsPhotoCount >= MIN_VISIBLE_GPS_PHOTOS &&
+    hasGoodBaseEvidence;
+  const isOverseasTripCandidate =
+    isOverseasCandidate &&
+    metadata.realPhotoCount >= MIN_REAL_PHOTOS_PER_VISIBLE_CANDIDATE &&
+    metadata.gpsPhotoCount >= MIN_VISIBLE_GPS_PHOTOS &&
+    hasGoodBaseEvidence;
+  const isLongTripCandidate =
+    metadata.dayCount >= LONG_TRIP_MIN_DAYS &&
+    metadata.realPhotoCount >= MIN_LONG_TRIP_REAL_PHOTOS &&
+    metadata.gpsPhotoCount >= MIN_ONE_DAY_STRICT_GPS_PHOTOS &&
+    metadata.gpsActiveDayCount >= 2 &&
+    hasGoodBaseEvidence;
+  const isExtendedJourneyCandidate =
+    metadata.dayCount > LONG_STAY_MAX_DAYS &&
+    metadata.realPhotoCount >= MIN_LONG_TRIP_REAL_PHOTOS &&
+    metadata.gpsPhotoCount >= MIN_ONE_DAY_STRICT_GPS_PHOTOS &&
+    metadata.gpsActiveDayCount >= 2 &&
+    hasGoodBaseEvidence;
+  const isHighConfidenceTrip =
+    isOneDayException ||
+    isGeneralTripCandidate ||
+    isHighMobilityCandidate ||
+    isOverseasTripCandidate ||
+    isLongTripCandidate;
+  let candidateQualityScore = metadata.confidenceScore;
 
   if (metadata.confidenceLevel === 'low') {
     reasons.push('confidence_low');
+    candidateQualityScore -= 20;
   }
 
   if (metadata.gpsPhotoCount <= 0) {
     reasons.push('no_gps_for_title');
+    reviewNeededReasons.push('weak_location_evidence');
+    candidateQualityScore -= 20;
   } else if (metadata.gpsPhotoCount < MIN_VISIBLE_GPS_PHOTOS) {
     reasons.push('low_gps_photo_count');
+    reviewNeededReasons.push('weak_location_evidence');
+    candidateQualityScore -= 12;
   }
 
   if (!hasValidCentroid) {
     reasons.push('invalid_centroid');
+    reviewNeededReasons.push('weak_location_evidence');
+    candidateQualityScore -= 15;
   }
 
   if (metadata.warningReasons.includes('screenshot_only_or_mostly_screenshot')) {
     reasons.push('screenshot_only_or_mostly_screenshot');
+    candidateQualityScore -= 20;
   }
 
   if (isSavedImageHeavy) {
     reasons.push('saved_image_heavy_candidate');
+    candidateQualityScore -= 15;
+  }
+
+  if (isLikelyRepeatedLocalCandidate) {
+    reasons.push('likely_repeated_daily_location_candidate');
+  }
+
+  if (isLikelyDailyPhotoEvent) {
+    reasons.push('likely_daily_photo_event');
+  }
+
+  if (isLowMobilityCandidate) {
+    reasons.push('low_mobility_candidate');
+    reasons.push('likely_daily_life_candidate');
+    reasons.push('repeated_local_daily_candidate');
+    reviewNeededReasons.push('possible_daily_life_candidate');
+    reviewNeededReasons.push('low_mobility_but_enough_photos');
+    candidateQualityScore -= 20;
+  }
+
+  if (isLowMobilityMultiDayCandidate) {
+    reasons.push('merged_daily_events_candidate');
+    reasons.push('low_mobility_multi_day_candidate');
+    reasons.push('repeated_local_multi_day_candidate');
+    reasons.push('likely_daily_life_candidate');
+
+    if (isNonContinuousMultiDayCandidate) {
+      reasons.push('non_continuous_daily_events_candidate');
+    }
+
+    reviewNeededReasons.push('possible_daily_life_candidate');
+    reviewNeededReasons.push('low_mobility_but_enough_photos');
+    candidateQualityScore -= 25;
+  }
+
+  if (isLocationTitlePending && !isHighConfidenceTrip) {
+    reasons.push('location_title_unresolved_low_confidence');
+    reviewNeededReasons.push('location_title_pending');
+    candidateQualityScore -= 10;
+  }
+
+  if (!hasLocationTitle && !isHighConfidenceTrip) {
+    reviewNeededReasons.push('weak_location_evidence');
   }
 
   if (metadata.realPhotoCount < MIN_REAL_PHOTOS_PER_VISIBLE_CANDIDATE) {
     reasons.push('too_few_real_photos');
+    candidateQualityScore -= 20;
   }
 
   if (metadata.dayCount === 1) {
@@ -1923,6 +2949,7 @@ function getCandidateHiddenReasons(draft: LocalDetectedTripDraft) {
 
     if (!oneDayStrictEnough && !oneDayRelaxedForMovement) {
       reasons.push('weak_one_day_candidate');
+      reviewNeededReasons.push('one_day_candidate');
     }
 
     if (metadata.realPhotoCount < MIN_ONE_DAY_STRICT_REAL_PHOTOS && !oneDayRelaxedForMovement) {
@@ -1932,25 +2959,129 @@ function getCandidateHiddenReasons(draft: LocalDetectedTripDraft) {
     if (metadata.maxDistanceKm < MIN_SINGLE_DAY_DISTANCE_KM && metadata.locationClusterCount < 2) {
       reasons.push('too_static_one_day_candidate');
       reasons.push('likely_daily_event_not_trip');
+      reviewNeededReasons.push('possible_daily_life_candidate');
     }
   } else if (metadata.dayCount < LONG_TRIP_MIN_DAYS) {
     if (metadata.realPhotoCount < MIN_SHORT_TRIP_REAL_PHOTOS) {
       reasons.push('too_few_camera_photos_for_short_trip');
+      reviewNeededReasons.push('weak_location_evidence');
     }
   } else if (
-    metadata.realPhotoCount < MIN_LONG_TRIP_REAL_PHOTOS ||
-    metadata.gpsPhotoCount < MIN_ONE_DAY_STRICT_GPS_PHOTOS ||
-    metadata.gpsActiveDayCount < 2 ||
-    isSavedImageHeavy
+    !isProtectedLongStayCandidate &&
+    (
+      metadata.realPhotoCount < MIN_LONG_TRIP_REAL_PHOTOS ||
+      metadata.gpsPhotoCount < MIN_ONE_DAY_STRICT_GPS_PHOTOS ||
+      metadata.gpsActiveDayCount < 2 ||
+      isSavedImageHeavy
+    )
   ) {
     reasons.push('weak_long_trip_candidate');
+    reviewNeededReasons.push('weak_location_evidence');
   }
 
-  return [...new Set(reasons)];
+  let candidateQualityType: PhotoImportCandidateQualityType = 'review_needed_candidate';
+
+  if (
+    reasons.includes('likely_daily_life_candidate') ||
+    reasons.includes('likely_daily_event_not_trip') ||
+    reasons.includes('likely_repeated_daily_location_candidate') ||
+    reasons.includes('likely_daily_photo_event') ||
+    reasons.includes('merged_daily_events_candidate')
+  ) {
+    candidateQualityType = 'daily_life_candidate';
+  } else if (
+    reasons.includes('weak_one_day_candidate') ||
+    reasons.includes('weak_long_trip_candidate') ||
+    reasons.includes('too_few_real_photos') ||
+    reasons.includes('low_mobility_candidate')
+  ) {
+    candidateQualityType = 'weak_candidate';
+  } else if (isExtendedJourneyCandidate) {
+    candidateQualityType = 'extended_journey_candidate';
+    reviewNeededReasons.push('weak_location_evidence');
+  } else if (isProtectedLongStayCandidate) {
+    candidateQualityType = 'long_stay_candidate';
+  } else if (isHighConfidenceTrip) {
+    candidateQualityType = 'high_confidence_trip';
+  }
+
+  if (candidateQualityType === 'review_needed_candidate') {
+    reviewNeededReasons.push('review_needed_candidate');
+  }
+
+  return {
+    candidateQualityScore: clampScore(candidateQualityScore),
+    candidateQualityType,
+    hiddenReasons: [...new Set(reasons)],
+    isHighConfidenceTrip,
+    isLikelyDailyLifeCandidate: candidateQualityType === 'daily_life_candidate',
+    isLocationTitlePending,
+    isLowMobilityCandidate,
+    reviewNeededReasons: [...new Set(reviewNeededReasons)],
+  };
+}
+
+function syncCandidateQualityMetadata(draft: LocalDetectedTripDraft) {
+  const titleCoordinate = syncCandidateTitleCoordinateMetadata(draft);
+  const quality = evaluateCandidateQuality(draft);
+  draft.debugMetadata.candidateQualityScore = quality.candidateQualityScore;
+  draft.debugMetadata.candidateQualityType = quality.candidateQualityType;
+  draft.debugMetadata.candidateTitleCoordinateSource = titleCoordinate.source;
+  draft.debugMetadata.candidateTitleLocationSource =
+    draft.debugMetadata.candidateTitleLocationSource ??
+    (draft.locationLabel
+      ? 'candidate_location_label'
+      : quality.isLocationTitlePending ? 'pending' : 'unresolved_region_fallback');
+  draft.debugMetadata.hasLocationTitle = hasResolvedCandidateDisplayTitle(draft);
+  draft.debugMetadata.hiddenReasons = quality.hiddenReasons;
+  draft.debugMetadata.isHighConfidenceTrip = quality.isHighConfidenceTrip;
+  draft.debugMetadata.isLikelyDailyLifeCandidate = quality.isLikelyDailyLifeCandidate;
+  draft.debugMetadata.isLocationTitlePending = quality.isLocationTitlePending;
+  draft.debugMetadata.isLowMobilityCandidate = quality.isLowMobilityCandidate;
+  draft.debugMetadata.isOverseasCandidate = isOverseasCoordinate(titleCoordinate.latitude, titleCoordinate.longitude);
+  draft.debugMetadata.normalizedCityName = draft.debugMetadata.normalizedCityName ?? (
+    draft.displayTitle !== PENDING_LOCATION_TITLE &&
+    draft.displayTitle !== LOCATION_BASED_TRIP_TITLE &&
+    draft.displayTitle !== OVERSEAS_TRIP_TITLE &&
+    draft.displayTitle !== UNRESOLVED_REGION_TITLE
+      ? draft.displayTitle.replace(/\s+\S+$/, '')
+      : undefined
+  );
+  draft.debugMetadata.reviewNeededReasons = quality.reviewNeededReasons;
+  draft.debugMetadata.wasMergedFromDailyEvents = quality.hiddenReasons.includes('merged_daily_events_candidate');
+
+  return quality;
+}
+
+function getCandidateHiddenReasons(draft: LocalDetectedTripDraft) {
+  return syncCandidateQualityMetadata(draft).hiddenReasons;
 }
 
 function getVisibleCandidateDrafts(draftsToFilter: LocalDetectedTripDraft[]) {
-  return draftsToFilter.filter(canShowDraftAsCandidate);
+  const qualityPriority: Record<PhotoImportCandidateQualityType, number> = {
+    high_confidence_trip: 0,
+    long_stay_candidate: 1,
+    extended_journey_candidate: 2,
+    review_needed_candidate: 3,
+    weak_candidate: 4,
+    daily_life_candidate: 5,
+  };
+
+  return draftsToFilter
+    .filter(canShowDraftAsCandidate)
+    .sort((left, right) => {
+      const leftQuality = syncCandidateQualityMetadata(left);
+      const rightQuality = syncCandidateQualityMetadata(right);
+      const priorityDiff =
+        qualityPriority[leftQuality.candidateQualityType] -
+        qualityPriority[rightQuality.candidateQualityType];
+
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
+
+      return rightQuality.candidateQualityScore - leftQuality.candidateQualityScore;
+    });
 }
 
 function wait(ms: number) {
@@ -1963,15 +3094,47 @@ function enrichDraftTitlesInBackground(
   draftsToEnrich: LocalDetectedTripDraft[],
   onCandidatesUpdated?: (candidates: PhotoImportTripCandidate[]) => void,
 ) {
-  const queue = draftsToEnrich
-    .filter(canShowDraftAsCandidate)
+  const visiblePendingDrafts = draftsToEnrich
+    .filter((draft) => canShowDraftAsCandidate(draft) || canQueueDraftTitleEnrichment(draft))
     .filter((draft) => draft.enrichmentStatus === 'pending')
-    .slice(0, INITIAL_REVERSE_GEOCODE_CANDIDATE_LIMIT);
+    .sort((left, right) => {
+      const leftNeedsLocation = !left.locationLabel ? 1 : 0;
+      const rightNeedsLocation = !right.locationLabel ? 1 : 0;
+
+      if (leftNeedsLocation !== rightNeedsLocation) {
+        return rightNeedsLocation - leftNeedsLocation;
+      }
+
+      return right.debugMetadata.gpsPhotoCount - left.debugMetadata.gpsPhotoCount;
+    });
+  const queue = visiblePendingDrafts.slice(0, TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT);
+  const skippedDrafts = visiblePendingDrafts.slice(TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT);
+
+  for (const draft of visiblePendingDrafts) {
+    draft.debugMetadata.titleEnrichmentStartedAt =
+      draft.debugMetadata.titleEnrichmentStartedAt ?? new Date().toISOString();
+  }
+
+  for (const draft of skippedDrafts) {
+    draft.debugMetadata.titleGeocodingQueued = false;
+    finalizePendingTitleForUi(draft, 'skipped');
+  }
 
   if (__DEV__) {
     console.info('[photo-import enrichment] geocoding queue started', {
+      pendingTitleMaxAgeMs: PENDING_TITLE_MAX_AGE_MS,
+      titleGeocodingQueueLimit: TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT,
+      titleGeocodingQueuedVisibleCandidateCount: queue.length,
+      titleGeocodingSkippedVisibleCandidateCount: Math.max(0, visiblePendingDrafts.length - queue.length),
+      titleGeocodingVisibleCandidateCount: visiblePendingDrafts.length,
+      locationTitleEnrichmentQueuedCount: queue.length,
+      locationTitleEnrichmentSkippedCount: Math.max(0, visiblePendingDrafts.length - queue.length),
       geocodingQueueSize: queue.length,
     });
+  }
+
+  if (skippedDrafts.length > 0) {
+    onCandidatesUpdated?.(getVisibleCandidateDrafts(draftsToEnrich).map(createCandidateFromDraft));
   }
 
   void (async () => {
@@ -1979,6 +3142,19 @@ function enrichDraftTitlesInBackground(
     let geocodingRateLimitedCount = 0;
     let geocodingStartedCount = 0;
     let geocodingSuccessCount = 0;
+    let titleEnrichmentPendingUiTimedOutCount = 0;
+
+    const timeoutId = setTimeout(() => {
+      for (const draft of queue) {
+        if (finalizePendingTitleForUi(draft, 'ui_timeout')) {
+          titleEnrichmentPendingUiTimedOutCount += 1;
+        }
+      }
+
+      if (titleEnrichmentPendingUiTimedOutCount > 0) {
+        onCandidatesUpdated?.(getVisibleCandidateDrafts(draftsToEnrich).map(createCandidateFromDraft));
+      }
+    }, PENDING_TITLE_MAX_AGE_MS);
 
     for (const draft of queue) {
       geocodingStartedCount += 1;
@@ -1997,6 +3173,7 @@ function enrichDraftTitlesInBackground(
       await wait(REVERSE_GEOCODE_DELAY_MS);
     }
 
+    clearTimeout(timeoutId);
     onCandidatesUpdated?.(getVisibleCandidateDrafts(draftsToEnrich).map(createCandidateFromDraft));
 
     if (__DEV__) {
@@ -2006,17 +3183,20 @@ function enrichDraftTitlesInBackground(
         geocodingRateLimitedCount,
         geocodingStartedCount,
         geocodingSuccessCount,
+        titleEnrichmentPendingUiTimedOutCount,
       });
     }
   })();
 }
 
 function createCandidateFromDraft(draft: LocalDetectedTripDraft): PhotoImportTripCandidate {
+  syncCandidateTitleCoordinateMetadata(draft);
   const start = formatCandidateCardDate(draft.startDate);
   const end = formatCandidateCardDate(draft.endDate);
+  const displayTitle = getUserFacingDetectedTitle(draft.displayTitle);
 
   return {
-    city: draft.displayTitle,
+    city: displayTitle,
     country: '',
     dateRange: start === end ? start : `${start}-${end}`,
     id: draft.id,
@@ -2308,6 +3488,11 @@ async function scanPhotoLibraryForTripDrafts(
       hiddenTooFewRealPhotosCandidateCount: 0,
       hiddenWeakSingleDayCandidateCount: 0,
       hiddenLowGpsPhotoCandidateCount: 0,
+      duplicateCandidateCount: 0,
+      livingAreaApplied: Boolean(options.livingArea),
+      livingAreaDisplayName: options.livingArea?.displayName,
+      livingAreaExcludedPhotoCount: 0,
+      livingAreaUnclassifiedPhotoCount: 0,
       oversizedCandidateSplitCount: 0,
       pageCount: 0,
       pendingEnrichmentCandidateCount: 0,
@@ -2372,7 +3557,9 @@ async function scanPhotoLibraryForTripDrafts(
   }
 
   const skippedScreenshotCount = photos.filter((photo) => photo.isScreenshot).length;
-  const candidatePhotos = photos.filter((photo) => !photo.isScreenshot);
+  const screenshotFilteredPhotos = photos.filter((photo) => !photo.isScreenshot);
+  const livingAreaFilterResult = filterPhotosByLivingArea(screenshotFilteredPhotos, options.livingArea);
+  const candidatePhotos = livingAreaFilterResult.photos;
   const photosAfterScreenshotFilterCount = candidatePhotos.length;
   const assetsWithLocationCount = photos.filter((photo) => photo.hasLocation).length;
   const photosWithCoordinatesCount = photos.filter((photo) => getPhotoCoordinates(photo)).length;
@@ -2383,11 +3570,16 @@ async function scanPhotoLibraryForTripDrafts(
     photo.assetUri?.startsWith('ph://') && !isRenderableImageUri(photo.displayUri)
   )).length;
   const {
-    drafts: nextDrafts,
+    drafts: generatedDrafts,
     oversizedCandidateSplitCount,
     stats: candidateGenerationStats,
   } = splitPhotosIntoTripDrafts(candidatePhotos);
+  const {
+    duplicateCandidateCount,
+    drafts: nextDrafts,
+  } = filterDuplicateCandidateDrafts(generatedDrafts);
 
+  applyRepeatedLocalClusterMetadata(nextDrafts);
   storeDrafts(nextDrafts);
   options.onProgress?.({
     currentPage: pageCount,
@@ -2400,6 +3592,13 @@ async function scanPhotoLibraryForTripDrafts(
   if (__DEV__) {
     console.info('[photo-import scan] scan phase completed', {
       detectedTripCandidateCount: nextDrafts.length,
+      duplicateCandidateCount,
+      livingAreaApplied: Boolean(options.livingArea),
+      livingAreaDisplayName: options.livingArea?.displayName,
+      livingAreaExcludedPhotoCount: livingAreaFilterResult.excludedPhotoCount,
+      livingAreaRadiusKm: LIVING_AREA_EXCLUSION_RADIUS_KM,
+      livingAreaUnclassifiedPhotoCount: livingAreaFilterResult.unclassifiedPhotoCount,
+      scanSource: options.source ?? 'home',
       scannedAssetCount: photos.length,
       totalAssetCount,
     });
@@ -2426,13 +3625,22 @@ async function scanPhotoLibraryForTripDrafts(
     (draft) => getCandidateHiddenReasons(draft).includes('too_few_real_photos'),
   ).length;
   const hiddenWeakSingleDayCandidateCount = nextDrafts.filter(
-    (draft) => getCandidateHiddenReasons(draft).includes('weak_single_day_candidate'),
+    (draft) => (
+      getCandidateHiddenReasons(draft).includes('weak_single_day_candidate') ||
+      getCandidateHiddenReasons(draft).includes('weak_one_day_candidate')
+    ),
   ).length;
   const hiddenLowGpsPhotoCandidateCount = nextDrafts.filter(
     (draft) => getCandidateHiddenReasons(draft).includes('low_gps_photo_count'),
   ).length;
   const hiddenWeakOneDayCandidateCount = nextDrafts.filter(
     (draft) => getCandidateHiddenReasons(draft).includes('weak_one_day_candidate'),
+  ).length;
+  const hiddenLocationTitleUnresolvedLowConfidenceCount = nextDrafts.filter(
+    (draft) => getCandidateHiddenReasons(draft).includes('location_title_unresolved_low_confidence'),
+  ).length;
+  const hiddenLowMobilityCandidateCount = nextDrafts.filter(
+    (draft) => getCandidateHiddenReasons(draft).includes('low_mobility_candidate'),
   ).length;
   const hiddenSavedImageHeavyCandidateCount = nextDrafts.filter(
     (draft) => getCandidateHiddenReasons(draft).includes('saved_image_heavy_candidate'),
@@ -2446,6 +3654,25 @@ async function scanPhotoLibraryForTripDrafts(
   const hiddenWeakLongTripCandidateCount = nextDrafts.filter(
     (draft) => getCandidateHiddenReasons(draft).includes('weak_long_trip_candidate'),
   ).length;
+  const hiddenRepeatedDailyLocationCandidateCount = nextDrafts.filter(
+    (draft) => getCandidateHiddenReasons(draft).includes('likely_repeated_daily_location_candidate'),
+  ).length;
+  const mergedDailyEventsCandidateCount = nextDrafts.filter(
+    (draft) => getCandidateHiddenReasons(draft).includes('merged_daily_events_candidate'),
+  ).length;
+  const hiddenMergedDailyEventsCandidateCount = mergedDailyEventsCandidateCount;
+  const hiddenLowMobilityMultiDayCandidateCount = nextDrafts.filter(
+    (draft) => getCandidateHiddenReasons(draft).includes('low_mobility_multi_day_candidate'),
+  ).length;
+  const hiddenRepeatedLocalMultiDayCandidateCount = nextDrafts.filter(
+    (draft) => getCandidateHiddenReasons(draft).includes('repeated_local_multi_day_candidate'),
+  ).length;
+  const hiddenDailyPhotoEventCandidateCount = nextDrafts.filter(
+    (draft) => getCandidateHiddenReasons(draft).includes('likely_daily_photo_event'),
+  ).length;
+  const warningStaticLocationCandidateCount = nextDrafts.filter(
+    (draft) => draft.debugMetadata.warningReasons.includes('possible_daily_life_long_range'),
+  ).length;
   const pendingEnrichmentCandidateCount = nextDrafts.filter((draft) => (
     draft.debugMetadata.confidenceLevel !== 'low' &&
     draft.debugMetadata.gpsPhotoCount > 0 &&
@@ -2453,6 +3680,18 @@ async function scanPhotoLibraryForTripDrafts(
     isFiniteCoordinateValue(draft.debugMetadata.centroidLng) &&
     draft.enrichmentStatus === 'pending'
   )).length;
+  const highConfidenceTripCandidateCount = nextDrafts.filter(
+    (draft) => syncCandidateQualityMetadata(draft).candidateQualityType === 'high_confidence_trip',
+  ).length;
+  const reviewNeededCandidateCount = nextDrafts.filter(
+    (draft) => syncCandidateQualityMetadata(draft).candidateQualityType === 'review_needed_candidate',
+  ).length;
+  const dailyLifeCandidateCount = nextDrafts.filter(
+    (draft) => syncCandidateQualityMetadata(draft).candidateQualityType === 'daily_life_candidate',
+  ).length;
+  const weakCandidateCount = nextDrafts.filter(
+    (draft) => syncCandidateQualityMetadata(draft).candidateQualityType === 'weak_candidate',
+  ).length;
   const candidatesWithGpsCount = nextDrafts.filter((draft) => draft.debugMetadata.gpsPhotoCount > 0).length;
   const candidatesWithValidCentroidCount = nextDrafts.filter((draft) => (
     isFiniteCoordinateValue(draft.debugMetadata.centroidLat) &&
@@ -2500,6 +3739,104 @@ async function scanPhotoLibraryForTripDrafts(
   const longTripVisibleCandidateCount = visibleDrafts.filter(
     (draft) => draft.debugMetadata.dayCount >= LONG_TRIP_MIN_DAYS,
   ).length;
+  const visibleHighConfidenceTripCandidateCount = visibleDrafts.filter(
+    (draft) => syncCandidateQualityMetadata(draft).candidateQualityType === 'high_confidence_trip',
+  ).length;
+  const visibleReviewNeededCandidateCount = visibleDrafts.filter(
+    (draft) => syncCandidateQualityMetadata(draft).candidateQualityType === 'review_needed_candidate',
+  ).length;
+  const visibleCandidatesWithGpsButNoLocationLabelCount = visibleDrafts.filter((draft) => (
+    draft.debugMetadata.gpsPhotoCount > 0 &&
+    isFiniteCoordinateValue(draft.debugMetadata.centroidLat) &&
+    isFiniteCoordinateValue(draft.debugMetadata.centroidLng) &&
+    !draft.locationLabel
+  )).length;
+  const pendingLocationTitleCandidateCount = visibleDrafts.filter(
+    (draft) => draft.enrichmentStatus === 'pending',
+  ).length;
+  const failedLocationTitleCandidateCount = visibleDrafts.filter(
+    (draft) => draft.enrichmentStatus === 'failed',
+  ).length;
+  const rateLimitedLocationTitleCandidateCount = visibleDrafts.filter(
+    (draft) => draft.enrichmentStatus === 'rate_limited',
+  ).length;
+  const fallbackLocationTitleCandidateCount = visibleDrafts.filter((draft) => (
+    draft.displayTitle === LOCATION_BASED_TRIP_TITLE ||
+    draft.displayTitle === OVERSEAS_TRIP_TITLE
+  )).length;
+  const unresolvedRegionTitleAppliedCount = visibleDrafts.filter((draft) => (
+    draft.displayTitle === UNRESOLVED_REGION_TITLE
+  )).length;
+  const genericFallbackTitleSuppressedCount = visibleDrafts.filter((draft) => (
+    draft.debugMetadata.genericFallbackSuppressed
+  )).length;
+  const pendingFallbackAppliedCount = visibleDrafts.filter((draft) => (
+    draft.enrichmentStatus === 'pending' &&
+    (
+      draft.displayTitle === LOCATION_BASED_TRIP_TITLE ||
+      draft.displayTitle === OVERSEAS_TRIP_TITLE
+    )
+  )).length;
+  const visiblePendingDraftCount = visibleDrafts.filter((draft) => draft.enrichmentStatus === 'pending').length;
+  const visiblePendingLocationTitleCandidateCount = visibleDrafts.filter((draft) => (
+    syncCandidateQualityMetadata(draft).isLocationTitlePending
+  )).length;
+  const visibleCandidatesUsingGroupCentroidTitleCount = visibleDrafts.filter(
+    (draft) => (
+      draft.debugMetadata.candidateTitleCoordinateSource === 'first_located_group_centroid' ||
+      draft.debugMetadata.candidateTitleCoordinateSource === 'largest_located_group_centroid'
+    ),
+  ).length;
+  const candidateTitleFromFirstLocatedGroupCount = visibleDrafts.filter(
+    (draft) => (
+      draft.debugMetadata.candidateTitleCoordinateSource === 'first_located_group_centroid' ||
+      draft.debugMetadata.candidateTitleLocationSource === 'first_located_group_label' ||
+      draft.debugMetadata.candidateTitleLocationSource === 'first_located_group_centroid'
+    ),
+  ).length;
+  const candidateTitleFromLargestLocatedGroupCount = visibleDrafts.filter(
+    (draft) => (
+      draft.debugMetadata.candidateTitleCoordinateSource === 'largest_located_group_centroid' ||
+      draft.debugMetadata.candidateTitleLocationSource === 'largest_located_group_label' ||
+      draft.debugMetadata.candidateTitleLocationSource === 'largest_located_group_centroid'
+    ),
+  ).length;
+  const groupLocationLabelAvailableCount = visibleDrafts.filter((draft) => (
+    isResolvedLocatedGroupLabel(draft.debugMetadata.firstLocatedGroupLabel)
+  )).length;
+  const groupLocationLabelPendingCount = visibleDrafts.filter((draft) => (
+    draft.debugMetadata.firstLocatedGroupLabel &&
+    !isResolvedLocatedGroupLabel(draft.debugMetadata.firstLocatedGroupLabel)
+  )).length;
+  const titleEnrichmentPendingSkippedCount = visibleDrafts.filter(
+    (draft) => draft.debugMetadata.titleFinalizeReason === 'skipped',
+  ).length;
+  const titleEnrichmentPendingUiTimedOutCount = visibleDrafts.filter(
+    (draft) => draft.debugMetadata.titleFinalizeReason === 'ui_timeout',
+  ).length;
+  const titleEnrichmentFinalizedWithoutLabelCount = visibleDrafts.filter(
+    (draft) => draft.debugMetadata.titleFinalizeReason === 'finalized_without_label',
+  ).length;
+  const titleEnrichmentLateSuccessCount = visibleDrafts.filter(
+    (draft) => draft.debugMetadata.titleFinalizeReason === 'late_success',
+  ).length;
+  const genericFallbackUsedAfterAllGroupAttemptsFailedCount = unresolvedRegionTitleAppliedCount;
+  const visibleCandidatesUsingRepresentativeGpsTitleCount = visibleDrafts.filter(
+    (draft) => draft.debugMetadata.candidateTitleCoordinateSource === 'representative_gps_photo',
+  ).length;
+  const overseasCityTitleNormalizedCount = nextDrafts.filter((draft) => (
+    draft.debugMetadata.isOverseasCandidate &&
+    draft.debugMetadata.normalizedCityName
+  )).length;
+  const domesticTitleNormalizedCount = nextDrafts.filter((draft) => (
+    draft.debugMetadata.isOverseasCandidate === false &&
+    draft.debugMetadata.normalizedCityName
+  )).length;
+  const overseasMajorCityNormalizedCount = nextDrafts.filter((draft) => (
+    draft.debugMetadata.overseasTitleSource === 'major_city_bbox' ||
+    draft.debugMetadata.overseasTitleSource === 'major_city_alias'
+  )).length;
+  const overseasSuburbSuppressedCount = overseasMajorCityNormalizedCount;
 
   enrichDraftTitlesInBackground(nextDrafts, options.onCandidatesUpdated);
   options.onProgress?.({
@@ -2512,7 +3849,13 @@ async function scanPhotoLibraryForTripDrafts(
 
   if (__DEV__) {
     for (const draft of nextDrafts) {
+      const quality = syncCandidateQualityMetadata(draft);
+
       console.info('[detected trip candidate]', {
+        candidateQualityScore: quality.candidateQualityScore,
+        candidateQualityType: quality.candidateQualityType,
+        candidateTitleCoordinateSource: draft.debugMetadata.candidateTitleCoordinateSource,
+        candidateTitleLocationSource: draft.debugMetadata.candidateTitleLocationSource,
         confidenceLevel: draft.debugMetadata.confidenceLevel,
         confidenceScore: draft.debugMetadata.confidenceScore,
         dayCount: draft.debugMetadata.dayCount,
@@ -2527,23 +3870,71 @@ async function scanPhotoLibraryForTripDrafts(
           isFiniteCoordinateValue(draft.debugMetadata.centroidLat) &&
           isFiniteCoordinateValue(draft.debugMetadata.centroidLng),
         hiddenFromCandidateList: !canShowDraftAsCandidate(draft),
-        hiddenReasons: getCandidateHiddenReasons(draft),
+        hiddenReasons: quality.hiddenReasons,
+        hasLocationTitle: draft.debugMetadata.hasLocationTitle,
         locationClusterCount: draft.debugMetadata.locationClusterCount,
         locationLabel: draft.locationLabel,
         enrichmentStatus: draft.enrichmentStatus,
+        firstLocatedGroupCentroidLat: draft.debugMetadata.firstLocatedGroupCentroidLat,
+        firstLocatedGroupCentroidLng: draft.debugMetadata.firstLocatedGroupCentroidLng,
+        firstLocatedGroupLabel: draft.debugMetadata.firstLocatedGroupLabel,
+        firstLocatedGroupPhotoCount: draft.debugMetadata.firstLocatedGroupPhotoCount,
+        firstLocatedGroupRepresentativeGpsLat: draft.debugMetadata.firstLocatedGroupRepresentativeGpsLat,
+        firstLocatedGroupRepresentativeGpsLng: draft.debugMetadata.firstLocatedGroupRepresentativeGpsLng,
+        finalTitleResolutionState: draft.debugMetadata.titleResolveState,
+        isHighConfidenceTrip: quality.isHighConfidenceTrip,
+        isLikelyDailyLifeCandidate: quality.isLikelyDailyLifeCandidate,
+        isLocationTitlePending: quality.isLocationTitlePending,
+        isLowMobilityCandidate: quality.isLowMobilityCandidate,
+        isOverseasCandidate: draft.debugMetadata.isOverseasCandidate,
         maxDistanceKm: draft.debugMetadata.maxDistanceKm,
         mergedFromCandidateCount: draft.debugMetadata.mergedFromCandidateCount,
         noGpsPhotoCount: draft.debugMetadata.noGpsPhotoCount,
+        normalizedCityName: draft.debugMetadata.normalizedCityName,
+        overseasTitleSource: draft.debugMetadata.overseasTitleSource,
         photoCount: draft.debugMetadata.photoCount,
+        rawLocationLabel: draft.debugMetadata.rawLocationLabel,
+        rawPlacemarkCity: draft.debugMetadata.rawPlacemarkCity,
+        rawPlacemarkCountry: draft.debugMetadata.rawPlacemarkCountry,
+        rawPlacemarkDistrict: draft.debugMetadata.rawPlacemarkDistrict,
+        rawPlacemarkRegion: draft.debugMetadata.rawPlacemarkRegion,
+        rawPlacemarkSubregion: draft.debugMetadata.rawPlacemarkSubregion,
         realPhotoCount: draft.debugMetadata.realPhotoCount,
+        repeatedLocalClusterActiveMonthCount: draft.debugMetadata.repeatedLocalClusterActiveMonthCount,
+        repeatedLocalClusterCandidateCount: draft.debugMetadata.repeatedLocalClusterCandidateCount,
+        repeatedLocalClusterDateSpanDays: draft.debugMetadata.repeatedLocalClusterDateSpanDays,
+        representativeGpsLat: draft.debugMetadata.representativeGpsLat,
+        representativeGpsLng: draft.debugMetadata.representativeGpsLng,
+        representativeGroupPhotoCount: draft.debugMetadata.representativeGroupPhotoCount,
         savedImageCount: draft.debugMetadata.savedImageCount,
         savedImageRatio: draft.debugMetadata.savedImageRatio,
         screenshotPhotoCount: draft.debugMetadata.screenshotPhotoCount,
+        reviewNeededReasons: quality.reviewNeededReasons,
         splitReason: draft.debugMetadata.splitReason,
         startDate: draft.debugMetadata.startDate,
         isLongTripCandidate: draft.debugMetadata.isLongTripCandidate,
         title: draft.title,
+        titleEnrichmentElapsedMs: draft.debugMetadata.titleEnrichmentElapsedMs,
+        titleEnrichmentFinalizedAt: draft.debugMetadata.titleEnrichmentFinalizedAt,
+        titleEnrichmentStartedAt: draft.debugMetadata.titleEnrichmentStartedAt,
+        titleFinalizeReason: draft.debugMetadata.titleFinalizeReason,
+        titleGeocodingQueued: draft.debugMetadata.titleGeocodingQueued,
+        titleGeocodingInFlight: draft.debugMetadata.titleGeocodingInFlight,
+        titleGeocodingRetryable: draft.debugMetadata.titleGeocodingRetryable,
+        titleGeocodingSkippedReason: draft.debugMetadata.titleGeocodingSkippedReason,
+        titleResolveState: draft.debugMetadata.titleResolveState,
+        candidateTitleTransition: draft.debugMetadata.titleResolveState === 'success'
+          ? draft.debugMetadata.titleFinalizeReason === 'late_success'
+            ? 'unresolved_to_late_success'
+            : 'pending_to_success'
+          : draft.debugMetadata.titleResolveState === 'unresolved'
+            ? 'pending_to_unresolved'
+            : 'pending',
+        genericFallbackSuppressed: draft.debugMetadata.genericFallbackSuppressed,
+        unresolvedRegionFallbackTitle: draft.debugMetadata.unresolvedRegionFallbackTitle,
+        unresolvedTitleFallbackSource: draft.debugMetadata.unresolvedTitleFallbackSource,
         warningReasons: draft.debugMetadata.warningReasons,
+        wasMergedFromDailyEvents: draft.debugMetadata.wasMergedFromDailyEvents,
       });
     }
 
@@ -2567,8 +3958,17 @@ async function scanPhotoLibraryForTripDrafts(
       ).length,
       coverPhotoUrisRenderable: nextDrafts.map((draft) => isRenderableImageUri(draft.coverPhotoUri)),
       detectedTripCandidateCount: nextDrafts.length,
+      domesticTitleNormalizedCount,
+      dailyLifeCandidateCount,
       generatedDraftIds: nextDrafts.map((draft) => draft.id),
       hiddenSavedImageHeavyCandidateCount,
+      hiddenDailyPhotoEventCandidateCount,
+      hiddenLocationTitleUnresolvedLowConfidenceCount,
+      hiddenLowMobilityCandidateCount,
+      hiddenLowMobilityMultiDayCandidateCount,
+      hiddenMergedDailyEventsCandidateCount,
+      hiddenRepeatedDailyLocationCandidateCount,
+      hiddenRepeatedLocalMultiDayCandidateCount,
       hiddenTooFewCameraPhotosCandidateCount,
       hiddenNoLocationTitleCandidateCount,
       hiddenLowConfidenceCandidateCount,
@@ -2578,15 +3978,44 @@ async function scanPhotoLibraryForTripDrafts(
       hiddenWeakOneDayCandidateCount,
       hiddenWeakLongTripCandidateCount,
       hiddenLowGpsPhotoCandidateCount,
+      highConfidenceTripCandidateCount,
+      failedLocationTitleCandidateCount,
+      fallbackLocationTitleCandidateCount,
+      genericFallbackTitleSuppressedCount,
+      candidateTitleFromFirstLocatedGroupCount,
+      candidateTitleFromLargestLocatedGroupCount,
+      candidateTitleUpdatedFromGroupLabelCount: visibleDrafts.filter(
+        (draft) => (
+          draft.debugMetadata.candidateTitleLocationSource === 'first_located_group_label' ||
+          draft.debugMetadata.candidateTitleLocationSource === 'largest_located_group_label'
+        ),
+      ).length,
+      genericFallbackUsedAfterAllGroupAttemptsFailedCount,
+      groupLocationLabelAvailableCount,
+      groupLocationLabelPendingCount,
+      pendingFallbackAppliedCount,
       initialRangeCandidateCount: candidateGenerationStats.initialRangeCandidateCount,
       longTripCandidateCount: candidateGenerationStats.longTripCandidateCount,
       longTripPostMergeCount: candidateGenerationStats.longTripPostMergeCount,
       longTripVisibleCandidateCount,
+      mergedDailyEventsCandidateCount,
       oneDayCandidateCount: candidateGenerationStats.oneDayCandidateCount,
       oneDayVisibleCandidateCount,
       oversizedCandidateSplitCount,
       pageCount,
       pendingEnrichmentCandidateCount,
+      pendingLocationTitleCandidateCount,
+      pendingTitleDisplayedCount: visibleDrafts.filter((draft) => (
+        draft.displayTitle === PENDING_LOCATION_TITLE ||
+        draft.title === PENDING_LOCATION_TITLE
+      )).length,
+      pendingTitleCandidateCountAfterFinalize: visibleDrafts.filter((draft) => (
+        draft.displayTitle === PENDING_LOCATION_TITLE ||
+        draft.title === PENDING_LOCATION_TITLE
+      )).length,
+      pendingTitleCandidateCountBeforeFinalize: pendingLocationTitleCandidateCount,
+      pendingTitleMaxAgeMs: PENDING_TITLE_MAX_AGE_MS,
+      unresolvedRegionTitleAppliedCount,
       photosAfterScreenshotFilterCount,
       photosWithCoordinatesCount,
       rawDateBucketCount: candidateGenerationStats.rawDateBucketCount,
@@ -2598,11 +4027,86 @@ async function scanPhotoLibraryForTripDrafts(
       splitByDateGapCount: candidateGenerationStats.splitByDateGapCount,
       splitByDistanceCount: candidateGenerationStats.splitByDistanceCount,
       splitByGpsMixedCount: candidateGenerationStats.splitByGpsMixedCount,
+      rateLimitedLocationTitleCandidateCount,
+      reviewNeededCandidateCount,
+      overseasCityTitleNormalizedCount,
+      overseasMajorCityNormalizedCount,
+      overseasSuburbSuppressedCount,
       totalAssetCount,
+      visibleCandidatesWithGpsButNoLocationLabelCount,
+      visibleCandidatesUsingGroupCentroidTitleCount,
+      visibleCandidatesUsingRepresentativeGpsTitleCount,
       visibleDetectedTripCandidateCount: candidates.length,
+      visibleHighConfidenceTripCandidateCount,
+      visiblePendingLocationTitleCandidateCount,
+      visibleReviewNeededCandidateCount,
+      warningStaticLocationCandidateCount,
+      titleEnrichmentFinalizedWithoutLabelCount,
+      titleEnrichmentLateSuccessCount,
+      titleEnrichmentPendingSkippedCount,
+      titleEnrichmentPendingUiTimedOutCount,
+      firstLocatedGroupTitleGeocodingQueuedCount: visibleDrafts.filter(
+        (draft) => (
+          (
+            draft.debugMetadata.candidateTitleCoordinateSource === 'first_located_group_centroid' ||
+            draft.debugMetadata.candidateTitleCoordinateSource === 'first_located_group_representative_gps'
+          ) &&
+          draft.debugMetadata.titleGeocodingQueued
+        ),
+      ).length,
+      firstLocatedGroupTitleGeocodingSuccessCount: visibleDrafts.filter(
+        (draft) => (
+          (
+            draft.debugMetadata.candidateTitleCoordinateSource === 'first_located_group_centroid' ||
+            draft.debugMetadata.candidateTitleCoordinateSource === 'first_located_group_representative_gps'
+          ) &&
+          draft.debugMetadata.titleResolveState === 'success'
+        ),
+      ).length,
+      firstLocatedGroupTitleGeocodingFailedCount: visibleDrafts.filter(
+        (draft) => (
+          (
+            draft.debugMetadata.candidateTitleCoordinateSource === 'first_located_group_centroid' ||
+            draft.debugMetadata.candidateTitleCoordinateSource === 'first_located_group_representative_gps'
+          ) &&
+          draft.debugMetadata.titleResolveState === 'unresolved'
+        ),
+      ).length,
+      unresolvedRegionTitleBlockedBecauseGroupPendingCount: visibleDrafts.filter(
+        (draft) => (
+          (
+            draft.debugMetadata.candidateTitleCoordinateSource === 'first_located_group_centroid' ||
+            draft.debugMetadata.candidateTitleCoordinateSource === 'first_located_group_representative_gps'
+          ) &&
+          draft.debugMetadata.titleResolveState === 'pending' &&
+          (
+            draft.displayTitle === PENDING_LOCATION_TITLE ||
+            draft.title === PENDING_LOCATION_TITLE
+          )
+        ),
+      ).length,
+      weakCandidateCount,
     });
     console.info('[photo-import enrichment] title phase scheduled', {
       candidateCountAfterLongTripMerge: candidateGenerationStats.candidateCountAfterLongTripMerge,
+      titleGeocodingQueueLimit: TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT,
+      titleGeocodingVisibleCandidateCount: visiblePendingDraftCount,
+      titleGeocodingQueuedVisibleCandidateCount: Math.min(
+        TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT,
+        visiblePendingDraftCount,
+      ),
+      titleGeocodingSkippedVisibleCandidateCount: Math.max(
+        0,
+        visiblePendingDraftCount - TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT,
+      ),
+      locationTitleEnrichmentQueuedCount: Math.min(
+        TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT,
+        visiblePendingDraftCount,
+      ),
+      locationTitleEnrichmentSkippedCount: Math.max(
+        0,
+        visiblePendingDraftCount - TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT,
+      ),
       hiddenNoLocationTitleCandidateCount,
       hiddenLowConfidenceCandidateCount,
       hiddenScreenshotCandidateCount,
@@ -2624,6 +4128,7 @@ async function scanPhotoLibraryForTripDrafts(
     assetsWithoutLocationCount,
     candidates,
     detectedTripCandidateCount: nextDrafts.length,
+    duplicateCandidateCount,
     drafts: nextDrafts,
     hiddenNoLocationTitleCandidateCount,
     hiddenLowConfidenceCandidateCount,
@@ -2631,6 +4136,10 @@ async function scanPhotoLibraryForTripDrafts(
     hiddenTooFewRealPhotosCandidateCount,
     hiddenWeakSingleDayCandidateCount,
     hiddenLowGpsPhotoCandidateCount,
+    livingAreaApplied: Boolean(options.livingArea),
+    livingAreaDisplayName: options.livingArea?.displayName,
+    livingAreaExcludedPhotoCount: livingAreaFilterResult.excludedPhotoCount,
+    livingAreaUnclassifiedPhotoCount: livingAreaFilterResult.unclassifiedPhotoCount,
     oversizedCandidateSplitCount,
     pageCount,
     pendingEnrichmentCandidateCount,

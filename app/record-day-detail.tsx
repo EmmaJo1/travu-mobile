@@ -21,6 +21,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
+import FullScreenImageViewer from '@/components/common/FullScreenImageViewer';
 import StartTripSetupModal, {
   type StartTripSetupValue,
 } from '@/components/home/StartTripSetupModal';
@@ -192,11 +193,19 @@ function normalizeDetectedTripHeaderTitle(value?: string | null) {
     return null;
   }
 
+  if (rawTitle === '지역 확인 중') {
+    return '지역 확인 중';
+  }
+
   if (
+    rawTitle === '지역 확인 중 여행' ||
+    rawTitle === '지역 미확인 여행' ||
+    rawTitle === '위치 기반 여행' ||
+    rawTitle === '해외 여행' ||
     rawTitle === '사진첩 여행 후보' ||
     /^\d{4}\.\s?\d{1,2}\.\s?\d{1,2}/.test(rawTitle)
   ) {
-    return null;
+    return '지역 미확인 여행';
   }
 
   const baseTitle = rawTitle
@@ -1197,6 +1206,7 @@ export default function RecordDayDetailScreen() {
   const [photoGridEntry, setPhotoGridEntry] = useState<PlaceEntry | null>(null);
   const [isPhotoGridSelectionMode, setPhotoGridSelectionMode] = useState(false);
   const [selectedPhotoIndexes, setSelectedPhotoIndexes] = useState<number[]>([]);
+  const [photoViewerIndex, setPhotoViewerIndex] = useState<number | null>(null);
   const [, setPendingDeletePhoto] = useState<{
     entry: PlaceEntry;
     photoIndex: number;
@@ -1481,6 +1491,21 @@ export default function RecordDayDetailScreen() {
     ],
   );
   const photoGridSources = useMemo(() => getPhotoSources(photoGridEntry), [photoGridEntry]);
+  useEffect(() => {
+    if (photoViewerIndex == null) {
+      return;
+    }
+
+    if (photoGridSources.length === 0) {
+      setPhotoViewerIndex(null);
+      return;
+    }
+
+    if (photoViewerIndex > photoGridSources.length - 1) {
+      setPhotoViewerIndex(photoGridSources.length - 1);
+    }
+  }, [photoGridSources.length, photoViewerIndex]);
+
   const headerTitleInfo = useMemo(() => {
     const dateHeaderTitle = formatHeaderDate(selectedDay);
     const isDetectedHeaderRoute =
@@ -1499,12 +1524,12 @@ export default function RecordDayDetailScreen() {
     }
 
     const titleCandidates = [
-      { source: 'routeDisplayTitle', value: displayTitle },
-      { source: 'routeTripTitle', value: tripTitle },
-      { source: 'routeCityName', value: cityName },
       { source: 'localDetectedDraftDisplayTitle', value: localDetectedTripDraft?.displayTitle },
       { source: 'localDetectedDraftTitle', value: localDetectedTripDraft?.title },
       { source: 'localDetectedDraftLocationLabel', value: localDetectedTripDraft?.locationLabel },
+      { source: 'routeDisplayTitle', value: displayTitle },
+      { source: 'routeTripTitle', value: tripTitle },
+      { source: 'routeCityName', value: cityName },
     ];
 
     for (const candidate of titleCandidates) {
@@ -1648,6 +1673,7 @@ export default function RecordDayDetailScreen() {
     setPhotoGridEntry(null);
     setPhotoGridSelectionMode(false);
     setSelectedPhotoIndexes([]);
+    setPhotoViewerIndex(null);
   };
 
   const togglePhotoGridSelection = (photoIndex: number) => {
@@ -1797,6 +1823,36 @@ export default function RecordDayDetailScreen() {
     setPhotoGridEntry(entry);
     setPhotoGridSelectionMode(false);
     setSelectedPhotoIndexes([]);
+    setPhotoViewerIndex(null);
+  };
+
+  const handleOpenPhotoViewerFromGrid = (index: number) => {
+    if (photoGridSources.length === 0) {
+      if (__DEV__) {
+        console.warn('[record-day-detail photo viewer]', {
+          photoViewerOpenFailureReason: 'empty_photo_grid_sources',
+          photoGridPressedIndex: index,
+          photoViewerPhotoCount: photoGridSources.length,
+        });
+      }
+      return;
+    }
+
+    const initialIndex = Math.max(0, Math.min(index, photoGridSources.length - 1));
+
+    if (__DEV__) {
+      console.info('[record-day-detail photo viewer]', {
+        photoGridItemPressCount: 1,
+        photoGridPressedIndex: index,
+        photoGridPressedPhotoId: `record-grid-photo-${initialIndex}`,
+        photoViewerInitialIndex: initialIndex,
+        photoViewerOpenRequestedCount: 1,
+        photoViewerOpenSucceeded: true,
+        photoViewerPhotoCount: photoGridSources.length,
+      });
+    }
+
+    setPhotoViewerIndex(initialIndex);
   };
 
   const getEntryDayId = (entry: PlaceEntry) => {
@@ -2181,6 +2237,17 @@ export default function RecordDayDetailScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader
         balancedSlots
+        leftSlot={
+          <Pressable
+            accessibilityLabel="뒤로가기"
+            accessibilityRole="button"
+            hitSlop={10}
+            onPress={() => router.back()}
+            style={styles.headerBackButton}
+          >
+            <Feather name="chevron-left" size={28} color={Colors.foundation.black} />
+          </Pressable>
+        }
         onBackPress={() => router.back()}
         centerSlot={
           <Text style={styles.headerDateText}>{headerTitleInfo.title}</Text>
@@ -2433,7 +2500,10 @@ export default function RecordDayDetailScreen() {
                   onPress={() => {
                     if (isPhotoGridSelectionMode) {
                       togglePhotoGridSelection(index);
+                      return;
                     }
+
+                    handleOpenPhotoViewerFromGrid(index);
                   }}
                   style={[
                     styles.photoGridItem,
@@ -2454,6 +2524,13 @@ export default function RecordDayDetailScreen() {
           </ScrollView>
         </SafeAreaView>
       </Modal>
+
+      <FullScreenImageViewer
+        images={photoGridSources}
+        initialIndex={photoViewerIndex ?? 0}
+        visible={photoViewerIndex != null && photoGridSources.length > 0}
+        onClose={() => setPhotoViewerIndex(null)}
+      />
 
       <DaySelectorSheet
         visible={daySheetVisible}
@@ -2487,6 +2564,13 @@ const styles = StyleSheet.create({
     ...Typography.body1Regular,
     color: Colors.foundation.black,
     textAlign: 'center',
+  },
+  headerBackButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: -10,
   },
   headerMoreButton: {
     width: 44,
@@ -2644,7 +2728,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: Spacing.xs,
     paddingHorizontal: Spacing.xl,
-    paddingTop: Spacing.lg,
+    paddingTop: Spacing.sm,
     paddingBottom: Spacing['4xl'],
   },
   photoGridItem: {

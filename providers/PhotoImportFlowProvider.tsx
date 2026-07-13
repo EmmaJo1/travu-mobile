@@ -1,6 +1,11 @@
 import React from 'react';
 
 import { addSavedPhotoImportCandidates } from '@/constants/savedMyPageTrips';
+import { useUserProfile } from '@/providers/UserProfileProvider';
+import {
+  createLivingAreaFromProfile,
+  type LivingArea,
+} from '@/services/location/livingAreas';
 import {
   hydrateLocalDetectedTripDraftCovers,
   scanEntirePhotoLibraryForTrips,
@@ -12,6 +17,11 @@ import type {
   PhotoImportStatus,
   PhotoImportTripCandidate,
 } from '@/services/photoImport/types';
+
+type PhotoImportRunOptions = {
+  livingArea?: LivingArea | null;
+  source?: 'home' | 'onboarding';
+};
 
 interface PhotoImportFlowContextValue {
   status: PhotoImportStatus;
@@ -27,8 +37,8 @@ interface PhotoImportFlowContextValue {
   lastScanResult?: PhotoLibraryScanResult;
   scanProgress?: PhotoLibraryScanProgress;
   startPhotoImportAnalysis: () => void;
-  requestAccessAndStartAnalysis: () => Promise<void>;
-  runPhotoImportDetection: () => Promise<PhotoImportDetectionState>;
+  requestAccessAndStartAnalysis: (options?: PhotoImportRunOptions) => Promise<void>;
+  runPhotoImportDetection: (options?: PhotoImportRunOptions) => Promise<PhotoImportDetectionState>;
   hydrateCandidateCovers: (candidateIds: string[]) => Promise<void>;
   toggleCandidate: (candidateId: string) => void;
   openPhotoImportResults: () => void;
@@ -43,6 +53,7 @@ interface PhotoImportFlowContextValue {
 const PhotoImportFlowContext = React.createContext<PhotoImportFlowContextValue | null>(null);
 
 export function PhotoImportFlowProvider({ children }: { children: React.ReactNode }) {
+  const { profile } = useUserProfile();
   const [status, setStatus] = React.useState<PhotoImportStatus>('not_started');
   const [detectionState, setDetectionState] =
     React.useState<PhotoImportDetectionState>('idle');
@@ -71,11 +82,15 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
     setScanProgress(undefined);
   }, []);
 
-  const runPhotoImportDetection = React.useCallback(async () => {
+  const runPhotoImportDetection = React.useCallback(async (options: PhotoImportRunOptions = {}) => {
     startPhotoImportAnalysis();
+    const resolvedLivingArea = options.livingArea === undefined
+      ? createLivingAreaFromProfile(profile.basedIn, profile.basedInPlace)
+      : options.livingArea;
 
     try {
       const scanResult = await scanEntirePhotoLibraryForTrips({
+        livingArea: resolvedLivingArea,
         onCandidatesUpdated: (updatedCandidates) => {
           setCandidates(updatedCandidates);
           setSelectedCandidateIds(
@@ -85,6 +100,7 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
           );
         },
         onProgress: setScanProgress,
+        source: options.source ?? 'home',
       });
 
       if (scanResult.permissionState === 'denied') {
@@ -121,10 +137,10 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
         console.info('[photo-import scan] cleanup executed');
       }
     }
-  }, [startPhotoImportAnalysis]);
+  }, [profile.basedIn, profile.basedInPlace, startPhotoImportAnalysis]);
 
-  const requestAccessAndStartAnalysis = React.useCallback(async () => {
-    await runPhotoImportDetection();
+  const requestAccessAndStartAnalysis = React.useCallback(async (options?: PhotoImportRunOptions) => {
+    await runPhotoImportDetection(options);
   }, [runPhotoImportDetection]);
 
   const hydrateCandidateCovers = React.useCallback(async (candidateIds: string[]) => {
