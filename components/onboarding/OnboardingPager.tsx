@@ -553,7 +553,7 @@ function PhotoLibraryPage({
 
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="사진첩 연결하기"
+          accessibilityLabel="시작하기"
           onPress={onConnect}
           style={({ pressed }) => [
             styles.connectButton,
@@ -565,7 +565,7 @@ function PhotoLibraryPage({
             pressed && styles.buttonPressed,
           ]}
         >
-          <Text style={styles.connectButtonLabel}>사진첩 연결하기</Text>
+          <Text style={styles.connectButtonLabel}>시작하기</Text>
         </Pressable>
 
         <Pressable

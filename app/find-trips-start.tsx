@@ -245,8 +245,8 @@ const styles = StyleSheet.create({
     height: 44,
   },
   content: {
-    paddingHorizontal: 35,
-    paddingTop: 72,
+    paddingHorizontal: Spacing.xl,
+    paddingTop: 132,
   },
   title: {
     ...Typography.title1,
@@ -260,7 +260,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
   },
   fieldBlock: {
-    marginTop: 48,
+    marginTop: 96,
     gap: Spacing.sm,
   },
   fieldHeader: {
@@ -380,8 +380,8 @@ const styles = StyleSheet.create({
   },
   footer: {
     position: 'absolute',
-    left: 35,
-    right: 35,
+    left: Spacing.xl,
+    right: Spacing.xl,
     bottom: 0,
     alignItems: 'center',
     gap: Spacing.lg,
