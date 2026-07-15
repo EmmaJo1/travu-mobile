@@ -21,17 +21,15 @@ export default function FindTripsLoading() {
   const params = useLocalSearchParams<{ skipLivingArea?: string; source?: string }>();
   const insets = useSafeAreaInsets();
   const {
-    status,
     detectionState,
     errorMessage,
     progress,
-    candidates,
-    lastScanResult,
     scanProgress,
     runPhotoImportDetection,
     deferPhotoImportResults,
   } = usePhotoImportFlow();
   const hasStartedRef = React.useRef(false);
+  const activeRequestIdRef = React.useRef(0);
 
   const routeDetectionResult = React.useCallback(
     (result: PhotoImportDetectionState) => {
@@ -54,11 +52,37 @@ export default function FindTripsLoading() {
 
   const startDetection = React.useCallback(() => {
     hasStartedRef.current = true;
+    const requestId = activeRequestIdRef.current + 1;
+    activeRequestIdRef.current = requestId;
+    const rawSkipLivingAreaParam = params.skipLivingArea;
+    const rawSourceParam = params.source;
+    const skipLivingArea = rawSkipLivingAreaParam === 'true';
+    const source = rawSourceParam === 'onboarding' ? 'onboarding' : 'home';
+
+    if (__DEV__) {
+      console.info('[photo-import loading] fresh scan requested', {
+        photoScanFreshAttemptRequested: true,
+        rawSkipLivingAreaParam,
+        rawSourceParam,
+        requestId,
+        resolvedSource: source,
+        skipLivingArea,
+      });
+    }
+
     runPhotoImportDetection({
-      homeRegionFilterSkipReason: params.skipLivingArea === 'true' ? 'skipped_by_user' : undefined,
-      livingArea: params.skipLivingArea === 'true' ? null : undefined,
-      source: params.source === 'onboarding' ? 'onboarding' : 'home',
-    }).then(routeDetectionResult).catch(() => undefined);
+      homeRegionFilterSkipReason: skipLivingArea ? 'skipped_by_user' : undefined,
+      livingArea: skipLivingArea ? null : undefined,
+      source,
+    })
+      .then((result) => {
+        if (activeRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        routeDetectionResult(result);
+      })
+      .catch(() => undefined);
   }, [params.skipLivingArea, params.source, routeDetectionResult, runPhotoImportDetection]);
 
   React.useEffect(() => {
@@ -66,32 +90,19 @@ export default function FindTripsLoading() {
       return;
     }
 
-    if (status === 'analyzing' || status === 'results_ready' || status === 'reviewed') {
-      return;
-    }
-
     startDetection();
-  }, [startDetection, status]);
-
-  React.useEffect(() => {
-    if (status !== 'results_ready') {
-      return;
-    }
-
-    const hasVisibleOrPendingCandidates =
-      candidates.length > 0 || (lastScanResult?.pendingEnrichmentCandidateCount ?? 0) > 0;
-
-    router.replace((hasVisibleOrPendingCandidates ? '/detected-trips' : '/no-detected-trips') as Href);
-  }, [candidates.length, lastScanResult?.pendingEnrichmentCandidateCount, router, status]);
+  }, [startDetection]);
 
   const handleRetry = React.useCallback(() => {
     startDetection();
   }, [startDetection]);
 
   const handleGoHome = React.useCallback(() => {
+    activeRequestIdRef.current += 1;
     deferPhotoImportResults();
     router.replace('/(tabs)' as Href);
   }, [deferPhotoImportResults, router]);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar style="dark" />
@@ -115,9 +126,9 @@ export default function FindTripsLoading() {
       ) : (
         <>
           <View style={styles.loadingContent}>
-            <Text style={styles.title}>사진첩에서{'\n'}여행을 찾고 있어요</Text>
+            <Text style={styles.title}>사진첩에서{`\n`}여행을 찾고 있어요</Text>
             <Text style={styles.description}>
-              사진의 시간과 위치를 기준으로{'\n'}여행을 정리하고 있어요
+              사진의 시간과 위치를 기준으로{`\n`}여행을 정리하고 있어요
             </Text>
             <View style={styles.analysisProgressSection}>
               <PhotoAnalysisProgressSection
@@ -176,7 +187,7 @@ const styles = StyleSheet.create({
   },
   title: {
     position: 'absolute',
-    top: PHOTO_ANALYSIS_LOADING_LAYOUT.titleTop-48,
+    top: PHOTO_ANALYSIS_LOADING_LAYOUT.titleTop - 48,
     left: 0,
     right: 0,
     ...Typography.title1,
