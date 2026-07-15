@@ -4107,6 +4107,18 @@ async function scanPhotoLibraryForTripDrafts(
   options: PhotoLibraryScanOptions = {},
 ): Promise<PhotoLibraryScanResult> {
   const scanAttemptId = createPhotoScanAttemptId();
+  drafts.clear();
+  processedCandidateFingerprints.clear();
+  coverHydrationFailedDraftIds.clear();
+  coverHydrationInFlightDraftIds.clear();
+  coverHydrationCompletedDraftIds.clear();
+
+  if (__DEV__) {
+    console.info('[photo-import scan] transient state reset', {
+      photoScanTransientStateReset: true,
+      scanAttemptId,
+    });
+  }
   const isAvailable = await MediaLibrary.isAvailableAsync();
 
   if (!isAvailable) {
