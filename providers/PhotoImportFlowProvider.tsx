@@ -118,7 +118,13 @@ function getCandidatesForScanAttempt(
 
 function getCandidateIdentityKey(candidatesToCompare: PhotoImportTripCandidate[]) {
   return candidatesToCompare
-    .map((candidate) => `${candidate.id}:${candidate.debugMetadata?.scanAttemptId ?? ''}`)
+    .map((candidate) => [
+      candidate.id,
+      candidate.city,
+      candidate.photoCount,
+      candidate.debugMetadata?.scanAttemptId ?? '',
+      JSON.stringify(candidate.image),
+    ].join(':'))
     .join('|');
 }
 
