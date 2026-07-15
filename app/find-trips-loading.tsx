@@ -8,6 +8,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Text from '@/components/common/AppText';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import PhotoAnalysisProgressSection from '@/components/photo-import/PhotoAnalysisProgressSection';
+import { PHOTO_ANALYSIS_LOADING_LAYOUT } from '@/components/photo-import/photo-analysis-loading-layout';
 import { Colors, Radius, Typography } from '@/constants/theme';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
 import type { PhotoImportDetectionState } from '@/services/photoImport/types';
@@ -54,6 +55,7 @@ export default function FindTripsLoading() {
   const startDetection = React.useCallback(() => {
     hasStartedRef.current = true;
     runPhotoImportDetection({
+      homeRegionFilterSkipReason: params.skipLivingArea === 'true' ? 'skipped_by_user' : undefined,
       livingArea: params.skipLivingArea === 'true' ? null : undefined,
       source: params.source === 'onboarding' ? 'onboarding' : 'home',
     }).then(routeDetectionResult).catch(() => undefined);
@@ -112,7 +114,7 @@ export default function FindTripsLoading() {
         </View>
       ) : (
         <>
-          <View style={styles.centerCopy}>
+          <View style={styles.loadingContent}>
             <Text style={styles.title}>사진첩에서{'\n'}여행을 찾고 있어요</Text>
             <Text style={styles.description}>
               사진의 시간과 위치를 기준으로{'\n'}여행을 정리하고 있어요
@@ -126,11 +128,21 @@ export default function FindTripsLoading() {
             </View>
           </View>
 
-          <View style={[styles.helperRow, { bottom: Math.max(insets.bottom + 88, 112) }]}>
+          <View
+            style={[
+              styles.helperRow,
+              { bottom: Math.max(insets.bottom + 88, PHOTO_ANALYSIS_LOADING_LAYOUT.helperBottom) },
+            ]}
+          >
             <Feather name="info" size={12} color={Colors.foundation.grey400} />
             <Text style={styles.helperText}>홈으로 돌아가도 분석은 계속됩니다</Text>
           </View>
-          <Text style={[styles.completeText, { bottom: Math.max(insets.bottom + 68, 92) }]}>
+          <Text
+            style={[
+              styles.completeText,
+              { bottom: Math.max(insets.bottom + 68, PHOTO_ANALYSIS_LOADING_LAYOUT.completionBottom) },
+            ]}
+          >
             완료되면 알려드릴게요
           </Text>
         </>
@@ -140,7 +152,10 @@ export default function FindTripsLoading() {
         accessibilityRole="button"
         hitSlop={8}
         onPress={handleGoHome}
-        style={[styles.homeLink, { bottom: Math.max(insets.bottom + 128, 152) }]}
+        style={[
+          styles.homeLink,
+          { bottom: Math.max(insets.bottom + 128, PHOTO_ANALYSIS_LOADING_LAYOUT.homeLinkBottom) },
+        ]}
       >
         <Text style={styles.homeLinkText}>홈 화면으로 돌아가기</Text>
       </Pressable>
@@ -156,28 +171,32 @@ const styles = StyleSheet.create({
   header: {
     height: 44,
   },
-  centerCopy: {
-    position: 'absolute',
-    top: 127,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
+  loadingContent: {
+    ...StyleSheet.absoluteFillObject,
   },
   title: {
-    width: 230,
+    position: 'absolute',
+    top: PHOTO_ANALYSIS_LOADING_LAYOUT.titleTop-48,
+    left: 0,
+    right: 0,
     ...Typography.title1,
     color: Colors.foundation.black,
     textAlign: 'center',
   },
   description: {
-    width: 220,
-    marginTop: 20,
+    position: 'absolute',
+    top: PHOTO_ANALYSIS_LOADING_LAYOUT.descriptionTop,
+    left: 0,
+    right: 0,
     ...Typography.body1Regular,
     color: GREY_700,
     textAlign: 'center',
   },
   analysisProgressSection: {
-    marginTop: 44,
+    position: 'absolute',
+    top: PHOTO_ANALYSIS_LOADING_LAYOUT.progressTop,
+    left: 0,
+    right: 0,
     alignItems: 'center',
   },
   homeLink: {

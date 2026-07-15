@@ -32,6 +32,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
 import PhotoAnalysisProgressSection from '@/components/photo-import/PhotoAnalysisProgressSection';
+import { PHOTO_ANALYSIS_LOADING_LAYOUT } from '@/components/photo-import/photo-analysis-loading-layout';
 import { FIGMA_IMAGES } from '@/constants/figmaImages';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
@@ -123,6 +124,7 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
 
     hasStartedOnboardingScanRef.current = true;
     runPhotoImportDetection({
+      homeRegionFilterSkipReason: skipLivingAreaForOnboardingScan ? 'skipped_by_user' : undefined,
       livingArea: skipLivingAreaForOnboardingScan ? null : onboardingLivingArea,
       source: 'onboarding',
     }).then(() => {
@@ -752,13 +754,13 @@ function LivingAreaPage({
 
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="나중에 할게요"
+          accessibilityLabel="지역 설정 건너뛰기"
           disabled={isSaving}
           hitSlop={8}
           onPress={onSkip}
           style={[styles.photoSkipButton, { bottom: skipBottom }]}
         >
-          <Text style={styles.skipLabel}>나중에 할게요</Text>
+          <Text style={styles.skipLabel}>지역 설정 건너뛰기</Text>
         </Pressable>
 
         <View style={[styles.photoHelperRow, { bottom: helperBottom }]}>
@@ -1647,7 +1649,7 @@ const styles = StyleSheet.create({
   },
   analyzingTitle: {
     position: 'absolute',
-    top: 200,
+    top: PHOTO_ANALYSIS_LOADING_LAYOUT.titleTop,
     left: 0,
     right: 0,
     ...Typography.title1,
@@ -1657,7 +1659,7 @@ const styles = StyleSheet.create({
   },
   analyzingDescription: {
     position: 'absolute',
-    top: 256,
+    top: PHOTO_ANALYSIS_LOADING_LAYOUT.descriptionTop,
     left: 0,
     right: 0,
     ...Typography.body1Regular,
@@ -1667,14 +1669,14 @@ const styles = StyleSheet.create({
   },
   onboardingAnalysisProgressSection: {
     position: 'absolute',
-    top: 360,
+    top: PHOTO_ANALYSIS_LOADING_LAYOUT.progressTop,
     left: 0,
     right: 0,
     alignItems: 'center',
   },
   homePreviewButton: {
     position: 'absolute',
-    bottom: 152,
+    bottom: PHOTO_ANALYSIS_LOADING_LAYOUT.homeLinkBottom,
     left: '50%',
     zIndex: 20,
     width: 119,
@@ -1691,7 +1693,7 @@ const styles = StyleSheet.create({
   },
   analyzingHelperRow: {
     position: 'absolute',
-    bottom: 112,
+    bottom: PHOTO_ANALYSIS_LOADING_LAYOUT.helperBottom,
     left: '50%',
     zIndex: 20,
     width: 234,
@@ -1709,7 +1711,7 @@ const styles = StyleSheet.create({
   },
   completionCaption: {
     position: 'absolute',
-    bottom: 92,
+    bottom: PHOTO_ANALYSIS_LOADING_LAYOUT.completionBottom,
     left: '50%',
     zIndex: 20,
     width: 125,
