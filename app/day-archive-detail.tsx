@@ -967,6 +967,26 @@ export default function DayArchiveDetailScreen() {
         ? supabaseEntries
         : fallbackEntries
   ).filter((entry) => !deletedArchivePlaceIds.has(getEntryPlaceId(entry)));
+
+  React.useEffect(() => {
+    if (!__DEV__ || !isSupabaseArchiveTrip) {
+      return;
+    }
+
+    console.info('[day-archive-detail] saved trip detail fetched', {
+      savedTripDetailFetchedDayCount: supabaseTripDays?.length ?? 0,
+      savedTripDetailFetchedPlaceCount: supabasePlaces?.length ?? 0,
+      savedTripDetailTripId: routeTripId,
+      selectedSupabaseTripDayId,
+    });
+  }, [
+    isSupabaseArchiveTrip,
+    routeTripId,
+    selectedSupabaseTripDayId,
+    supabasePlaces?.length,
+    supabaseTripDays?.length,
+  ]);
+
   const coverPhotoOptions = useMemo(
     () => createArchiveCoverPhotoOptions(visibleArchivePlaces),
     [visibleArchivePlaces],
@@ -1558,6 +1578,7 @@ export default function DayArchiveDetailScreen() {
               <PlaceEntryCard
                 key={entry.id}
                 entry={entry}
+                flagScreen={isSupabaseArchiveTrip ? 'saved_day_archive_detail' : undefined}
                 showRating={false}
                 variant="archive"
                 onLongPress={() => handleDeleteArchiveEntry(entry)}

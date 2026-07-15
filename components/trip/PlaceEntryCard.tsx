@@ -16,11 +16,13 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
+import CountryFlag, { isSupportedCountryFlagCode } from '@/components/common/CountryFlag';
 import FullScreenImageViewer from '@/components/common/FullScreenImageViewer';
 import HorizontalEdgeScrollView, {
   PLACE_ENTRY_SCROLL_LEADING_BLEED,
 } from '@/components/common/HorizontalEdgeScrollView';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
+import { resolveCountryCodeFromPlace } from '@/services/location/countryCodes';
 
 export interface PlaceEntry {
   id: string;
@@ -34,6 +36,7 @@ export interface PlaceEntry {
   placeName?: string;
   formattedAddress?: string;
   cityName?: string;
+  countryCode?: string;
   countryName?: string;
   latitude?: number;
   longitude?: number;
@@ -70,6 +73,7 @@ interface PlaceEntryCardProps {
   onQuickEdit?: () => void;
   onQuickAddPhoto?: () => void;
   onQuickDelete?: () => void;
+  flagScreen?: 'detected_record_day_detail' | 'saved_day_archive_detail';
 }
 
 interface QuickMenuRowProps {
@@ -80,7 +84,6 @@ interface QuickMenuRowProps {
 }
 
 const DESTRUCTIVE = '#EB524D';
-const FLAG_SOURCE = require('../../assets/images/flag-place.png');
 const LABEL_RECORD = '\uAE30\uB85D';
 const LABEL_PHOTO = '\uC0AC\uC9C4';
 const LABEL_EDIT = '\uC218\uC815';
@@ -144,6 +147,7 @@ export default function PlaceEntryCard({
   onQuickEdit,
   onQuickAddPhoto,
   onQuickDelete,
+  flagScreen,
 }: PlaceEntryCardProps) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -167,6 +171,69 @@ export default function PlaceEntryCard({
   const hasOverflowPhotos = shouldLimitPhotos && photoSources.length > 5;
   const visiblePhotoSources = hasOverflowPhotos ? photoSources.slice(0, 5) : photoSources;
   const remainingPhotoCount = Math.max(photoSources.length - visiblePhotoSources.length, 0);
+  const countryResolution = resolveCountryCodeFromPlace({
+    countryCode: entry.countryCode,
+    countryName: entry.countryName,
+  });
+  const countryCode = countryResolution.countryCode;
+  const canRenderCountryFlag = isSupportedCountryFlagCode(countryCode);
+
+  useEffect(() => {
+    if (!__DEV__ || !flagScreen) {
+      return;
+    }
+
+    if (countryCode && canRenderCountryFlag) {
+      console.info('[place country flag] resolved', {
+        countryCode,
+        placeCountryFlagResolved: true,
+        placeCountryFlagFallbackUsed:
+          countryResolution.source !== 'countryCode' &&
+          countryResolution.source !== 'country_code',
+        placeId: entry.placeId ?? entry.id,
+        rendered: true,
+        screen: flagScreen,
+        source: countryResolution.source,
+      });
+      return;
+    }
+
+    if (countryCode && !canRenderCountryFlag) {
+      console.info('[place country flag] asset missing', {
+        countryCode,
+        placeCountryFlagAssetMissing: true,
+        placeId: entry.placeId ?? entry.id,
+        screen: flagScreen,
+        source: countryResolution.source,
+      });
+      return;
+    }
+
+    if (entry.countryCode || entry.countryName) {
+      console.warn('[place country flag] invalid code', {
+        receivedValue: entry.countryCode ?? entry.countryName,
+        placeCountryFlagInvalidCode: true,
+        placeId: entry.placeId ?? entry.id,
+        screen: flagScreen,
+      });
+    } else {
+      console.info('[place country flag] missing', {
+        placeCountryFlagMissing: true,
+        placeId: entry.placeId ?? entry.id,
+        reason: 'missing_country_metadata',
+        screen: flagScreen,
+      });
+    }
+  }, [
+    countryCode,
+    canRenderCountryFlag,
+    countryResolution.source,
+    entry.countryCode,
+    entry.countryName,
+    entry.id,
+    entry.placeId,
+    flagScreen,
+  ]);
 
   const closeQuickMenu = () => setQuickMenuOpen(false);
 
@@ -294,7 +361,7 @@ export default function PlaceEntryCard({
                   <Text numberOfLines={1} ellipsizeMode="tail" style={styles.placeName}>
                     {entry.place}
                   </Text>
-                  <Image source={FLAG_SOURCE} style={styles.flag} resizeMode="cover" />
+                  <CountryFlag countryCode={countryCode} />
                 </View>
 
                 {(entry.category || entry.city) ? (
@@ -332,7 +399,7 @@ export default function PlaceEntryCard({
                     <Text numberOfLines={1} ellipsizeMode="tail" style={styles.placeName}>
                       {entry.place}
                     </Text>
-                    <Image source={FLAG_SOURCE} style={styles.flag} resizeMode="cover" />
+                    <CountryFlag countryCode={countryCode} />
                   </View>
                 </View>
 
@@ -620,11 +687,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-  },
-  flag: {
-    width: 17,
-    height: 12,
-    borderRadius: 3,
   },
   placeName: {
     ...Typography.body1Emphasized,

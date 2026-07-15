@@ -6,6 +6,7 @@ import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
@@ -42,8 +43,16 @@ import { MOCK_PHOTO_IMPORT_CANDIDATES } from '@/services/photoImport/mockPhotoIm
 import {
   getLocalDetectedTripDraft,
   hydrateLocalDetectedTripDraftPhotos,
+  markLocalDetectedTripDraftSaveFailed,
+  markLocalDetectedTripDraftSaved,
+  markLocalDetectedTripDraftSaving,
+  recordSavedDetectedTripDraft,
   type LocalDetectedTripDraft,
 } from '@/services/photoImport/localDetectedTripDraftStore';
+import {
+  DetectedTripSaveError,
+  saveDetectedTripDraftToSupabase,
+} from '@/services/photoImport/saveDetectedTripDraft';
 import type { PhotoImportTripCandidate } from '@/services/photoImport/types';
 import {
   DEFAULT_RECORD_DAY,
@@ -54,6 +63,8 @@ import { RECORD_DAY_ENTRY_IMAGES } from '@/constants/recordTripImages';
 import { addSavedCompletedTrip } from '@/constants/savedMyPageTrips';
 import type { DestinationOption } from '@/constants/mockTripDestinations';
 import { Colors, FontFamily, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
+import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
+import { useAuth } from '@/providers/AuthProvider';
 import {
   isPlaceDetailDeleted,
   markPlaceDetailDeleted,
@@ -78,6 +89,9 @@ const LABEL_DELETE_SELECTED_PHOTOS = '\uC120\uD0DD\uD55C \uC0AC\uC9C4\uC744 \uC0
 const LABEL_DELETE_PHOTO_DESCRIPTION = '\uC571\uC5D0\uC11C\uB9CC \uC0AD\uC81C\uB418\uBA70, \uAE30\uAE30\uC758 \uC6D0\uBCF8 \uC0AC\uC9C4\uC740 \uC720\uC9C0\uB429\uB2C8\uB2E4.';
 const LABEL_DELETE = '\uC0AD\uC81C';
 const LABEL_CANCEL = '\uCDE8\uC18C';
+const LABEL_SAVE_DETECTED_TRIP = '\uC774 \uC5EC\uD589 \uC800\uC7A5\uD558\uAE30';
+const LABEL_SAVING_DETECTED_TRIP = '\uC800\uC7A5\uD558\uACE0 \uC788\uC5B4\uC694';
+const DETECTED_SAVE_BAR_HEIGHT = 48;
 
 type PickedPhotoAsset = ImagePicker.ImagePickerAsset;
 type PhotoPlaceGroup = {
@@ -384,15 +398,21 @@ function createLocalDetectedTripEntries(
     : draft.days.filter((day) => day.id === selectedDay.id);
 
   return targetDays.flatMap((day) =>
-    day.groups.map((group) => ({
+    day.groups.map((group) => {
+      const latitude = group.centroidLat ?? group.latitude;
+      const longitude = group.centroidLng ?? group.longitude;
+      const hasGroupCoordinates = Number.isFinite(latitude) && Number.isFinite(longitude);
+
+      return {
       dataSource: 'detected' as const,
       dateKey: day.dateKey,
       dateLabel: day.dateLabel,
       dayId: day.id,
       dayNumber: day.dayNumber,
       id: group.id,
-      latitude: group.latitude,
-      longitude: group.longitude,
+      latitude,
+      longitude,
+      countryName: hasGroupCoordinates ? draft.debugMetadata.rawPlacemarkCountry : undefined,
       photoCount: group.photos.length,
       photoUris: group.photos
         .map((photo) => photo.displayUri)
@@ -404,7 +424,8 @@ function createLocalDetectedTripEntries(
       time: group.time,
       tripId: draft.id,
       weekdayLabel: day.weekdayLabel,
-    })),
+      };
+    }),
   );
 }
 
@@ -746,6 +767,7 @@ function createPhotoEntry(
     category: sourceEntry?.category ?? '\uC0AC\uC9C4',
     city: sourceEntry?.city,
     cityName: sourceEntry?.cityName,
+    countryCode: sourceEntry?.countryCode,
     countryName: sourceEntry?.countryName,
     googlePlaceId: sourceEntry?.googlePlaceId,
     photoUris,
@@ -761,6 +783,34 @@ function getPhotoSources(entry: PlaceEntry | null): ImageSourcePropType[] {
     ...(entry.photoSources ?? []),
     ...(entry.photoUris ?? []).map((uri) => ({ uri })),
   ];
+}
+
+function getDetectedSaveErrorInfo(error: unknown) {
+  if (error instanceof DetectedTripSaveError) {
+    return {
+      errorCode: error.code,
+      errorMessage: error.message,
+      errorName: error.name,
+      errorStage: error.stage,
+      originalSupabaseCode: error.originalSupabaseCode,
+      rollbackAttempted: error.rollbackAttempted,
+      rollbackSucceeded: error.rollbackSucceeded,
+    };
+  }
+
+  return {
+    errorCode: typeof error === 'object' && error && 'code' in error ? String(error.code) : undefined,
+    errorMessage: error instanceof Error ? error.message : String(error),
+    errorName: error instanceof Error ? error.name : typeof error,
+    errorStage: undefined,
+    originalSupabaseCode: undefined,
+    rollbackAttempted: undefined,
+    rollbackSucceeded: undefined,
+  };
+}
+
+function createDetectedTripSaveAttemptId(draftId?: string | null) {
+  return `detected-save-${draftId ?? 'missing'}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 function deleteEntryPhotoIndexes(entry: PlaceEntry, indexes: number[]): PlaceEntry {
@@ -927,6 +977,26 @@ interface DayFilterBarProps {
   onSelectDay: (day: DaySelectorItem) => void;
 }
 
+function getDayChipLabel(day: DaySelectorItem, days: DaySelectorItem[]) {
+  const parsedDate = parseDayDate(day);
+
+  if (!parsedDate) {
+    return `${day.dayNumber}\uC77C\uCC28`;
+  }
+
+  const years = new Set(
+    days
+      .map(parseDayDate)
+      .filter((date): date is Date => Boolean(date))
+      .map((date) => date.getFullYear()),
+  );
+  const datePrefix = years.size > 1
+    ? `${String(parsedDate.getFullYear()).slice(2)}.${parsedDate.getMonth() + 1}.${parsedDate.getDate()}`
+    : `${parsedDate.getMonth() + 1}.${parsedDate.getDate()}`;
+
+  return `${datePrefix} ${day.weekdayLabel}`.trim();
+}
+
 function DayFilterBar({ days, selectedId, onSelectAll, onSelectDay }: DayFilterBarProps) {
   const [hasScrolledDays, setHasScrolledDays] = useState(false);
 
@@ -960,7 +1030,7 @@ function DayFilterBar({ days, selectedId, onSelectAll, onSelectDay }: DayFilterB
                 style={[styles.dayChip, selected && styles.dayChipSelected]}
               >
                 <Text style={[styles.dayChipText, selected && styles.dayChipTextSelected]}>
-                  {day.dayNumber}일차
+                  {getDayChipLabel(day, days)}
                 </Text>
               </Pressable>
             );
@@ -982,6 +1052,8 @@ function DayFilterBar({ days, selectedId, onSelectAll, onSelectDay }: DayFilterB
 export default function RecordDayDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
+  const { canUseSupabaseUserData, user } = useAuth();
   const { width } = useWindowDimensions();
   const routeParams = useLocalSearchParams<{
     tripId?: string | string[];
@@ -1068,6 +1140,10 @@ export default function RecordDayDetailScreen() {
       active = false;
     };
   }, [routeLocalDetectedTripDraft, routeTripId]);
+
+  useEffect(() => {
+    setDetectedTripSaveStatus(localDetectedTripDraft?.saveStatus ?? 'idle');
+  }, [localDetectedTripDraft?.saveStatus]);
 
   useEffect(() => {
     if (!__DEV__) {
@@ -1207,6 +1283,8 @@ export default function RecordDayDetailScreen() {
   const [isPhotoGridSelectionMode, setPhotoGridSelectionMode] = useState(false);
   const [selectedPhotoIndexes, setSelectedPhotoIndexes] = useState<number[]>([]);
   const [photoViewerIndex, setPhotoViewerIndex] = useState<number | null>(null);
+  const [detectedTripSaveStatus, setDetectedTripSaveStatus] =
+    useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   const [, setPendingDeletePhoto] = useState<{
     entry: PlaceEntry;
     photoIndex: number;
@@ -2178,8 +2256,190 @@ export default function RecordDayDetailScreen() {
     }
   };
 
-  const handleSaveTrip = () => {
+  const handleSaveTrip = async () => {
     setHeaderMenuVisible(false);
+
+    if (isDetectedTripPreviewRoute) {
+      const saveAttemptId = createDetectedTripSaveAttemptId(localDetectedTripDraft?.id);
+
+      if (__DEV__) {
+        console.info('[detected trip save] button pressed', {
+          detectedTripSaveButtonPressed: true,
+          draftId: localDetectedTripDraft?.id,
+          isDetectedTripRoute: isDetectedTripPreviewRoute,
+          saveAttemptId,
+          savedTripIdExists: Boolean(localDetectedTripDraft?.savedTripId),
+          saveStatus: localDetectedTripDraft?.saveStatus ?? detectedTripSaveStatus,
+        });
+      }
+
+      if (!localDetectedTripDraft) {
+        if (__DEV__) {
+          console.warn('[detected trip save] draft missing', {
+            detectedTripSaveDraftLoaded: false,
+            detectedTripSaveFailureModalShown: true,
+            reason: 'missing_draft',
+            saveAttemptId,
+          });
+        }
+        Alert.alert(
+          '\uC5EC\uD589\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC0AC\uC9C4\uCCA9 \uC5EC\uD589 \uC815\uBCF4\uB97C \uB2E4\uC2DC \uD655\uC778\uD574\uC8FC\uC138\uC694.',
+        );
+        return;
+      }
+
+      if (!canUseSupabaseUserData || !user?.id) {
+        Alert.alert(
+          '\uB85C\uADF8\uC778\uC774 \uD544\uC694\uD574\uC694',
+          '\uC5EC\uD589\uC744 \uC800\uC7A5\uD558\uB824\uBA74 \uBA3C\uC800 \uB85C\uADF8\uC778\uD574\uC8FC\uC138\uC694.',
+        );
+        return;
+      }
+
+      if (detectedTripSaveStatus === 'saving') {
+        if (__DEV__) {
+          console.info('[detected trip save] duplicate blocked', {
+            detectedTripSaveBlockedDuplicate: true,
+            draftId: localDetectedTripDraft.id,
+          });
+        }
+        return;
+      }
+
+      if (localDetectedTripDraft.saveStatus === 'saved' && localDetectedTripDraft.savedTripId) {
+        router.replace({
+          pathname: '/day-archive-detail',
+          params: { tripId: localDetectedTripDraft.savedTripId },
+        } as never);
+        return;
+      }
+
+      const startedAt = Date.now();
+      setDetectedTripSaveStatus('saving');
+      markLocalDetectedTripDraftSaving(localDetectedTripDraft.id);
+
+      try {
+        if (__DEV__) {
+          const groupCount = localDetectedTripDraft.days.reduce(
+            (total, day) => total + day.groups.length,
+            0,
+          );
+          const groupsWithCentroidCount = localDetectedTripDraft.days.reduce(
+            (total, day) => total + day.groups.filter((group) => (
+              Number.isFinite(group.centroidLat ?? group.latitude) &&
+              Number.isFinite(group.centroidLng ?? group.longitude)
+            )).length,
+            0,
+          );
+
+          console.info('[detected trip save] draft loaded', {
+            coverUriExists: Boolean(localDetectedTripDraft.coverPhotoUri),
+            dayCount: localDetectedTripDraft.days.length,
+            detectedTripSaveDraftLoaded: true,
+            detectedTripSaveLatestDraftLookup: true,
+            displayTitle: localDetectedTripDraft.displayTitle,
+            draftId: localDetectedTripDraft.id,
+            endDate: localDetectedTripDraft.endDate,
+            groupCount,
+            groupsWithCentroidCount,
+            photoCount: localDetectedTripDraft.photoCount,
+            saveAttemptId,
+            startDate: localDetectedTripDraft.startDate,
+          });
+          console.info('[detected trip save] cover state', {
+            detectedTripSaveCoverFailureIgnored: !localDetectedTripDraft.coverPhotoUri,
+            detectedTripSaveCoverState: true,
+            detectedTripSaveProceedingWithoutCover: !localDetectedTripDraft.coverPhotoUri,
+            draftId: localDetectedTripDraft.id,
+            saveAttemptId,
+          });
+          console.info('[detected trip save] requested', {
+            detectedTripSaveRequested: true,
+            draftId: localDetectedTripDraft.id,
+            saveAttemptId,
+          });
+          console.info('[detected trip save] calling service', {
+            detectedTripSaveHandlerCallingService: true,
+            detectedTripSaveServiceCallStarted: true,
+            draftId: localDetectedTripDraft.id,
+            saveAttemptId,
+          });
+        }
+
+        const result = await saveDetectedTripDraftToSupabase(localDetectedTripDraft, {
+          saveAttemptId,
+        });
+        if (__DEV__) {
+          console.info('[detected trip save] service resolved', {
+            detectedTripSaveHandlerServiceResolved: true,
+            detectedTripSaveServiceCallResolved: true,
+            draftId: localDetectedTripDraft.id,
+            placeCreatedCount: result.placeCreatedCount,
+            saveAttemptId,
+            tripDayCreatedCount: result.tripDayCreatedCount,
+            tripId: result.trip.id,
+          });
+        }
+        await recordSavedDetectedTripDraft(user.id, localDetectedTripDraft.id, result.trip.id);
+        markLocalDetectedTripDraftSaved(localDetectedTripDraft.id, result.trip.id);
+        setDetectedTripSaveStatus('saved');
+
+        void Promise.all([
+          queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.myTrips(user.id) }),
+          queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.recentTripsRoot(user.id) }),
+          queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.tripDetail(user.id, result.trip.id) }),
+          queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.tripDays(user.id, result.trip.id) }),
+          ...result.tripDays.map((tripDay) =>
+            queryClient.invalidateQueries({
+              queryKey: supabaseQueryKeys.tripDayPlaces(user.id, tripDay.id),
+            }),
+          ),
+        ]).catch((error: unknown) => {
+          console.warn('[record-day-detail] detected save invalidate failed', error);
+        });
+
+        if (__DEV__) {
+          console.info('[detected trip save] navigation', {
+            detectedTripSaveElapsedMs: Date.now() - startedAt,
+            detectedTripSaveNavigationTarget: '/day-archive-detail',
+            detectedTripSavedTripId: result.trip.id,
+            saveAttemptId,
+          });
+        }
+
+        router.replace({
+          pathname: '/day-archive-detail',
+          params: { tripId: result.trip.id },
+        } as never);
+      } catch (error) {
+        const errorInfo = getDetectedSaveErrorInfo(error);
+        const message = error instanceof Error ? error.message : 'Detected trip save failed';
+        markLocalDetectedTripDraftSaveFailed(localDetectedTripDraft.id, message);
+        setDetectedTripSaveStatus('failed');
+        console.warn('[record-day-detail] detected trip save failed', {
+          detectedTripSaveHandlerServiceRejected: true,
+          detectedTripSaveServiceCallRejected: true,
+          draftId: localDetectedTripDraft.id,
+          saveAttemptId,
+          ...errorInfo,
+        });
+        if (__DEV__) {
+          console.info('[detected trip save] failure modal shown', {
+            detectedTripSaveFailureModalShown: true,
+            draftId: localDetectedTripDraft.id,
+            reason: errorInfo.errorStage ?? errorInfo.errorCode ?? 'unknown',
+            saveAttemptId,
+          });
+        }
+        Alert.alert(
+          '\uC5EC\uD589\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+        );
+      }
+      return;
+    }
+
     const coverEntry = entries.find((entry) => entry.photoSources?.[0] || entry.photoUris?.[0]);
     const visitedCities = [
       ...new Set(
@@ -2288,10 +2548,12 @@ export default function RecordDayDetailScreen() {
               <Text style={styles.headerMenuLabel}>{'\uC0AC\uC9C4 \uCD94\uAC00'}</Text>
             </Pressable>
             <View style={styles.headerMenuDivider} />
-            <Pressable accessibilityRole="button" onPress={handleSaveTrip} style={styles.headerMenuRow}>
-              <Feather name="archive" size={18} color={Colors.foundation.black} />
-              <Text style={styles.headerMenuLabel}>{'\uC5EC\uD589 \uC800\uC7A5'}</Text>
-            </Pressable>
+            {!isDetectedTripPreviewRoute ? (
+              <Pressable accessibilityRole="button" onPress={handleSaveTrip} style={styles.headerMenuRow}>
+                <Feather name="archive" size={18} color={Colors.foundation.black} />
+                <Text style={styles.headerMenuLabel}>{'\uC5EC\uD589 \uC800\uC7A5'}</Text>
+              </Pressable>
+            ) : null}
             <Pressable accessibilityRole="button" onPress={handleDeleteTrip} style={styles.headerMenuRow}>
               <Feather name="trash-2" size={18} color={styles.destructiveText.color} />
               <Text style={[styles.headerMenuLabel, styles.destructiveText]}>{'\uC5EC\uD589 \uC0AD\uC81C'}</Text>
@@ -2303,7 +2565,10 @@ export default function RecordDayDetailScreen() {
       <ScrollView
         stickyHeaderIndices={[1]}
         style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          isDetectedTripPreviewRoute && styles.detectedScrollContent,
+        ]}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.mapWrap}>
@@ -2322,6 +2587,7 @@ export default function RecordDayDetailScreen() {
           <PlaceEntryCard
             key={`${selectedFilterId}-${entry.id}-${index}`}
             entry={entry}
+            flagScreen={isDetectedTripPreviewRoute ? 'detected_record_day_detail' : undefined}
             photoDisplayMode="limited"
             showRating={false}
             variant="recordPhotoReview"
@@ -2336,6 +2602,27 @@ export default function RecordDayDetailScreen() {
         ))}
         </View>
       </ScrollView>
+
+      {isDetectedTripPreviewRoute ? (
+        <View style={[styles.detectedSaveBar, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={detectedTripSaveStatus === 'saving'}
+            onPress={handleSaveTrip}
+            style={({ pressed }) => [
+              styles.detectedSaveButton,
+              pressed && detectedTripSaveStatus !== 'saving' && styles.buttonPressed,
+              detectedTripSaveStatus === 'saving' && styles.detectedSaveButtonSaving,
+            ]}
+          >
+            <Text style={styles.detectedSaveButtonText}>
+              {detectedTripSaveStatus === 'saving'
+                ? LABEL_SAVING_DETECTED_TRIP
+                : LABEL_SAVE_DETECTED_TRIP}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       <PlaceCreateModal
         visible={placeEntryModalVisible}
@@ -2450,7 +2737,12 @@ export default function RecordDayDetailScreen() {
               onPress={handleClosePhotoGrid}
               style={styles.photoGridHeaderButton}
             >
-              <Feather name="chevron-left" size={28} color={Colors.foundation.black} />
+              <Feather
+                name="chevron-left"
+                size={28}
+                color={Colors.foundation.black}
+                style={styles.photoGridBackIcon}
+              />
             </Pressable>
             <View style={styles.photoGridHeaderSpacer} />
             <Pressable
@@ -2522,15 +2814,16 @@ export default function RecordDayDetailScreen() {
               );
             })}
           </ScrollView>
+
+          <FullScreenImageViewer
+            images={photoGridSources}
+            initialIndex={photoViewerIndex ?? 0}
+            presentation="inline"
+            visible={photoViewerIndex != null && photoGridSources.length > 0}
+            onClose={() => setPhotoViewerIndex(null)}
+          />
         </SafeAreaView>
       </Modal>
-
-      <FullScreenImageViewer
-        images={photoGridSources}
-        initialIndex={photoViewerIndex ?? 0}
-        visible={photoViewerIndex != null && photoGridSources.length > 0}
-        onClose={() => setPhotoViewerIndex(null)}
-      />
 
       <DaySelectorSheet
         visible={daySheetVisible}
@@ -2619,6 +2912,9 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: Spacing['4xl'],
+  },
+  detectedScrollContent: {
+    paddingBottom: DETECTED_SAVE_BAR_HEIGHT + Spacing['4xl'] * 2,
   },
   mapWrap: {
     height: 272,
@@ -2720,6 +3016,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: Radius.full,
   },
+  photoGridBackIcon: {
+    transform: [{ translateX: -4 }],
+  },
   photoGridHeaderSpacer: {
     flex: 1,
   },
@@ -2757,5 +3056,32 @@ const styles = StyleSheet.create({
   photoGridSelectionSelected: {
     borderColor: Colors.foundation.black,
     backgroundColor: Colors.foundation.black,
+  },
+  detectedSaveBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 35,
+    paddingTop: Spacing.md,
+    backgroundColor: Colors.light.bgScreen,
+  },
+  detectedSaveButton: {
+    height: DETECTED_SAVE_BAR_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.foundation.black,
+  },
+  detectedSaveButtonSaving: {
+    opacity: 0.72,
+  },
+  detectedSaveButtonText: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.white,
+    textAlign: 'center',
+  },
+  buttonPressed: {
+    opacity: 0.84,
   },
 });

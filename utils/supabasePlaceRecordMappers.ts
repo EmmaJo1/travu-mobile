@@ -25,7 +25,7 @@ function formatTimeLabel(value?: string | null) {
 export function mapSupabasePlacesToPlaceEntries(
   places: PlaceRow[],
   records: RecordRow[],
-  fallbackCountryName?: string,
+  _fallbackCountryName?: string,
 ): PlaceEntry[] {
   const recordsByPlaceId = records.reduce((map, record) => {
     const nextRecords = map.get(record.place_id) ?? [];
@@ -43,7 +43,7 @@ export function mapSupabasePlacesToPlaceEntries(
     return {
       city: place.city ?? undefined,
       cityName: place.city ?? undefined,
-      countryName: place.country ?? fallbackCountryName,
+      countryName: place.country ?? undefined,
       dataSource: 'supabase',
       dateKey: place.visited_at?.slice(0, 10) ?? firstRecord?.visited_at?.slice(0, 10),
       formattedAddress: place.address ?? undefined,
