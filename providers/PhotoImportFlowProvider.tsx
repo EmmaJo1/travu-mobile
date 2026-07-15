@@ -103,6 +103,25 @@ function logProviderCandidateDelivery(
   });
 }
 
+function getCandidatesForScanAttempt(
+  candidatesToFilter: PhotoImportTripCandidate[],
+  scanAttemptId?: string,
+) {
+  if (!scanAttemptId) {
+    return [];
+  }
+
+  return candidatesToFilter.filter(
+    (candidate) => candidate.debugMetadata?.scanAttemptId === scanAttemptId,
+  );
+}
+
+function getCandidateIdentityKey(candidatesToCompare: PhotoImportTripCandidate[]) {
+  return candidatesToCompare
+    .map((candidate) => `${candidate.id}:${candidate.debugMetadata?.scanAttemptId ?? ''}`)
+    .join('|');
+}
+
 export function PhotoImportFlowProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
   const { canUseSupabaseUserData, user } = useAuth();
@@ -122,11 +141,15 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
   const [hasSavedPhotoImportResults, setHasSavedPhotoImportResults] =
     React.useState(false);
   const [lastSavedTripCount, setLastSavedTripCount] = React.useState(0);
+  const activeScanAttemptIdRef = React.useRef<string>();
+  const scanInvocationIdRef = React.useRef(0);
 
   const startPhotoImportAnalysis = React.useCallback(() => {
     setStatus('analyzing');
     setDetectionState('detecting');
     setErrorMessage(undefined);
+    setCandidates([]);
+    setSelectedCandidateIds([]);
     setHasOpenedPhotoImportResults(false);
     setHasDeferredPhotoImportResults(false);
     setHasSavedPhotoImportResults(false);
@@ -136,6 +159,9 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
   }, []);
 
   const runPhotoImportDetection = React.useCallback(async (options: PhotoImportRunOptions = {}) => {
+    const invocationId = scanInvocationIdRef.current + 1;
+    scanInvocationIdRef.current = invocationId;
+    activeScanAttemptIdRef.current = undefined;
     startPhotoImportAnalysis();
     const resolvedLivingArea = options.livingArea === undefined
       ? createLivingAreaFromProfile(profile.basedIn, profile.basedInPlace)
@@ -163,25 +189,65 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
         homeRegionFilterSkipReason: options.homeRegionFilterSkipReason,
         livingArea: resolvedLivingArea,
         onCandidatesUpdated: (updatedCandidates) => {
-          const sortedUpdatedCandidates = sortDetectedCandidatesOldestFirst(updatedCandidates);
-          const scanAttemptId = sortedUpdatedCandidates[0]?.debugMetadata?.scanAttemptId;
+          if (scanInvocationIdRef.current !== invocationId) {
+            return;
+          }
+
+          const activeScanAttemptId = activeScanAttemptIdRef.current;
+          const scopedCandidates = getCandidatesForScanAttempt(
+            updatedCandidates,
+            activeScanAttemptId,
+          );
+
+          if (!activeScanAttemptId || scopedCandidates.length === 0) {
+            if (__DEV__) {
+              console.info('[photo-import provider] candidate update ignored', {
+                activeScanAttemptId,
+                candidateCountBeforeScope: updatedCandidates.length,
+                reason: activeScanAttemptId ? 'no_candidates_for_active_attempt' : 'active_attempt_not_ready',
+                stage: 'provider_on_candidates_updated',
+              });
+            }
+            return;
+          }
+
+          const sortedUpdatedCandidates = sortDetectedCandidatesOldestFirst(scopedCandidates);
 
           logProviderCandidateDelivery(
             'provider_on_candidates_updated',
             sortedUpdatedCandidates,
-            scanAttemptId,
+            activeScanAttemptId,
           );
-          setCandidates(sortedUpdatedCandidates);
+          setCandidates((current) => (
+            getCandidateIdentityKey(current) === getCandidateIdentityKey(sortedUpdatedCandidates)
+              ? current
+              : sortedUpdatedCandidates
+          ));
           setSelectedCandidateIds(
             sortedUpdatedCandidates
               .filter((candidate) => candidate.initiallySelected)
               .map((candidate) => candidate.id),
           );
         },
-        onProgress: setScanProgress,
+        onProgress: (nextProgress) => {
+          if (scanInvocationIdRef.current !== invocationId) {
+            return;
+          }
+
+          if (nextProgress.scanAttemptId) {
+            activeScanAttemptIdRef.current = nextProgress.scanAttemptId;
+          }
+          setScanProgress(nextProgress);
+        },
         savedRegistryUserId: user?.id,
         source: options.source ?? 'home',
       });
+
+      if (scanInvocationIdRef.current !== invocationId) {
+        return 'error';
+      }
+
+      activeScanAttemptIdRef.current = scanResult.scanAttemptId;
 
       if (scanResult.permissionState === 'denied') {
         setStatus('not_started');
@@ -190,7 +256,9 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
         return 'permissionDenied';
       }
 
-      const detectedCandidates = sortDetectedCandidatesOldestFirst(scanResult.candidates);
+      const detectedCandidates = sortDetectedCandidatesOldestFirst(
+        getCandidatesForScanAttempt(scanResult.candidates, scanResult.scanAttemptId),
+      );
       logProviderCandidateDelivery(
         'provider_scan_result_candidates',
         detectedCandidates,
@@ -213,9 +281,11 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
 
       return nextState;
     } catch (error) {
-      setStatus('not_started');
-      setDetectionState('error');
-      setErrorMessage(error instanceof Error ? error.message : 'Photo import detection failed');
+      if (scanInvocationIdRef.current === invocationId) {
+        setStatus('not_started');
+        setDetectionState('error');
+        setErrorMessage(error instanceof Error ? error.message : 'Photo import detection failed');
+      }
       return 'error';
     } finally {
       if (__DEV__) {
@@ -229,17 +299,48 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
   }, [runPhotoImportDetection]);
 
   const hydrateCandidateCovers = React.useCallback(async (candidateIds: string[]) => {
+    const requestedScanAttemptId = activeScanAttemptIdRef.current;
+
+    if (!requestedScanAttemptId) {
+      return;
+    }
+
     await hydrateLocalDetectedTripDraftCovers(candidateIds, {
       onCandidatesUpdated: (updatedCandidates) => {
-        const sortedUpdatedCandidates = sortDetectedCandidatesOldestFirst(updatedCandidates);
-        const scanAttemptId = sortedUpdatedCandidates[0]?.debugMetadata?.scanAttemptId;
+        const activeScanAttemptId = activeScanAttemptIdRef.current;
+
+        if (!activeScanAttemptId || activeScanAttemptId !== requestedScanAttemptId) {
+          if (__DEV__) {
+            console.info('[photo-import provider] cover update ignored', {
+              activeScanAttemptId,
+              reason: 'scan_attempt_changed',
+              requestedScanAttemptId,
+            });
+          }
+          return;
+        }
+
+        const scopedCandidates = getCandidatesForScanAttempt(
+          updatedCandidates,
+          activeScanAttemptId,
+        );
+
+        if (scopedCandidates.length === 0) {
+          return;
+        }
+
+        const sortedUpdatedCandidates = sortDetectedCandidatesOldestFirst(scopedCandidates);
 
         logProviderCandidateDelivery(
           'provider_cover_hydration_candidates',
           sortedUpdatedCandidates,
-          scanAttemptId,
+          activeScanAttemptId,
         );
-        setCandidates(sortedUpdatedCandidates);
+        setCandidates((current) => (
+          getCandidateIdentityKey(current) === getCandidateIdentityKey(sortedUpdatedCandidates)
+            ? current
+            : sortedUpdatedCandidates
+        ));
         setSelectedCandidateIds((current) => {
           const availableIds = new Set(sortedUpdatedCandidates.map((candidate) => candidate.id));
           const retainedIds = current.filter((candidateId) => availableIds.has(candidateId));
@@ -340,11 +441,14 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
       }
     }
 
-    const nextCandidates = sortDetectedCandidatesOldestFirst(getLocalDetectedTripCandidates());
+    const activeScanAttemptId = activeScanAttemptIdRef.current;
+    const nextCandidates = sortDetectedCandidatesOldestFirst(
+      getCandidatesForScanAttempt(getLocalDetectedTripCandidates(), activeScanAttemptId),
+    );
     logProviderCandidateDelivery(
       'provider_after_save_candidates',
       nextCandidates,
-      nextCandidates[0]?.debugMetadata?.scanAttemptId,
+      activeScanAttemptId,
     );
     setCandidates(nextCandidates);
     setSelectedCandidateIds((current) => {
