@@ -1,9 +1,17 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import * as MediaLibrary from 'expo-media-library';
 import type { ImageSourcePropType } from 'react-native';
 
 import type { LivingArea } from '@/services/location/livingAreas';
+import {
+  applyHomeRegionCandidateFilter,
+  HOME_REGION_EXCLUSION_RADIUS_KM,
+  hasValidHomeRegion,
+  type HomeRegionCoordinateSource,
+  type HomeRegionRelation,
+} from '@/services/photoImport/homeRegionCandidateFilter';
 import type {
   PhotoImportCandidateDebugMetadata,
   PhotoImportOverseasTitleSource,
@@ -69,7 +77,7 @@ const DETAIL_HYDRATION_MAX_TOTAL_PHOTOS = 15;
 const TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT = 50;
 const REVERSE_GEOCODE_DELAY_MS = 400;
 const PENDING_TITLE_MAX_AGE_MS = 20000;
-const LIVING_AREA_EXCLUSION_RADIUS_KM = 15;
+const AFTER_MAY_2024_CUTOFF_TIME = Date.UTC(2024, 5, 1);
 const WEEKDAY_LABELS = ['\uC77C', '\uC6D4', '\uD654', '\uC218', '\uBAA9', '\uAE08', '\uD1A0'] as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -108,8 +116,11 @@ export interface LocalDetectedPlaceGroup {
   longitude?: number;
   centroidLat?: number;
   centroidLng?: number;
+  coordinateSource?: HomeRegionCoordinateSource;
+  distanceFromHomeKm?: number;
   groupDisplayName?: string;
   groupLocationLabel?: string;
+  homeRegionRelation?: HomeRegionRelation;
 }
 
 export interface LocalDetectedTripDraftDay {
@@ -148,6 +159,11 @@ export interface LocalDetectedTripDraft {
   fallbackTitle: string;
   locationLabel?: string;
   regionLabel?: string;
+  saveError?: string;
+  savedTripId?: string;
+  saveStatus?: 'idle' | 'saving' | 'saved' | 'failed';
+  candidateFingerprint?: string;
+  candidatePhotoIdentifiers?: string[];
   days: LocalDetectedTripDraftDay[];
 }
 
@@ -157,9 +173,11 @@ export interface PhotoLibraryScanProgress {
   currentPage: number;
   hasNextPage: boolean;
   detectedCandidateCount: number;
+  scanAttemptId?: string;
 }
 
 export interface PhotoLibraryScanResult {
+  scanAttemptId: string;
   permissionState: PhotoLibraryScanPermissionState;
   totalAssetCount: number;
   scannedAssetCount: number;
@@ -173,6 +191,7 @@ export interface PhotoLibraryScanResult {
   detectedTripCandidateCount: number;
   visibleDetectedTripCandidateCount: number;
   hiddenLowConfidenceCandidateCount: number;
+  hiddenHomeRegionCandidateCount?: number;
   hiddenNoLocationTitleCandidateCount: number;
   hiddenScreenshotCandidateCount: number;
   hiddenTooFewRealPhotosCandidateCount: number;
@@ -187,13 +206,20 @@ export interface PhotoLibraryScanResult {
   photosAfterScreenshotFilterCount: number;
   drafts: LocalDetectedTripDraft[];
   candidates: PhotoImportTripCandidate[];
+  savedDetectedCandidateRegistryLoadedCount: number;
+  detectedCandidateFingerprintComputedCount: number;
+  detectedCandidateHiddenByExactFingerprintCount: number;
+  detectedCandidateHiddenByPhotoOverlapCount: number;
+  detectedCandidateVisibleAfterSavedFilterCount: number;
   skippedScreenshotCount: number;
 }
 
 interface PhotoLibraryScanOptions {
   createdAfter?: Date | number;
+  homeRegionFilterSkipReason?: 'not_configured' | 'skipped_by_user' | 'invalid_coordinates' | 'storage_not_ready';
   livingArea?: LivingArea | null;
   pageSize?: number;
+  savedRegistryUserId?: string | null;
   onProgress?: (progress: PhotoLibraryScanProgress) => void;
   onCandidatesUpdated?: (candidates: PhotoImportTripCandidate[]) => void;
   source?: 'home' | 'onboarding';
@@ -243,6 +269,37 @@ const coverHydrationInFlightDraftIds = new Set<string>();
 const coverHydrationCompletedDraftIds = new Set<string>();
 const reverseGeocodeCache = new Map<string, Promise<ReverseGeocodeResult>>();
 const REVERSE_GEOCODE_TIMEOUT_MS = 2500;
+const SAVED_DETECTED_CANDIDATE_REGISTRY_VERSION = 1;
+const SAVED_DETECTED_CANDIDATE_REGISTRY_PREFIX = 'travu:saved-detected-candidates:v1';
+const SAVED_DETECTED_CANDIDATE_REGISTRY_MAX_ENTRIES = 300;
+const SAVED_CANDIDATE_OVERLAP_MIN_COMMON_PHOTOS = 5;
+const SAVED_CANDIDATE_OVERLAP_RATIO = 0.9;
+
+interface SavedDetectedCandidateRegistryEntry {
+  endDate: string;
+  fingerprint: string;
+  photoIdentifiers: string[];
+  savedAt: string;
+  savedTripId: string;
+  startDate: string;
+}
+
+interface SavedDetectedCandidateRegistryState {
+  entries: SavedDetectedCandidateRegistryEntry[];
+  userId: string;
+  version: number;
+}
+
+type SavedCandidateMatchReason = 'exact_fingerprint' | 'photo_overlap';
+
+interface SavedCandidateMatch {
+  entry: SavedDetectedCandidateRegistryEntry;
+  reason: SavedCandidateMatchReason;
+}
+
+const savedDetectedCandidateRegistry = new Map<string, SavedDetectedCandidateRegistryEntry>();
+let savedDetectedCandidateRegistryUserId: string | null = null;
+let savedDetectedCandidateRegistryLoaded = false;
 
 function isFiniteCoordinateValue(value?: number | null): value is number {
   return typeof value === 'number' && Number.isFinite(value);
@@ -267,6 +324,521 @@ function toDateKey(date: Date): string {
   const day = String(date.getDate()).padStart(2, '0');
 
   return `${year}-${month}-${day}`;
+}
+
+function getSavedDetectedCandidateRegistryKey(userId: string) {
+  return `${SAVED_DETECTED_CANDIDATE_REGISTRY_PREFIX}:${encodeURIComponent(userId)}`;
+}
+
+function stableHash(value: string) {
+  let hash = 2166136261;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(36);
+}
+
+function getPhotoStableIdentifier(photo: LocalDetectedPhoto) {
+  const assetId = normalizeStorageText(photo.assetId);
+
+  if (assetId) {
+    return `asset:${assetId}`;
+  }
+
+  const stablePhotoId = normalizeStorageText(photo.id);
+
+  if (stablePhotoId) {
+    return `photo:${stablePhotoId}`;
+  }
+
+  const metadata = [
+    normalizeStorageText(photo.takenAt),
+    normalizeStorageText(photo.filename),
+    photo.width,
+    photo.height,
+  ].join('|');
+
+  return `meta:${metadata}`;
+}
+
+function normalizeStorageText(value?: string | null) {
+  return value?.trim() ?? '';
+}
+
+function getDraftPhotoIdentifiers(draft: LocalDetectedTripDraft) {
+  const identifiers = getDraftPhotos(draft)
+    .map(getPhotoStableIdentifier)
+    .filter(Boolean);
+
+  return [...new Set(identifiers)].sort();
+}
+
+function createDetectedCandidateFingerprint(photoIdentifiers: string[]) {
+  return `photo-candidate:v1:${stableHash(photoIdentifiers.join('\n'))}`;
+}
+
+function syncDraftSavedCandidateFingerprint(draft: LocalDetectedTripDraft) {
+  const photoIdentifiers = draft.candidatePhotoIdentifiers?.length
+    ? [...draft.candidatePhotoIdentifiers].sort()
+    : getDraftPhotoIdentifiers(draft);
+  const fingerprint = draft.candidateFingerprint ??
+    createDetectedCandidateFingerprint(photoIdentifiers);
+
+  draft.candidatePhotoIdentifiers = photoIdentifiers;
+  draft.candidateFingerprint = fingerprint;
+
+  return {
+    fingerprint,
+    photoIdentifiers,
+  };
+}
+
+function parseDateKeyTime(dateKey: string) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+
+  if (!year || !month || !day) {
+    return NaN;
+  }
+
+  return Date.UTC(year, month - 1, day);
+}
+
+function getDateTimestamp(value: string | number | Date | null | undefined) {
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === 'string') {
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+
+  return null;
+}
+
+function summarizeDateTimestamps(timestamps: Array<number | null>) {
+  const validTimestamps = timestamps.filter((timestamp): timestamp is number => (
+    typeof timestamp === 'number' && Number.isFinite(timestamp)
+  ));
+  const earliestTimestamp = validTimestamps.length ? Math.min(...validTimestamps) : null;
+  const latestTimestamp = validTimestamps.length ? Math.max(...validTimestamps) : null;
+
+  return {
+    count: timestamps.length,
+    earliestCreationDate: earliestTimestamp === null
+      ? null
+      : new Date(earliestTimestamp).toISOString(),
+    latestCreationDate: latestTimestamp === null
+      ? null
+      : new Date(latestTimestamp).toISOString(),
+    photosAfter2024MayCount: validTimestamps.filter(
+      (timestamp) => timestamp >= AFTER_MAY_2024_CUTOFF_TIME,
+    ).length,
+    photosIn2024Count: validTimestamps.filter((timestamp) => (
+      new Date(timestamp).getUTCFullYear() === 2024
+    )).length,
+    photosIn2025Count: validTimestamps.filter((timestamp) => (
+      new Date(timestamp).getUTCFullYear() === 2025
+    )).length,
+    photosIn2026Count: validTimestamps.filter((timestamp) => (
+      new Date(timestamp).getUTCFullYear() === 2026
+    )).length,
+  };
+}
+
+function summarizeAssetDates(assets: Array<{ creationTime?: number | null }>) {
+  return summarizeDateTimestamps(assets.map((asset) => getDateTimestamp(asset.creationTime ?? null)));
+}
+
+function summarizePhotoDates(photosToSummarize: LocalDetectedPhoto[]) {
+  return summarizeDateTimestamps(photosToSummarize.map((photo) => getDateTimestamp(photo.takenAt)));
+}
+
+function summarizeDraftPhotoDates(draftsToSummarize: LocalDetectedTripDraft[]) {
+  return summarizePhotoDates(draftsToSummarize.flatMap(getDraftPhotos));
+}
+
+function draftHasPhotoAfter2024May(draft: LocalDetectedTripDraft) {
+  return getDraftPhotos(draft).some((photo) => {
+    const timestamp = getDateTimestamp(photo.takenAt);
+    return timestamp !== null && timestamp >= AFTER_MAY_2024_CUTOFF_TIME;
+  });
+}
+
+function draftStartsAfter2024May(draft: LocalDetectedTripDraft) {
+  const timestamp = parseDateKeyTime(draft.startDate);
+  return Number.isFinite(timestamp) && timestamp >= AFTER_MAY_2024_CUTOFF_TIME;
+}
+
+function countDraftsAfter2024May(draftsToCount: LocalDetectedTripDraft[]) {
+  return draftsToCount.filter((draft) => (
+    draftStartsAfter2024May(draft) || draftHasPhotoAfter2024May(draft)
+  )).length;
+}
+
+function logPhotoScanDateRangeSummary(
+  label: string,
+  summary: ReturnType<typeof summarizeDateTimestamps>,
+  extra: Record<string, unknown> = {},
+) {
+  if (!__DEV__) {
+    return;
+  }
+
+  console.info(`[photo-import scan] ${label}`, {
+    ...summary,
+    ...extra,
+  });
+}
+
+function createPhotoScanAttemptId() {
+  return `photo-scan-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function formatScanBoundaryDate(value?: Date | number) {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return new Date(value).toISOString();
+  }
+
+  return undefined;
+}
+
+function getCandidateRejectionStage(draft: LocalDetectedTripDraft) {
+  const savedReason = getSavedCandidateMatchReason(draft);
+  const hiddenReasons = getCandidateHiddenReasons(draft);
+
+  if (canShowDraftAsCandidate(draft)) {
+    return 'visible';
+  }
+
+  if (savedReason) {
+    return 'saved_candidate_filter';
+  }
+
+  if (hiddenReasons.includes('hidden_home_region')) {
+    return 'home_region_filter';
+  }
+
+  if (hiddenReasons.some((reason) => (
+    reason.includes('repeated') ||
+    reason.includes('daily_life') ||
+    reason.includes('daily_event') ||
+    reason.includes('low_mobility') ||
+    reason.includes('merged_daily_events')
+  ))) {
+    return 'repeated_local_or_daily_life_filter';
+  }
+
+  if (
+    hiddenReasons.includes('confidence_low') ||
+    hiddenReasons.includes('location_title_unresolved_low_confidence')
+  ) {
+    return 'confidence_filter';
+  }
+
+  if (hiddenReasons.length > 0) {
+    return 'visibility_filter';
+  }
+
+  return 'unknown';
+}
+
+function compareDateKeys(left?: string | null, right?: string | null) {
+  const leftTime = left ? parseDateKeyTime(left) : Number.POSITIVE_INFINITY;
+  const rightTime = right ? parseDateKeyTime(right) : Number.POSITIVE_INFINITY;
+  const safeLeftTime = Number.isFinite(leftTime) ? leftTime : Number.POSITIVE_INFINITY;
+  const safeRightTime = Number.isFinite(rightTime) ? rightTime : Number.POSITIVE_INFINITY;
+
+  return safeLeftTime - safeRightTime;
+}
+
+function sortDetectedDraftsOldestFirst(draftsToSort: LocalDetectedTripDraft[]) {
+  return draftsToSort
+    .map((draft, index) => ({ draft, index }))
+    .sort((left, right) => {
+      const startDiff = compareDateKeys(left.draft.startDate, right.draft.startDate);
+
+      if (startDiff !== 0) {
+        return startDiff;
+      }
+
+      const endDiff = compareDateKeys(left.draft.endDate, right.draft.endDate);
+
+      if (endDiff !== 0) {
+        return endDiff;
+      }
+
+      const idDiff = left.draft.id.localeCompare(right.draft.id);
+
+      return idDiff !== 0 ? idDiff : left.index - right.index;
+    })
+    .map(({ draft }) => draft);
+}
+
+export function sortDetectedCandidatesOldestFirst(candidatesToSort: PhotoImportTripCandidate[]) {
+  return candidatesToSort
+    .map((candidate, index) => ({ candidate, index }))
+    .sort((left, right) => {
+      const leftMetadata = left.candidate.debugMetadata;
+      const rightMetadata = right.candidate.debugMetadata;
+      const startDiff = compareDateKeys(leftMetadata?.startDate, rightMetadata?.startDate);
+
+      if (startDiff !== 0) {
+        return startDiff;
+      }
+
+      const endDiff = compareDateKeys(leftMetadata?.endDate, rightMetadata?.endDate);
+
+      if (endDiff !== 0) {
+        return endDiff;
+      }
+
+      const idDiff = left.candidate.id.localeCompare(right.candidate.id);
+
+      return idDiff !== 0 ? idDiff : left.index - right.index;
+    })
+    .map(({ candidate }) => candidate);
+}
+
+function getOutOfOrderPairCount<T>(
+  items: T[],
+  getStartDate: (item: T) => string | undefined,
+  getEndDate: (item: T) => string | undefined,
+) {
+  let outOfOrderPairCount = 0;
+
+  for (let index = 1; index < items.length; index += 1) {
+    const previous = items[index - 1];
+    const current = items[index];
+    const startDiff = compareDateKeys(getStartDate(previous), getStartDate(current));
+    const endDiff = compareDateKeys(getEndDate(previous), getEndDate(current));
+
+    if (startDiff > 0 || (startDiff === 0 && endDiff > 0)) {
+      outOfOrderPairCount += 1;
+    }
+  }
+
+  return outOfOrderPairCount;
+}
+
+function logDetectedDraftStableSortSummary(
+  stage: string,
+  draftsToLog: LocalDetectedTripDraft[],
+  scanAttemptId?: string,
+) {
+  if (!__DEV__) {
+    return;
+  }
+
+  const outOfOrderPairCount = getOutOfOrderPairCount(
+    draftsToLog,
+    (draft) => draft.startDate,
+    (draft) => draft.endDate,
+  );
+
+  console.info('[detectedCandidateStableSortSummary]', {
+    candidateCount: draftsToLog.length,
+    firstStartDate: draftsToLog[0]?.startDate,
+    isAscending: outOfOrderPairCount === 0,
+    lastStartDate: draftsToLog[draftsToLog.length - 1]?.startDate,
+    outOfOrderPairCount,
+    scanAttemptId,
+    stage,
+  });
+}
+
+function logDetectedCandidateStableSortSummary(
+  stage: string,
+  candidatesToLog: PhotoImportTripCandidate[],
+  scanAttemptId?: string,
+) {
+  if (!__DEV__) {
+    return;
+  }
+
+  const outOfOrderPairCount = getOutOfOrderPairCount(
+    candidatesToLog,
+    (candidate) => candidate.debugMetadata?.startDate,
+    (candidate) => candidate.debugMetadata?.endDate,
+  );
+
+  console.info('[detectedCandidateStableSortSummary]', {
+    candidateCount: candidatesToLog.length,
+    firstStartDate: candidatesToLog[0]?.debugMetadata?.startDate,
+    isAscending: outOfOrderPairCount === 0,
+    lastStartDate: candidatesToLog[candidatesToLog.length - 1]?.debugMetadata?.startDate,
+    outOfOrderPairCount,
+    scanAttemptId,
+    stage,
+  });
+}
+
+function logRecentCandidateLifecycle(
+  stage: string,
+  draftsToLog: LocalDetectedTripDraft[],
+  scanAttemptId?: string,
+) {
+  if (!__DEV__) {
+    return;
+  }
+
+  draftsToLog.forEach((draft, listIndex) => {
+    if (!draftStartsAfter2024May(draft) && !draftHasPhotoAfter2024May(draft)) {
+      return;
+    }
+
+    const hiddenReasons = getCandidateHiddenReasons(draft);
+
+    console.info('[recentCandidateLifecycle]', {
+      draftId: draft.id,
+      hiddenReason: hiddenReasons[0] ?? getSavedCandidateMatchReason(draft),
+      listIndex,
+      present: true,
+      scanAttemptId,
+      stage,
+      startDate: draft.startDate,
+    });
+  });
+}
+
+function areSavedCandidateDateRangesClose(
+  draft: LocalDetectedTripDraft,
+  entry: SavedDetectedCandidateRegistryEntry,
+) {
+  const draftStart = parseDateKeyTime(draft.startDate);
+  const draftEnd = parseDateKeyTime(draft.endDate);
+  const savedStart = parseDateKeyTime(entry.startDate);
+  const savedEnd = parseDateKeyTime(entry.endDate);
+
+  if (
+    Number.isNaN(draftStart) ||
+    Number.isNaN(draftEnd) ||
+    Number.isNaN(savedStart) ||
+    Number.isNaN(savedEnd)
+  ) {
+    return false;
+  }
+
+  const dayMs = DAY_MS;
+  const startDiffDays = Math.abs(draftStart - savedStart) / dayMs;
+  const endDiffDays = Math.abs(draftEnd - savedEnd) / dayMs;
+  const overlapStart = Math.max(draftStart, savedStart);
+  const overlapEnd = Math.min(draftEnd, savedEnd);
+  const overlapDays = Math.max(0, Math.round((overlapEnd - overlapStart) / dayMs) + 1);
+  const draftDays = Math.max(1, Math.round((draftEnd - draftStart) / dayMs) + 1);
+  const savedDays = Math.max(1, Math.round((savedEnd - savedStart) / dayMs) + 1);
+
+  return (
+    (startDiffDays <= 1 && endDiffDays <= 1) ||
+    overlapDays / Math.min(draftDays, savedDays) >= 0.8
+  );
+}
+
+function getSavedCandidatePhotoOverlapMatch(
+  draft: LocalDetectedTripDraft,
+  photoIdentifiers: string[],
+) {
+  if (photoIdentifiers.length < SAVED_CANDIDATE_OVERLAP_MIN_COMMON_PHOTOS) {
+    return null;
+  }
+
+  const candidateIdentifierSet = new Set(photoIdentifiers);
+
+  for (const entry of savedDetectedCandidateRegistry.values()) {
+    if (!areSavedCandidateDateRangesClose(draft, entry)) {
+      continue;
+    }
+
+    const smallerSetSize = Math.min(photoIdentifiers.length, entry.photoIdentifiers.length);
+
+    if (smallerSetSize < SAVED_CANDIDATE_OVERLAP_MIN_COMMON_PHOTOS) {
+      continue;
+    }
+
+    let commonPhotoCount = 0;
+
+    for (const identifier of entry.photoIdentifiers) {
+      if (candidateIdentifierSet.has(identifier)) {
+        commonPhotoCount += 1;
+      }
+    }
+
+    if (
+      commonPhotoCount >= SAVED_CANDIDATE_OVERLAP_MIN_COMMON_PHOTOS &&
+      commonPhotoCount / smallerSetSize >= SAVED_CANDIDATE_OVERLAP_RATIO
+    ) {
+      return entry;
+    }
+  }
+
+  return null;
+}
+
+function getSavedDetectedCandidateMatch(draft: LocalDetectedTripDraft): SavedCandidateMatch | null {
+  if (!savedDetectedCandidateRegistryLoaded) {
+    return null;
+  }
+
+  const { fingerprint, photoIdentifiers } = syncDraftSavedCandidateFingerprint(draft);
+  const exactEntry = savedDetectedCandidateRegistry.get(fingerprint);
+
+  if (exactEntry) {
+    return {
+      entry: exactEntry,
+      reason: 'exact_fingerprint',
+    };
+  }
+
+  const overlapEntry = getSavedCandidatePhotoOverlapMatch(draft, photoIdentifiers);
+
+  if (overlapEntry) {
+    return {
+      entry: overlapEntry,
+      reason: 'photo_overlap',
+    };
+  }
+
+  return null;
+}
+
+function getSavedCandidateMatchReason(draft: LocalDetectedTripDraft) {
+  return getSavedDetectedCandidateMatch(draft)?.reason ?? null;
+}
+
+function getMaskedFingerprint(fingerprint?: string | null) {
+  return fingerprint ? `${fingerprint.slice(0, 24)}...` : null;
+}
+
+async function persistSavedDetectedCandidateRegistry() {
+  if (!savedDetectedCandidateRegistryUserId) {
+    return;
+  }
+
+  const entries = [...savedDetectedCandidateRegistry.values()]
+    .sort((left, right) => right.savedAt.localeCompare(left.savedAt))
+    .slice(0, SAVED_DETECTED_CANDIDATE_REGISTRY_MAX_ENTRIES);
+  const state: SavedDetectedCandidateRegistryState = {
+    entries,
+    userId: savedDetectedCandidateRegistryUserId,
+    version: SAVED_DETECTED_CANDIDATE_REGISTRY_VERSION,
+  };
+
+  await AsyncStorage.setItem(
+    getSavedDetectedCandidateRegistryKey(savedDetectedCandidateRegistryUserId),
+    JSON.stringify(state),
+  );
 }
 
 function formatDateLabel(date: Date): string {
@@ -681,60 +1253,6 @@ function getPhotoCoordinates(photo: LocalDetectedPhoto) {
   return isFiniteCoordinateValue(photo.latitude) && isFiniteCoordinateValue(photo.longitude)
     ? { latitude: photo.latitude, longitude: photo.longitude }
     : null;
-}
-
-function isPhotoInsideLivingArea(photo: LocalDetectedPhoto, livingArea?: LivingArea | null) {
-  if (!livingArea || !isFiniteCoordinateValue(livingArea.latitude) || !isFiniteCoordinateValue(livingArea.longitude)) {
-    return false;
-  }
-
-  const coordinates = getPhotoCoordinates(photo);
-
-  if (!coordinates) {
-    return false;
-  }
-
-  const distanceKm = getDistanceMeters(coordinates, {
-    latitude: livingArea.latitude,
-    longitude: livingArea.longitude,
-  }) / 1000;
-
-  return distanceKm <= LIVING_AREA_EXCLUSION_RADIUS_KM;
-}
-
-function filterPhotosByLivingArea(photos: LocalDetectedPhoto[], livingArea?: LivingArea | null) {
-  if (!livingArea) {
-    return {
-      excludedPhotoCount: 0,
-      photos,
-      unclassifiedPhotoCount: 0,
-    };
-  }
-
-  let excludedPhotoCount = 0;
-  let unclassifiedPhotoCount = 0;
-  const filteredPhotos: LocalDetectedPhoto[] = [];
-
-  for (const photo of photos) {
-    if (!getPhotoCoordinates(photo)) {
-      unclassifiedPhotoCount += 1;
-      filteredPhotos.push(photo);
-      continue;
-    }
-
-    if (isPhotoInsideLivingArea(photo, livingArea)) {
-      excludedPhotoCount += 1;
-      continue;
-    }
-
-    filteredPhotos.push(photo);
-  }
-
-  return {
-    excludedPhotoCount,
-    photos: filteredPhotos,
-    unclassifiedPhotoCount,
-  };
 }
 
 function createCandidateFingerprint(draft: LocalDetectedTripDraft) {
@@ -1944,6 +2462,8 @@ function buildDraftFromPhotos(
   const draftCentroid = calculateCentroid(sortedPhotos);
   const coverPhoto = sortedPhotos.find((photo) => isRenderableImageUri(photo.displayUri));
   const fallbackTitle = formatCandidateDateTitle(startDate, endDate);
+  const candidatePhotoIdentifiers = [...new Set(sortedPhotos.map(getPhotoStableIdentifier))].sort();
+  const candidateFingerprint = createDetectedCandidateFingerprint(candidatePhotoIdentifiers);
   const debugMetadata = calculateCandidateDebugMetadata({
     candidateId: draftId,
     dateGapSplitCount,
@@ -2001,6 +2521,8 @@ function buildDraftFromPhotos(
     coverAssetId: coverPhoto?.assetId,
     coverPhotoUri: coverPhoto?.displayUri ?? undefined,
     createdAt: new Date().toISOString(),
+    candidateFingerprint,
+    candidatePhotoIdentifiers,
     days,
     debugMetadata,
     displayTitle: hasTitleCandidate ? PENDING_LOCATION_TITLE : DETECTED_TRIP_TITLE,
@@ -2699,6 +3221,14 @@ function finalizePendingTitleForUi(
 }
 
 function canShowDraftAsCandidate(draft: LocalDetectedTripDraft) {
+  if (draft.saveStatus === 'saved' && draft.savedTripId) {
+    return false;
+  }
+
+  if (getSavedDetectedCandidateMatch(draft)) {
+    return false;
+  }
+
   const quality = syncCandidateQualityMetadata(draft);
   return (
     quality.hiddenReasons.length === 0 &&
@@ -2707,6 +3237,10 @@ function canShowDraftAsCandidate(draft: LocalDetectedTripDraft) {
       quality.candidateQualityType === 'long_stay_candidate'
     )
   );
+}
+
+function getVisibleLocalDetectedTripCandidates() {
+  return getVisibleCandidateDrafts([...drafts.values()]).map(createCandidateFromDraft);
 }
 
 function canQueueDraftTitleEnrichment(draft: LocalDetectedTripDraft) {
@@ -2752,6 +3286,7 @@ function evaluateCandidateQuality(draft: LocalDetectedTripDraft): {
   const isSavedImageHeavy =
     metadata.savedImageRatio >= SAVED_IMAGE_HEAVY_RATIO &&
     metadata.realPhotoCount < MIN_SINGLE_DAY_VISIBLE_PHOTOS;
+  const isHiddenHomeRegionCandidate = metadata.excludedBecauseHomeRegion === true;
   const isLongTripPostMerged = metadata.splitReason === 'long_trip_post_merged';
   const isProtectedLongStayCandidate =
     metadata.dayCount >= LONG_STAY_MIN_DAYS &&
@@ -2859,6 +3394,10 @@ function evaluateCandidateQuality(draft: LocalDetectedTripDraft): {
   if (metadata.confidenceLevel === 'low') {
     reasons.push('confidence_low');
     candidateQualityScore -= 20;
+  }
+
+  if (isHiddenHomeRegionCandidate) {
+    reasons.push('hidden_home_region');
   }
 
   if (metadata.gpsPhotoCount <= 0) {
@@ -2982,6 +3521,7 @@ function evaluateCandidateQuality(draft: LocalDetectedTripDraft): {
   let candidateQualityType: PhotoImportCandidateQualityType = 'review_needed_candidate';
 
   if (
+    reasons.includes('hidden_home_region') ||
     reasons.includes('likely_daily_life_candidate') ||
     reasons.includes('likely_daily_event_not_trip') ||
     reasons.includes('likely_repeated_daily_location_candidate') ||
@@ -3058,30 +3598,7 @@ function getCandidateHiddenReasons(draft: LocalDetectedTripDraft) {
 }
 
 function getVisibleCandidateDrafts(draftsToFilter: LocalDetectedTripDraft[]) {
-  const qualityPriority: Record<PhotoImportCandidateQualityType, number> = {
-    high_confidence_trip: 0,
-    long_stay_candidate: 1,
-    extended_journey_candidate: 2,
-    review_needed_candidate: 3,
-    weak_candidate: 4,
-    daily_life_candidate: 5,
-  };
-
-  return draftsToFilter
-    .filter(canShowDraftAsCandidate)
-    .sort((left, right) => {
-      const leftQuality = syncCandidateQualityMetadata(left);
-      const rightQuality = syncCandidateQualityMetadata(right);
-      const priorityDiff =
-        qualityPriority[leftQuality.candidateQualityType] -
-        qualityPriority[rightQuality.candidateQualityType];
-
-      if (priorityDiff !== 0) {
-        return priorityDiff;
-      }
-
-      return rightQuality.candidateQualityScore - leftQuality.candidateQualityScore;
-    });
+  return sortDetectedDraftsOldestFirst(draftsToFilter.filter(canShowDraftAsCandidate));
 }
 
 function wait(ms: number) {
@@ -3316,6 +3833,143 @@ function yieldToEventLoop() {
   });
 }
 
+export async function hydrateSavedDetectedCandidateRegistry(userId?: string | null) {
+  if (!userId) {
+    savedDetectedCandidateRegistry.clear();
+    savedDetectedCandidateRegistryUserId = null;
+    savedDetectedCandidateRegistryLoaded = true;
+    return 0;
+  }
+
+  if (savedDetectedCandidateRegistryLoaded && savedDetectedCandidateRegistryUserId === userId) {
+    return savedDetectedCandidateRegistry.size;
+  }
+
+  savedDetectedCandidateRegistry.clear();
+  savedDetectedCandidateRegistryUserId = userId;
+  savedDetectedCandidateRegistryLoaded = false;
+
+  try {
+    const rawState = await AsyncStorage.getItem(getSavedDetectedCandidateRegistryKey(userId));
+    const parsedState = rawState ? JSON.parse(rawState) as Partial<SavedDetectedCandidateRegistryState> : null;
+    const entries = Array.isArray(parsedState?.entries) ? parsedState.entries : [];
+
+    for (const entry of entries) {
+      if (
+        entry &&
+        typeof entry.fingerprint === 'string' &&
+        typeof entry.savedTripId === 'string' &&
+        Array.isArray(entry.photoIdentifiers)
+      ) {
+        savedDetectedCandidateRegistry.set(entry.fingerprint, {
+          endDate: typeof entry.endDate === 'string' ? entry.endDate : '',
+          fingerprint: entry.fingerprint,
+          photoIdentifiers: [...new Set(entry.photoIdentifiers.filter((value) => typeof value === 'string'))].sort(),
+          savedAt: typeof entry.savedAt === 'string' ? entry.savedAt : new Date().toISOString(),
+          savedTripId: entry.savedTripId,
+          startDate: typeof entry.startDate === 'string' ? entry.startDate : '',
+        });
+      }
+    }
+
+    let backfilledCount = 0;
+
+    for (const draft of drafts.values()) {
+      if (draft.saveStatus !== 'saved' || !draft.savedTripId) {
+        continue;
+      }
+
+      const { fingerprint, photoIdentifiers } = syncDraftSavedCandidateFingerprint(draft);
+
+      if (savedDetectedCandidateRegistry.has(fingerprint)) {
+        continue;
+      }
+
+      savedDetectedCandidateRegistry.set(fingerprint, {
+        endDate: draft.endDate,
+        fingerprint,
+        photoIdentifiers,
+        savedAt: new Date().toISOString(),
+        savedTripId: draft.savedTripId,
+        startDate: draft.startDate,
+      });
+      backfilledCount += 1;
+    }
+
+    if (backfilledCount > 0) {
+      await persistSavedDetectedCandidateRegistry();
+    }
+
+    savedDetectedCandidateRegistryLoaded = true;
+
+    if (__DEV__) {
+      console.info('[detected trip saved registry] loaded', {
+        detectedTripSavedFingerprintBackfilled: backfilledCount,
+        savedDetectedCandidateRegistryLoadedCount: savedDetectedCandidateRegistry.size,
+      });
+    }
+
+    return savedDetectedCandidateRegistry.size;
+  } catch (error) {
+    savedDetectedCandidateRegistryLoaded = true;
+    console.warn('[detected trip saved registry] load failed', error);
+    return savedDetectedCandidateRegistry.size;
+  }
+}
+
+export async function recordSavedDetectedTripDraft(
+  userId: string | null | undefined,
+  draftId: string,
+  savedTripId: string,
+) {
+  if (!userId) {
+    return false;
+  }
+
+  if (!savedDetectedCandidateRegistryLoaded || savedDetectedCandidateRegistryUserId !== userId) {
+    await hydrateSavedDetectedCandidateRegistry(userId);
+  }
+
+  const draft = drafts.get(draftId);
+
+  if (!draft) {
+    return false;
+  }
+
+  const { fingerprint, photoIdentifiers } = syncDraftSavedCandidateFingerprint(draft);
+
+  savedDetectedCandidateRegistry.set(fingerprint, {
+    endDate: draft.endDate,
+    fingerprint,
+    photoIdentifiers,
+    savedAt: new Date().toISOString(),
+    savedTripId,
+    startDate: draft.startDate,
+  });
+
+  try {
+    await persistSavedDetectedCandidateRegistry();
+
+    if (__DEV__) {
+      console.info('[detected trip saved registry] persisted', {
+        detectedTripSavedFingerprintCreated: getMaskedFingerprint(fingerprint),
+        detectedTripSavedFingerprintPersisted: true,
+        detectedTripSavedFingerprintPhotoCount: photoIdentifiers.length,
+      });
+    }
+
+    return true;
+  } catch (error) {
+    console.warn('[detected trip saved registry] persist failed', {
+      detectedTripSavedFingerprintCreated: getMaskedFingerprint(fingerprint),
+      detectedTripSavedFingerprintPersistFailed: true,
+      detectedTripSavedFingerprintPhotoCount: photoIdentifiers.length,
+      error,
+    });
+    return false;
+  }
+}
+
 export function createLocalDetectedTripDraftFromAssets(
   assets: PickedPhotoAsset[],
 ): LocalDetectedTripDraft | null {
@@ -3452,6 +4106,7 @@ export async function hydrateLocalDetectedTripDraftPhotos(
 async function scanPhotoLibraryForTripDrafts(
   options: PhotoLibraryScanOptions = {},
 ): Promise<PhotoLibraryScanResult> {
+  const scanAttemptId = createPhotoScanAttemptId();
   const isAvailable = await MediaLibrary.isAvailableAsync();
 
   if (!isAvailable) {
@@ -3469,6 +4124,7 @@ async function scanPhotoLibraryForTripDrafts(
     console.info('[photo-import scan] permission', {
       accessPrivileges: permission.accessPrivileges,
       granted: permission.granted,
+      scanAttemptId,
       status: permission.status,
     });
   }
@@ -3482,6 +4138,7 @@ async function scanPhotoLibraryForTripDrafts(
       candidates: [],
       detectedTripCandidateCount: 0,
       drafts: [],
+      hiddenHomeRegionCandidateCount: 0,
       hiddenNoLocationTitleCandidateCount: 0,
       hiddenLowConfidenceCandidateCount: 0,
       hiddenScreenshotCandidateCount: 0,
@@ -3489,7 +4146,7 @@ async function scanPhotoLibraryForTripDrafts(
       hiddenWeakSingleDayCandidateCount: 0,
       hiddenLowGpsPhotoCandidateCount: 0,
       duplicateCandidateCount: 0,
-      livingAreaApplied: Boolean(options.livingArea),
+      livingAreaApplied: hasValidHomeRegion(options.livingArea),
       livingAreaDisplayName: options.livingArea?.displayName,
       livingAreaExcludedPhotoCount: 0,
       livingAreaUnclassifiedPhotoCount: 0,
@@ -3498,7 +4155,13 @@ async function scanPhotoLibraryForTripDrafts(
       pendingEnrichmentCandidateCount: 0,
       permissionState,
       photosAfterScreenshotFilterCount: 0,
+      savedDetectedCandidateRegistryLoadedCount: 0,
+      scanAttemptId,
       scannedAssetCount: 0,
+      detectedCandidateFingerprintComputedCount: 0,
+      detectedCandidateHiddenByExactFingerprintCount: 0,
+      detectedCandidateHiddenByPhotoOverlapCount: 0,
+      detectedCandidateVisibleAfterSavedFilterCount: 0,
       skippedScreenshotCount: 0,
       skippedPhUriCount: 0,
       totalAssetCount: 0,
@@ -3507,6 +4170,8 @@ async function scanPhotoLibraryForTripDrafts(
   }
 
   const photos: LocalDetectedPhoto[] = [];
+  const savedDetectedCandidateRegistryLoadedCount =
+    await hydrateSavedDetectedCandidateRegistry(options.savedRegistryUserId);
   let after: string | undefined;
   let hasNextPage = true;
   let pageCount = 0;
@@ -3522,6 +4187,24 @@ async function scanPhotoLibraryForTripDrafts(
     });
     pageCount += 1;
     totalAssetCount = page.totalCount;
+
+    if (pageCount === 1) {
+      logPhotoScanDateRangeSummary(
+        'photoScanMediaLibraryFirstPageSummary',
+        summarizeAssetDates(page.assets),
+        {
+          accessPrivileges: permission.accessPrivileges,
+          createdAfter: formatScanBoundaryDate(options.createdAfter),
+          endCursorExists: Boolean(page.endCursor),
+          hasNextPage: page.hasNextPage,
+          mediaLibraryPageSize: options.pageSize ?? PHOTO_SCAN_PAGE_SIZE,
+          scanAttemptId,
+          sortBy: 'creationTime_desc',
+          totalAssetCount: page.totalCount,
+        },
+      );
+    }
+
     const assetInfos = await Promise.all(
       page.assets.map((asset) =>
         MediaLibrary.getAssetInfoAsync(asset, { shouldDownloadFromNetwork: false }).catch(() => asset),
@@ -3540,6 +4223,7 @@ async function scanPhotoLibraryForTripDrafts(
       currentPage: pageCount,
       detectedCandidateCount: 0,
       hasNextPage,
+      scanAttemptId,
       scannedAssetCount: photos.length,
       totalAssetCount,
     });
@@ -3548,6 +4232,7 @@ async function scanPhotoLibraryForTripDrafts(
       console.info('[photo-import scan] page', {
         currentPage: pageCount,
         hasNextPage,
+        scanAttemptId,
         scannedAssetCount: photos.length,
         totalAssetCount,
       });
@@ -3556,11 +4241,67 @@ async function scanPhotoLibraryForTripDrafts(
     await yieldToEventLoop();
   }
 
+  logPhotoScanDateRangeSummary(
+    'photoScanMediaLibraryPaginationSummary',
+    summarizePhotoDates(photos),
+    {
+      createdAfter: formatScanBoundaryDate(options.createdAfter),
+      pageCount,
+      scanAttemptId,
+      scanCompletedHasNextPage: hasNextPage,
+      totalAssetCount,
+    },
+  );
+  logPhotoScanDateRangeSummary(
+    'photoScanInputDateRangeSummary',
+    summarizePhotoDates(photos),
+    { scanAttemptId },
+  );
+
   const skippedScreenshotCount = photos.filter((photo) => photo.isScreenshot).length;
   const screenshotFilteredPhotos = photos.filter((photo) => !photo.isScreenshot);
-  const livingAreaFilterResult = filterPhotosByLivingArea(screenshotFilteredPhotos, options.livingArea);
-  const candidatePhotos = livingAreaFilterResult.photos;
+  const candidatePhotos = screenshotFilteredPhotos;
   const photosAfterScreenshotFilterCount = candidatePhotos.length;
+  const inputPhotoCountAfter2024May = photos.filter((photo) => {
+    const timestamp = getDateTimestamp(photo.takenAt);
+    return timestamp !== null && timestamp >= AFTER_MAY_2024_CUTOFF_TIME;
+  }).length;
+  const gpsPhotoCountAfter2024May = photos.filter((photo) => {
+    const timestamp = getDateTimestamp(photo.takenAt);
+    return (
+      timestamp !== null &&
+      timestamp >= AFTER_MAY_2024_CUTOFF_TIME &&
+      photo.hasLocation
+    );
+  }).length;
+  const nonGpsPhotoCountAfter2024May = photos.filter((photo) => {
+    const timestamp = getDateTimestamp(photo.takenAt);
+    return (
+      timestamp !== null &&
+      timestamp >= AFTER_MAY_2024_CUTOFF_TIME &&
+      !photo.hasLocation
+    );
+  }).length;
+  const screenshotExcludedCountAfter2024May = photos.filter((photo) => {
+    const timestamp = getDateTimestamp(photo.takenAt);
+    return (
+      timestamp !== null &&
+      timestamp >= AFTER_MAY_2024_CUTOFF_TIME &&
+      photo.isScreenshot
+    );
+  }).length;
+  logPhotoScanDateRangeSummary(
+    'photoScanAfterScreenshotFilterSummary',
+    summarizePhotoDates(candidatePhotos),
+    {
+      inputPhotoCountAfter2024May,
+      gpsPhotoCountAfter2024May,
+      nonGpsPhotoCountAfter2024May,
+      scanAttemptId,
+      screenshotExcludedCountAfter2024May,
+      skippedScreenshotCount,
+    },
+  );
   const assetsWithLocationCount = photos.filter((photo) => photo.hasLocation).length;
   const photosWithCoordinatesCount = photos.filter((photo) => getPhotoCoordinates(photo)).length;
   const assetsWithoutLocationCount = photos.length - assetsWithLocationCount;
@@ -3578,13 +4319,132 @@ async function scanPhotoLibraryForTripDrafts(
     duplicateCandidateCount,
     drafts: nextDrafts,
   } = filterDuplicateCandidateDrafts(generatedDrafts);
+  for (const draft of nextDrafts) {
+    draft.debugMetadata.scanAttemptId = scanAttemptId;
+  }
+  const sortedGeneratedDrafts = sortDetectedDraftsOldestFirst(generatedDrafts);
+  const sortedNextDrafts = sortDetectedDraftsOldestFirst(nextDrafts);
+  logRecentCandidateLifecycle('candidate_created', sortedGeneratedDrafts, scanAttemptId);
+  logRecentCandidateLifecycle('after_merge_split', sortedNextDrafts, scanAttemptId);
+  logDetectedDraftStableSortSummary('after_merge_split', sortedNextDrafts, scanAttemptId);
+  logPhotoScanDateRangeSummary(
+    'photoScanCandidateDateRangeSummary',
+    summarizeDraftPhotoDates(sortedNextDrafts),
+    {
+      candidatesCreatedAfter2024May: countDraftsAfter2024May(generatedDrafts),
+      candidatesMergedAfter2024May: countDraftsAfter2024May(sortedNextDrafts),
+      duplicateCandidateCount,
+      generatedCandidateCount: generatedDrafts.length,
+      scanAttemptId,
+      visibleCandidateInputCount: sortedNextDrafts.length,
+    },
+  );
 
   applyRepeatedLocalClusterMetadata(nextDrafts);
-  storeDrafts(nextDrafts);
+  logRecentCandidateLifecycle('after_repeated_local', sortedNextDrafts, scanAttemptId);
+  logPhotoScanDateRangeSummary(
+    'photoScanAfterRepeatedLocalSummary',
+    summarizeDraftPhotoDates(sortedNextDrafts),
+    {
+      candidatesRejectedRepeatedLocalAfter2024May: nextDrafts.filter((draft) => (
+        draftHasPhotoAfter2024May(draft) &&
+        getCandidateRejectionStage(draft) === 'repeated_local_or_daily_life_filter'
+      )).length,
+      scanAttemptId,
+    },
+  );
+  const loadedHomeRegion = hasValidHomeRegion(options.livingArea) ? options.livingArea : null;
+  const hasValidLoadedHomeRegion = Boolean(loadedHomeRegion);
+  if (__DEV__) {
+    if (hasValidLoadedHomeRegion) {
+      console.info('[photo-import home region] filter loaded', {
+        basedIn: options.livingArea?.displayName,
+        basedInPlaceExists: Boolean(options.livingArea?.displayName),
+        hasHomeRegion: Boolean(options.livingArea),
+        hasValidCoordinates: true,
+        homeRegionFilterLoaded: true,
+        radiusKm: HOME_REGION_EXCLUSION_RADIUS_KM,
+        scanAttemptId,
+        source: options.source ?? 'home',
+        updatedAt: undefined,
+      });
+    } else {
+      console.info('[photo-import home region] filter skipped', {
+        hasHomeRegion: Boolean(options.livingArea),
+        hasValidCoordinates: false,
+        homeRegionFilterSkipped: true,
+        reason: options.homeRegionFilterSkipReason ??
+          (options.livingArea ? 'invalid_coordinates' : 'not_configured'),
+        scanAttemptId,
+      });
+    }
+  }
+  const homeRegionEvaluations = applyHomeRegionCandidateFilter(
+    nextDrafts,
+    loadedHomeRegion,
+    HOME_REGION_EXCLUSION_RADIUS_KM,
+    scanAttemptId,
+  );
+  const hiddenHomeRegionCandidateCount = homeRegionEvaluations.filter(
+    ({ result }) => result.shouldHide,
+  ).length;
+  const draftByIdForHomeRegion = new Map(nextDrafts.map((draft) => [draft.id, draft]));
+  const livingAreaExcludedPhotoCount = homeRegionEvaluations.reduce((total, { draftId, result }) => (
+    result.shouldHide ? total + (draftByIdForHomeRegion.get(draftId)?.debugMetadata.photoCount ?? 0) : total
+  ), 0);
+  const livingAreaUnclassifiedPhotoCount = homeRegionEvaluations.filter(
+    ({ result }) => result.locatedGroupCount === 0 && result.unknownGroupCount > 0,
+  ).length;
+  const candidatesHiddenHomeRegionAfter2024May = nextDrafts.filter((draft) => (
+    draftHasPhotoAfter2024May(draft) &&
+    draft.debugMetadata.excludedBecauseHomeRegion
+  )).length;
+  logRecentCandidateLifecycle('after_home_filter', sortedNextDrafts, scanAttemptId);
+  logPhotoScanDateRangeSummary(
+    'photoScanAfterHomeRegionFilterSummary',
+    summarizeDraftPhotoDates(sortedNextDrafts),
+    {
+      candidatesHiddenHomeRegionAfter2024May,
+      homeRegionCandidateHiddenCount: hiddenHomeRegionCandidateCount,
+      homeRegionFilterLoaded: hasValidLoadedHomeRegion,
+      livingAreaExcludedPhotoCount,
+      livingAreaUnclassifiedPhotoCount,
+      scanAttemptId,
+    },
+  );
+  storeDrafts(sortedNextDrafts);
+  logRecentCandidateLifecycle('store_persisted', sortedNextDrafts, scanAttemptId);
+  const savedCandidateMatchReasons = nextDrafts.map((draft) => getSavedCandidateMatchReason(draft));
+  const detectedCandidateFingerprintComputedCount = nextDrafts.filter(
+    (draft) => Boolean(syncDraftSavedCandidateFingerprint(draft).fingerprint),
+  ).length;
+  const detectedCandidateHiddenByExactFingerprintCount = savedCandidateMatchReasons.filter(
+    (reason) => reason === 'exact_fingerprint',
+  ).length;
+  const detectedCandidateHiddenByPhotoOverlapCount = savedCandidateMatchReasons.filter(
+    (reason) => reason === 'photo_overlap',
+  ).length;
+  const candidatesHiddenSavedAfter2024May = nextDrafts.filter((draft) => (
+    draftHasPhotoAfter2024May(draft) &&
+    Boolean(getSavedCandidateMatchReason(draft))
+  )).length;
+  logRecentCandidateLifecycle('after_saved_filter', sortedNextDrafts, scanAttemptId);
+  logPhotoScanDateRangeSummary(
+    'photoScanAfterSavedFilterSummary',
+    summarizeDraftPhotoDates(sortedNextDrafts),
+    {
+      candidatesHiddenSavedAfter2024May,
+      detectedCandidateHiddenByExactFingerprintCount,
+      detectedCandidateHiddenByPhotoOverlapCount,
+      scanAttemptId,
+      savedDetectedCandidateRegistryLoadedCount,
+    },
+  );
   options.onProgress?.({
     currentPage: pageCount,
     detectedCandidateCount: 0,
     hasNextPage: false,
+    scanAttemptId,
     scannedAssetCount: photos.length,
     totalAssetCount,
   });
@@ -3593,11 +4453,21 @@ async function scanPhotoLibraryForTripDrafts(
     console.info('[photo-import scan] scan phase completed', {
       detectedTripCandidateCount: nextDrafts.length,
       duplicateCandidateCount,
-      livingAreaApplied: Boolean(options.livingArea),
+      hiddenHomeRegionCandidateCount,
+      homeRegionCandidateFilterEntryPoint: options.source ?? 'home',
+      homeRegionCandidateHiddenCount: hiddenHomeRegionCandidateCount,
+      homeRegionCandidateUnknownLocationCount: livingAreaUnclassifiedPhotoCount,
+      homeRegionCandidateVisibleCount: nextDrafts.length - hiddenHomeRegionCandidateCount,
+      homeRegionFilterLoaded: hasValidLoadedHomeRegion,
+      homeRegionFilterSkipped: !hasValidLoadedHomeRegion,
+      homeRegionFilterSkippedReason: hasValidLoadedHomeRegion
+        ? undefined
+        : options.homeRegionFilterSkipReason ?? (options.livingArea ? 'invalid_coordinates' : 'not_configured'),
+      livingAreaApplied: hasValidLoadedHomeRegion,
       livingAreaDisplayName: options.livingArea?.displayName,
-      livingAreaExcludedPhotoCount: livingAreaFilterResult.excludedPhotoCount,
-      livingAreaRadiusKm: LIVING_AREA_EXCLUSION_RADIUS_KM,
-      livingAreaUnclassifiedPhotoCount: livingAreaFilterResult.unclassifiedPhotoCount,
+      livingAreaExcludedPhotoCount,
+      livingAreaRadiusKm: HOME_REGION_EXCLUSION_RADIUS_KM,
+      livingAreaUnclassifiedPhotoCount,
       scanSource: options.source ?? 'home',
       scannedAssetCount: photos.length,
       totalAssetCount,
@@ -3607,8 +4477,44 @@ async function scanPhotoLibraryForTripDrafts(
     });
   }
 
-  const visibleDrafts = getVisibleCandidateDrafts(nextDrafts);
-  const candidates = visibleDrafts.map(createCandidateFromDraft);
+  const visibleDrafts = getVisibleCandidateDrafts(sortedNextDrafts);
+  logRecentCandidateLifecycle('visible_candidates', visibleDrafts, scanAttemptId);
+  logDetectedDraftStableSortSummary('visible_candidates', visibleDrafts, scanAttemptId);
+  const candidates = sortDetectedCandidatesOldestFirst(visibleDrafts.map(createCandidateFromDraft));
+  logDetectedCandidateStableSortSummary('screen_delivered_candidates', candidates, scanAttemptId);
+  const candidatesRejectedRepeatedLocalAfter2024May = nextDrafts.filter((draft) => (
+    draftHasPhotoAfter2024May(draft) &&
+    getCandidateRejectionStage(draft) === 'repeated_local_or_daily_life_filter'
+  )).length;
+  const candidatesRejectedConfidenceAfter2024May = nextDrafts.filter((draft) => (
+    draftHasPhotoAfter2024May(draft) &&
+    getCandidateRejectionStage(draft) === 'confidence_filter'
+  )).length;
+  const candidatesVisibleAfter2024May = countDraftsAfter2024May(visibleDrafts);
+  logPhotoScanDateRangeSummary(
+    'photoScanVisibleDateRangeSummary',
+    summarizeDraftPhotoDates(visibleDrafts),
+    {
+      candidatesHiddenHomeRegionAfter2024May,
+      candidatesHiddenSavedAfter2024May,
+      candidatesRejectedConfidenceAfter2024May,
+      candidatesRejectedRepeatedLocalAfter2024May,
+      candidatesVisibleAfter2024May,
+      scanAttemptId,
+      visibleDetectedTripCandidateCount: candidates.length,
+    },
+  );
+  logPhotoScanDateRangeSummary(
+    'photoScanHighConfidenceVisibleSummary',
+    summarizeDraftPhotoDates(visibleDrafts),
+    {
+      highConfidenceVisibleCount: visibleDrafts.filter((draft) => (
+        syncCandidateQualityMetadata(draft).candidateQualityType === 'high_confidence_trip'
+      )).length,
+      scanAttemptId,
+    },
+  );
+  const detectedCandidateVisibleAfterSavedFilterCount = candidates.length;
   const hiddenLowConfidenceCandidateCount = nextDrafts.filter(
     (draft) => getCandidateHiddenReasons(draft).includes('confidence_low'),
   ).length;
@@ -3843,6 +4749,7 @@ async function scanPhotoLibraryForTripDrafts(
     currentPage: pageCount,
     detectedCandidateCount: candidates.length,
     hasNextPage: false,
+    scanAttemptId,
     scannedAssetCount: totalAssetCount || photos.length,
     totalAssetCount: totalAssetCount || photos.length,
   });
@@ -3854,6 +4761,8 @@ async function scanPhotoLibraryForTripDrafts(
       console.info('[detected trip candidate]', {
         candidateQualityScore: quality.candidateQualityScore,
         candidateQualityType: quality.candidateQualityType,
+        draftId: draft.id,
+        scanAttemptId,
         candidateTitleCoordinateSource: draft.debugMetadata.candidateTitleCoordinateSource,
         candidateTitleLocationSource: draft.debugMetadata.candidateTitleLocationSource,
         confidenceLevel: draft.debugMetadata.confidenceLevel,
@@ -3869,10 +4778,25 @@ async function scanPhotoLibraryForTripDrafts(
         hasValidCentroid:
           isFiniteCoordinateValue(draft.debugMetadata.centroidLat) &&
           isFiniteCoordinateValue(draft.debugMetadata.centroidLng),
+        finalVisibility: canShowDraftAsCandidate(draft) ? 'visible' : 'hidden',
         hiddenFromCandidateList: !canShowDraftAsCandidate(draft),
         hiddenReasons: quality.hiddenReasons,
+        hiddenReason: quality.hiddenReasons[0] ?? null,
+        homeRegionFilterApplied: draft.debugMetadata.homeRegionFilterApplied,
+        homeRegionHiddenReason: draft.debugMetadata.homeRegionHiddenReason,
+        homeRegionInsideGroupCount: draft.debugMetadata.homeRegionInsideGroupCount,
+        homeRegionLocatedGroupCount: draft.debugMetadata.homeRegionLocatedGroupCount,
+        homeRegionMeaningfulOutsideGroupCount: draft.debugMetadata.homeRegionMeaningfulOutsideGroupCount,
+        homeRegionOutsideGroupCount: draft.debugMetadata.homeRegionOutsideGroupCount,
+        homeRegionUnknownGroupCount: draft.debugMetadata.homeRegionUnknownGroupCount,
         hasLocationTitle: draft.debugMetadata.hasLocationTitle,
         locationClusterCount: draft.debugMetadata.locationClusterCount,
+        locatedGroupCount: draft.days.reduce((total, day) => (
+          total + day.groups.filter((group) => (
+            isFiniteCoordinateValue(group.centroidLat) ||
+            isFiniteCoordinateValue(group.latitude)
+          )).length
+        ), 0),
         locationLabel: draft.locationLabel,
         enrichmentStatus: draft.enrichmentStatus,
         firstLocatedGroupCentroidLat: draft.debugMetadata.firstLocatedGroupCentroidLat,
@@ -3910,6 +4834,7 @@ async function scanPhotoLibraryForTripDrafts(
         savedImageRatio: draft.debugMetadata.savedImageRatio,
         screenshotPhotoCount: draft.debugMetadata.screenshotPhotoCount,
         reviewNeededReasons: quality.reviewNeededReasons,
+        rejectionStage: getCandidateRejectionStage(draft),
         splitReason: draft.debugMetadata.splitReason,
         startDate: draft.debugMetadata.startDate,
         isLongTripCandidate: draft.debugMetadata.isLongTripCandidate,
@@ -3931,6 +4856,9 @@ async function scanPhotoLibraryForTripDrafts(
             ? 'pending_to_unresolved'
             : 'pending',
         genericFallbackSuppressed: draft.debugMetadata.genericFallbackSuppressed,
+        savedCandidateFilterReason: getSavedCandidateMatchReason(draft),
+        savedCandidateFingerprint: getMaskedFingerprint(draft.candidateFingerprint),
+        savedCandidatePhotoIdentifierCount: draft.candidatePhotoIdentifiers?.length ?? 0,
         unresolvedRegionFallbackTitle: draft.debugMetadata.unresolvedRegionFallbackTitle,
         unresolvedTitleFallbackSource: draft.debugMetadata.unresolvedTitleFallbackSource,
         warningReasons: draft.debugMetadata.warningReasons,
@@ -3938,11 +4866,19 @@ async function scanPhotoLibraryForTripDrafts(
       });
     }
 
-    console.info('[photo-import scan] result', {
+      console.info('[photo-import scan] result', {
       assetsWithLocationCount,
       assetsWithDisplayUriCount,
       assetsWithoutLocationCount,
       assetsWithoutDisplayUriCount,
+      scanAttemptId,
+      candidatesCreatedAfter2024May: countDraftsAfter2024May(generatedDrafts),
+      candidatesHiddenHomeRegionAfter2024May,
+      candidatesHiddenSavedAfter2024May,
+      candidatesMergedAfter2024May: countDraftsAfter2024May(nextDrafts),
+      candidatesRejectedConfidenceAfter2024May,
+      candidatesRejectedRepeatedLocalAfter2024May,
+      candidatesVisibleAfter2024May,
       candidateCountAfterConfidenceFilter,
       candidateCountAfterGpsFilter,
       candidateCountAfterLongTripMerge: candidateGenerationStats.candidateCountAfterLongTripMerge,
@@ -3957,6 +4893,10 @@ async function scanPhotoLibraryForTripDrafts(
         (draft) => draft.enrichmentStatus === 'pending',
       ).length,
       coverPhotoUrisRenderable: nextDrafts.map((draft) => isRenderableImageUri(draft.coverPhotoUri)),
+      detectedCandidateFingerprintComputedCount,
+      detectedCandidateHiddenByExactFingerprintCount,
+      detectedCandidateHiddenByPhotoOverlapCount,
+      detectedCandidateVisibleAfterSavedFilterCount,
       detectedTripCandidateCount: nextDrafts.length,
       domesticTitleNormalizedCount,
       dailyLifeCandidateCount,
@@ -4017,11 +4957,16 @@ async function scanPhotoLibraryForTripDrafts(
       pendingTitleMaxAgeMs: PENDING_TITLE_MAX_AGE_MS,
       unresolvedRegionTitleAppliedCount,
       photosAfterScreenshotFilterCount,
+      gpsPhotoCountAfter2024May,
+      inputPhotoCountAfter2024May,
+      nonGpsPhotoCountAfter2024May,
       photosWithCoordinatesCount,
       rawDateBucketCount: candidateGenerationStats.rawDateBucketCount,
       scannedAssetCount: photos.length,
+      savedDetectedCandidateRegistryLoadedCount,
       shortTripCandidateCount: candidateGenerationStats.shortTripCandidateCount,
       shortTripVisibleCandidateCount,
+      screenshotExcludedCountAfter2024May,
       skippedScreenshotCount,
       skippedPhUriCount,
       splitByDateGapCount: candidateGenerationStats.splitByDateGapCount,
@@ -4089,6 +5034,7 @@ async function scanPhotoLibraryForTripDrafts(
     });
     console.info('[photo-import enrichment] title phase scheduled', {
       candidateCountAfterLongTripMerge: candidateGenerationStats.candidateCountAfterLongTripMerge,
+      scanAttemptId,
       titleGeocodingQueueLimit: TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT,
       titleGeocodingVisibleCandidateCount: visiblePendingDraftCount,
       titleGeocodingQueuedVisibleCandidateCount: Math.min(
@@ -4121,6 +5067,15 @@ async function scanPhotoLibraryForTripDrafts(
     });
   }
 
+  logPhotoScanDateRangeSummary(
+    'photoScanDeliveredToDetectedTripsSummary',
+    summarizeDraftPhotoDates(visibleDrafts),
+    {
+      deliveredCandidateCount: candidates.length,
+      scanAttemptId,
+    },
+  );
+
   return {
     assetsWithDisplayUriCount,
     assetsWithLocationCount,
@@ -4129,23 +5084,30 @@ async function scanPhotoLibraryForTripDrafts(
     candidates,
     detectedTripCandidateCount: nextDrafts.length,
     duplicateCandidateCount,
-    drafts: nextDrafts,
+    drafts: sortedNextDrafts,
     hiddenNoLocationTitleCandidateCount,
     hiddenLowConfidenceCandidateCount,
     hiddenScreenshotCandidateCount,
     hiddenTooFewRealPhotosCandidateCount,
     hiddenWeakSingleDayCandidateCount,
     hiddenLowGpsPhotoCandidateCount,
-    livingAreaApplied: Boolean(options.livingArea),
+    hiddenHomeRegionCandidateCount,
+    livingAreaApplied: hasValidLoadedHomeRegion,
     livingAreaDisplayName: options.livingArea?.displayName,
-    livingAreaExcludedPhotoCount: livingAreaFilterResult.excludedPhotoCount,
-    livingAreaUnclassifiedPhotoCount: livingAreaFilterResult.unclassifiedPhotoCount,
+    livingAreaExcludedPhotoCount,
+    livingAreaUnclassifiedPhotoCount,
     oversizedCandidateSplitCount,
     pageCount,
     pendingEnrichmentCandidateCount,
     permissionState,
     photosAfterScreenshotFilterCount,
+    savedDetectedCandidateRegistryLoadedCount,
+    scanAttemptId,
     scannedAssetCount: photos.length,
+    detectedCandidateFingerprintComputedCount,
+    detectedCandidateHiddenByExactFingerprintCount,
+    detectedCandidateHiddenByPhotoOverlapCount,
+    detectedCandidateVisibleAfterSavedFilterCount,
     skippedScreenshotCount,
     skippedPhUriCount,
     totalAssetCount,
@@ -4187,6 +5149,50 @@ export async function scanPhotosSinceLastScan(
 
 export function getLocalDetectedTripDraft(draftId?: string | null) {
   return draftId ? drafts.get(draftId) : undefined;
+}
+
+export function getLocalDetectedTripCandidates() {
+  return getVisibleLocalDetectedTripCandidates();
+}
+
+export function markLocalDetectedTripDraftSaving(draftId: string) {
+  const draft = drafts.get(draftId);
+
+  if (!draft) {
+    return undefined;
+  }
+
+  draft.saveStatus = 'saving';
+  draft.saveError = undefined;
+
+  return draft;
+}
+
+export function markLocalDetectedTripDraftSaveFailed(draftId: string, errorMessage: string) {
+  const draft = drafts.get(draftId);
+
+  if (!draft) {
+    return undefined;
+  }
+
+  draft.saveStatus = 'failed';
+  draft.saveError = errorMessage;
+
+  return draft;
+}
+
+export function markLocalDetectedTripDraftSaved(draftId: string, savedTripId: string) {
+  const draft = drafts.get(draftId);
+
+  if (!draft) {
+    return undefined;
+  }
+
+  draft.saveStatus = 'saved';
+  draft.savedTripId = savedTripId;
+  draft.saveError = undefined;
+
+  return draft;
 }
 
 export const PHOTO_LIBRARY_SCAN_LIMITS = {

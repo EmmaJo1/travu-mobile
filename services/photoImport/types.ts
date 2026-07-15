@@ -66,6 +66,7 @@ export type PhotoImportCandidateSplitReason =
 
 export interface PhotoImportCandidateDebugMetadata {
   candidateId: string;
+  scanAttemptId?: string;
   candidateQualityScore?: number;
   candidateQualityType?: PhotoImportCandidateQualityType;
   startDate: string;
@@ -83,6 +84,16 @@ export interface PhotoImportCandidateDebugMetadata {
   locationClusterCount: number;
   centroidLat?: number;
   centroidLng?: number;
+  distanceFromHomeFarthestKm?: number;
+  distanceFromHomeNearestKm?: number;
+  excludedBecauseHomeRegion?: boolean;
+  homeRegionFilterApplied?: boolean;
+  homeRegionHiddenReason?: string;
+  homeRegionInsideGroupCount?: number;
+  homeRegionLocatedGroupCount?: number;
+  homeRegionMeaningfulOutsideGroupCount?: number;
+  homeRegionOutsideGroupCount?: number;
+  homeRegionUnknownGroupCount?: number;
   repeatedLocalClusterActiveMonthCount?: number;
   repeatedLocalClusterCandidateCount?: number;
   repeatedLocalClusterDateSpanDays?: number;

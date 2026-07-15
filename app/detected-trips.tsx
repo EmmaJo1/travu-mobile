@@ -35,6 +35,55 @@ const VIEWABILITY_CONFIG = {
   itemVisiblePercentThreshold: 40,
 };
 
+function getCandidateStartTime(candidate: PhotoImportTripCandidate) {
+  const startDate = candidate.debugMetadata?.startDate;
+
+  if (!startDate) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const [year, month, day] = startDate.split('-').map(Number);
+
+  if (!year || !month || !day) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return new Date(year, month - 1, day).getTime();
+}
+
+function getCandidateEndTime(candidate: PhotoImportTripCandidate) {
+  const endDate = candidate.debugMetadata?.endDate;
+
+  if (!endDate) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const [year, month, day] = endDate.split('-').map(Number);
+
+  if (!year || !month || !day) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return new Date(year, month - 1, day).getTime();
+}
+
+function getOutOfOrderPairCount(candidatesToCheck: PhotoImportTripCandidate[]) {
+  let outOfOrderPairCount = 0;
+
+  for (let index = 1; index < candidatesToCheck.length; index += 1) {
+    const previous = candidatesToCheck[index - 1];
+    const current = candidatesToCheck[index];
+    const startDiff = getCandidateStartTime(previous) - getCandidateStartTime(current);
+    const endDiff = getCandidateEndTime(previous) - getCandidateEndTime(current);
+
+    if (startDiff > 0 || (startDiff === 0 && endDiff > 0)) {
+      outOfOrderPairCount += 1;
+    }
+  }
+
+  return outOfOrderPairCount;
+}
+
 export default function DetectedTrips() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -48,11 +97,32 @@ export default function DetectedTrips() {
     saveSelectedPhotoImportResults,
   } = usePhotoImportFlow();
   const [isSaving, setIsSaving] = React.useState(false);
-  const initialHydrationCandidateIds = React.useMemo(
+  const sortedCandidates = React.useMemo(
     () => candidates
+      .map((candidate, index) => ({ candidate, index }))
+      .sort((left, right) => {
+        const startDiff = getCandidateStartTime(left.candidate) - getCandidateStartTime(right.candidate);
+
+        if (startDiff !== 0) {
+          return startDiff;
+        }
+
+        const endDiff = getCandidateEndTime(left.candidate) - getCandidateEndTime(right.candidate);
+
+        if (endDiff !== 0) {
+          return endDiff;
+        }
+
+        return left.index - right.index;
+      })
+      .map(({ candidate }) => candidate),
+    [candidates],
+  );
+  const initialHydrationCandidateIds = React.useMemo(
+    () => sortedCandidates
       .slice(0, INITIAL_COVER_HYDRATION_LIMIT)
       .map((candidate) => candidate.id),
-    [candidates],
+    [sortedCandidates],
   );
   const initialHydrationCandidateKey = initialHydrationCandidateIds.join('|');
   const requestedInitialHydrationKeyRef = React.useRef<string | undefined>(undefined);
@@ -60,6 +130,34 @@ export default function DetectedTrips() {
   React.useEffect(() => {
     openPhotoImportResults();
   }, [openPhotoImportResults]);
+
+  React.useEffect(() => {
+    if (!__DEV__) {
+      return;
+    }
+
+    const missingDateCount = sortedCandidates.filter(
+      (candidate) => !candidate.debugMetadata?.startDate,
+    ).length;
+
+    console.info('[detected-trips] sort order', {
+      detectedCandidateStableSortSummary: true,
+      detectedCandidateListLimitApplied: false,
+      detectedCandidateFirstStartDate: sortedCandidates[0]?.debugMetadata?.startDate,
+      detectedCandidateLastStartDate: sortedCandidates[sortedCandidates.length - 1]?.debugMetadata?.startDate,
+      detectedCandidateMissingDateCount: missingDateCount,
+      detectedCandidateNewestStartDate: sortedCandidates[sortedCandidates.length - 1]?.debugMetadata?.startDate,
+      detectedCandidateOldestStartDate: sortedCandidates[0]?.debugMetadata?.startDate,
+      detectedCandidateRenderedCount: sortedCandidates.length,
+      detectedCandidateSortOrder: 'oldest_first',
+      detectedCandidateTotalBeforeListLimit: candidates.length,
+      initialCoverHydrationLimit: INITIAL_COVER_HYDRATION_LIMIT,
+      isAscending: getOutOfOrderPairCount(sortedCandidates) === 0,
+      outOfOrderPairCount: getOutOfOrderPairCount(sortedCandidates),
+      scanAttemptId: sortedCandidates[0]?.debugMetadata?.scanAttemptId,
+      stage: 'detected_trips_render',
+    });
+  }, [candidates.length, sortedCandidates]);
 
   React.useEffect(() => {
     if (initialHydrationCandidateIds.length === 0) {
@@ -81,7 +179,7 @@ export default function DetectedTrips() {
   const maxLinkTop = ctaTop - LINK_TO_CTA_GAP - LINK_HEIGHT;
   const listNaturalHeight = Math.max(
     0,
-    candidates.length * CARD_HEIGHT + Math.max(0, candidates.length - 1) * CARD_GAP,
+    sortedCandidates.length * CARD_HEIGHT + Math.max(0, sortedCandidates.length - 1) * CARD_GAP,
   );
   const maxListHeight = Math.max(CARD_HEIGHT, maxLinkTop - LIST_TOP - LINK_MIN_GAP);
   const listHeight = Math.min(listNaturalHeight, maxListHeight);
@@ -111,7 +209,7 @@ export default function DetectedTrips() {
 
   const handleOpenCandidate = React.useCallback(
     (candidateId: string) => {
-      const candidateTitle = candidates.find((candidate) => candidate.id === candidateId)?.city;
+      const candidateTitle = sortedCandidates.find((candidate) => candidate.id === candidateId)?.city;
 
       router.push({
         pathname: '/record-day-detail',
@@ -124,7 +222,7 @@ export default function DetectedTrips() {
         },
       } as Href);
     },
-    [candidates, router],
+    [router, sortedCandidates],
   );
 
   const handleOpenManualCreate = React.useCallback(() => {
@@ -168,13 +266,13 @@ export default function DetectedTrips() {
       <ScreenHeader title="발견된 여행" onBackPress={() => router.back()} style={styles.header} />
 
       <View style={styles.copyBlock}>
-        <Text style={styles.title}>{candidates.length} 개의 여행 후보</Text>
+        <Text style={styles.title}>{sortedCandidates.length} 개의 여행 후보</Text>
         <Text style={styles.description}>저장하고 싶은 여행을 선택해주세요</Text>
       </View>
 
       <View style={[styles.listFrame, { height: listHeight }]}>
         <FlatList
-          data={candidates}
+          data={sortedCandidates}
           keyExtractor={(item) => item.id}
           renderItem={renderCandidate}
           ItemSeparatorComponent={CandidateSeparator}

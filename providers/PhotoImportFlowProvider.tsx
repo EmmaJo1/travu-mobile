@@ -1,17 +1,28 @@
 import React from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 
-import { addSavedPhotoImportCandidates } from '@/constants/savedMyPageTrips';
+import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
+import { useAuth } from '@/providers/AuthProvider';
 import { useUserProfile } from '@/providers/UserProfileProvider';
 import {
   createLivingAreaFromProfile,
   type LivingArea,
 } from '@/services/location/livingAreas';
 import {
+  getLocalDetectedTripCandidates,
+  getLocalDetectedTripDraft,
+  hydrateSavedDetectedCandidateRegistry,
   hydrateLocalDetectedTripDraftCovers,
+  markLocalDetectedTripDraftSaveFailed,
+  markLocalDetectedTripDraftSaved,
+  markLocalDetectedTripDraftSaving,
+  recordSavedDetectedTripDraft,
   scanEntirePhotoLibraryForTrips,
+  sortDetectedCandidatesOldestFirst,
   type PhotoLibraryScanProgress,
   type PhotoLibraryScanResult,
 } from '@/services/photoImport/localDetectedTripDraftStore';
+import { saveDetectedTripDraftToSupabase } from '@/services/photoImport/saveDetectedTripDraft';
 import type {
   PhotoImportDetectionState,
   PhotoImportStatus,
@@ -19,6 +30,7 @@ import type {
 } from '@/services/photoImport/types';
 
 type PhotoImportRunOptions = {
+  homeRegionFilterSkipReason?: 'not_configured' | 'skipped_by_user' | 'invalid_coordinates' | 'storage_not_ready';
   livingArea?: LivingArea | null;
   source?: 'home' | 'onboarding';
 };
@@ -52,7 +64,48 @@ interface PhotoImportFlowContextValue {
 
 const PhotoImportFlowContext = React.createContext<PhotoImportFlowContextValue | null>(null);
 
+function getCandidateOutOfOrderPairCount(candidates: PhotoImportTripCandidate[]) {
+  let outOfOrderPairCount = 0;
+
+  for (let index = 1; index < candidates.length; index += 1) {
+    const previous = candidates[index - 1]?.debugMetadata;
+    const current = candidates[index]?.debugMetadata;
+    const previousKey = `${previous?.startDate ?? ''}|${previous?.endDate ?? ''}`;
+    const currentKey = `${current?.startDate ?? ''}|${current?.endDate ?? ''}`;
+
+    if (previousKey > currentKey) {
+      outOfOrderPairCount += 1;
+    }
+  }
+
+  return outOfOrderPairCount;
+}
+
+function logProviderCandidateDelivery(
+  stage: string,
+  candidatesToLog: PhotoImportTripCandidate[],
+  scanAttemptId?: string,
+) {
+  if (!__DEV__) {
+    return;
+  }
+
+  const outOfOrderPairCount = getCandidateOutOfOrderPairCount(candidatesToLog);
+
+  console.info('[detectedCandidateStableSortSummary]', {
+    candidateCount: candidatesToLog.length,
+    firstStartDate: candidatesToLog[0]?.debugMetadata?.startDate,
+    isAscending: outOfOrderPairCount === 0,
+    lastStartDate: candidatesToLog[candidatesToLog.length - 1]?.debugMetadata?.startDate,
+    outOfOrderPairCount,
+    scanAttemptId,
+    stage,
+  });
+}
+
 export function PhotoImportFlowProvider({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
+  const { canUseSupabaseUserData, user } = useAuth();
   const { profile } = useUserProfile();
   const [status, setStatus] = React.useState<PhotoImportStatus>('not_started');
   const [detectionState, setDetectionState] =
@@ -89,17 +142,44 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
       : options.livingArea;
 
     try {
+      if (__DEV__) {
+        console.info('[photo-import provider] scan request', {
+          entryPoint: options.source ?? 'home',
+          hasHomeRegion: Boolean(resolvedLivingArea),
+          hasValidHomeCoordinates: Boolean(
+            resolvedLivingArea &&
+              Number.isFinite(resolvedLivingArea.latitude) &&
+              Number.isFinite(resolvedLivingArea.longitude),
+          ),
+          homeRegionFilterSkipReason: options.homeRegionFilterSkipReason,
+          livingAreaDisplayName: resolvedLivingArea?.displayName,
+          profileBasedIn: profile.basedIn,
+          profileBasedInPlaceExists: Boolean(profile.basedInPlace),
+        });
+      }
+
+      await hydrateSavedDetectedCandidateRegistry(user?.id);
       const scanResult = await scanEntirePhotoLibraryForTrips({
+        homeRegionFilterSkipReason: options.homeRegionFilterSkipReason,
         livingArea: resolvedLivingArea,
         onCandidatesUpdated: (updatedCandidates) => {
-          setCandidates(updatedCandidates);
+          const sortedUpdatedCandidates = sortDetectedCandidatesOldestFirst(updatedCandidates);
+          const scanAttemptId = sortedUpdatedCandidates[0]?.debugMetadata?.scanAttemptId;
+
+          logProviderCandidateDelivery(
+            'provider_on_candidates_updated',
+            sortedUpdatedCandidates,
+            scanAttemptId,
+          );
+          setCandidates(sortedUpdatedCandidates);
           setSelectedCandidateIds(
-            updatedCandidates
+            sortedUpdatedCandidates
               .filter((candidate) => candidate.initiallySelected)
               .map((candidate) => candidate.id),
           );
         },
         onProgress: setScanProgress,
+        savedRegistryUserId: user?.id,
         source: options.source ?? 'home',
       });
 
@@ -110,7 +190,12 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
         return 'permissionDenied';
       }
 
-      const detectedCandidates = scanResult.candidates;
+      const detectedCandidates = sortDetectedCandidatesOldestFirst(scanResult.candidates);
+      logProviderCandidateDelivery(
+        'provider_scan_result_candidates',
+        detectedCandidates,
+        scanResult.scanAttemptId,
+      );
       const hasVisibleOrPendingCandidates =
         detectedCandidates.length > 0 || scanResult.pendingEnrichmentCandidateCount > 0;
       const nextState: PhotoImportDetectionState =
@@ -137,7 +222,7 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
         console.info('[photo-import scan] cleanup executed');
       }
     }
-  }, [profile.basedIn, profile.basedInPlace, startPhotoImportAnalysis]);
+  }, [profile.basedIn, profile.basedInPlace, startPhotoImportAnalysis, user?.id]);
 
   const requestAccessAndStartAnalysis = React.useCallback(async (options?: PhotoImportRunOptions) => {
     await runPhotoImportDetection(options);
@@ -146,16 +231,24 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
   const hydrateCandidateCovers = React.useCallback(async (candidateIds: string[]) => {
     await hydrateLocalDetectedTripDraftCovers(candidateIds, {
       onCandidatesUpdated: (updatedCandidates) => {
-        setCandidates(updatedCandidates);
+        const sortedUpdatedCandidates = sortDetectedCandidatesOldestFirst(updatedCandidates);
+        const scanAttemptId = sortedUpdatedCandidates[0]?.debugMetadata?.scanAttemptId;
+
+        logProviderCandidateDelivery(
+          'provider_cover_hydration_candidates',
+          sortedUpdatedCandidates,
+          scanAttemptId,
+        );
+        setCandidates(sortedUpdatedCandidates);
         setSelectedCandidateIds((current) => {
-          const availableIds = new Set(updatedCandidates.map((candidate) => candidate.id));
+          const availableIds = new Set(sortedUpdatedCandidates.map((candidate) => candidate.id));
           const retainedIds = current.filter((candidateId) => availableIds.has(candidateId));
 
           if (retainedIds.length > 0) {
             return retainedIds;
           }
 
-          return updatedCandidates
+          return sortedUpdatedCandidates
             .filter((candidate) => candidate.initiallySelected)
             .map((candidate) => candidate.id);
         });
@@ -196,15 +289,96 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
       return;
     }
 
-    const selectedCandidates = candidates.filter((candidate) =>
-      idsToSave.includes(candidate.id),
+    if (!canUseSupabaseUserData || !user?.id) {
+      throw new Error('A Supabase session is required to save detected trips.');
+    }
+
+    let savedCount = 0;
+    const savedTripIds: string[] = [];
+    const savedTripDayIds: string[] = [];
+
+    for (const candidateId of idsToSave) {
+      const draft = getLocalDetectedTripDraft(candidateId);
+      const saveAttemptId = `detected-save-${candidateId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+      if (!draft) {
+        continue;
+      }
+
+      if (draft.saveStatus === 'saved' && draft.savedTripId) {
+        savedCount += 1;
+        continue;
+      }
+
+      if (draft.saveStatus === 'saving') {
+        if (__DEV__) {
+          console.info('[detected trip save] duplicate blocked', {
+            detectedTripSaveBlockedDuplicate: true,
+            draftId: draft.id,
+          });
+        }
+        continue;
+      }
+
+      markLocalDetectedTripDraftSaving(draft.id);
+
+      try {
+        const result = await saveDetectedTripDraftToSupabase(draft, {
+          saveAttemptId,
+        });
+        await recordSavedDetectedTripDraft(user.id, draft.id, result.trip.id);
+        markLocalDetectedTripDraftSaved(draft.id, result.trip.id);
+        savedTripIds.push(result.trip.id);
+        savedTripDayIds.push(...result.tripDays.map((tripDay) => tripDay.id));
+        savedCount += 1;
+      } catch (error) {
+        markLocalDetectedTripDraftSaveFailed(
+          draft.id,
+          error instanceof Error ? error.message : 'Detected trip save failed',
+        );
+        throw error;
+      }
+    }
+
+    const nextCandidates = sortDetectedCandidatesOldestFirst(getLocalDetectedTripCandidates());
+    logProviderCandidateDelivery(
+      'provider_after_save_candidates',
+      nextCandidates,
+      nextCandidates[0]?.debugMetadata?.scanAttemptId,
     );
-    addSavedPhotoImportCandidates(selectedCandidates);
+    setCandidates(nextCandidates);
+    setSelectedCandidateIds((current) => {
+      const availableIds = new Set(nextCandidates.map((candidate) => candidate.id));
+      return current.filter((candidateId) => availableIds.has(candidateId));
+    });
+
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.myTrips(user.id) }),
+      queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.recentTripsRoot(user.id) }),
+      queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.activeTrip(user.id) }),
+      ...savedTripIds.flatMap((tripId) => [
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.tripDetail(user.id, tripId) }),
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.tripDays(user.id, tripId) }),
+      ]),
+      ...savedTripDayIds.map((tripDayId) =>
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripDayPlaces(user.id, tripDayId),
+        }),
+      ),
+    ]).catch((error: unknown) => {
+      console.warn('[PhotoImportFlowProvider] detected trip save invalidate failed', error);
+    });
+
     setHasSavedPhotoImportResults(true);
-    setLastSavedTripCount(idsToSave.length);
+    setLastSavedTripCount(savedCount);
     setHasDeferredPhotoImportResults(false);
     setStatus('reviewed');
-  }, [candidates, selectedCandidateIds]);
+  }, [
+    canUseSupabaseUserData,
+    queryClient,
+    selectedCandidateIds,
+    user?.id,
+  ]);
 
   const saveSelectedCandidates = React.useCallback(async () => {
     await saveSelectedPhotoImportResults(selectedCandidateIds);
