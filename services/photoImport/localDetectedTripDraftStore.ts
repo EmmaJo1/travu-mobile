@@ -4391,7 +4391,7 @@ async function scanPhotoLibraryForTripDrafts(
       });
     }
   }
-  const homeRegionEvaluations = applyHomeRegionCandidateFilter(
+  const homeRegionEvaluations = await applyHomeRegionCandidateFilter(
     nextDrafts,
     loadedHomeRegion,
     HOME_REGION_EXCLUSION_RADIUS_KM,

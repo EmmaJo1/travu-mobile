@@ -147,7 +147,7 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
   const [hasSavedPhotoImportResults, setHasSavedPhotoImportResults] =
     React.useState(false);
   const [lastSavedTripCount, setLastSavedTripCount] = React.useState(0);
-  const activeScanAttemptIdRef = React.useRef<string>();
+  const activeScanAttemptIdRef = React.useRef<string | undefined>(undefined);
   const scanInvocationIdRef = React.useRef(0);
 
   const startPhotoImportAnalysis = React.useCallback(() => {
