@@ -2,7 +2,14 @@ import { Feather } from '@expo/vector-icons';
 import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import {
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
@@ -14,6 +21,9 @@ import { ActiveTripExistsError } from '@/services/supabase/trips';
 
 const BACKGROUND = Colors.light.bgScreen;
 const GREY_700 = '#595959';
+const TRIP_TITLE_MAX_LENGTH = 40;
+
+let pendingTripTitle = '';
 
 function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
@@ -46,9 +56,30 @@ export default function CreateTripScreen() {
   const destinationLabel = firstParam(params.destinationLabel);
   const startDate = firstParam(params.startDate);
   const endDate = firstParam(params.endDate);
+  const routeTripTitle = firstParam(params.tripTitle);
+  const hasRouteSelections = Boolean(destinationName || startDate || endDate);
+  const [tripTitle, setTripTitle] = React.useState(() => {
+    const initialTitle = routeTripTitle ?? (hasRouteSelections ? pendingTripTitle : '');
+    pendingTripTitle = initialTitle;
+    return initialTitle;
+  });
 
+  React.useEffect(() => {
+    if (routeTripTitle !== undefined) {
+      pendingTripTitle = routeTripTitle;
+      setTripTitle(routeTripTitle);
+      return;
+    }
+
+    if (!hasRouteSelections) {
+      pendingTripTitle = '';
+      setTripTitle('');
+    }
+  }, [hasRouteSelections, routeTripTitle]);
+
+  const normalizedTripTitle = tripTitle.trim();
   const dateLabel = formatDateLabel(startDate, endDate);
-  const canCreate = Boolean(destinationName && startDate && endDate);
+  const canCreate = Boolean(normalizedTripTitle && destinationName && startDate && endDate);
   const ctaBottom = Math.max(insets.bottom + 32, 64);
 
   const sharedParams = React.useMemo(() => ({
@@ -58,6 +89,7 @@ export default function CreateTripScreen() {
     destinationLabel,
     startDate,
     endDate,
+    tripTitle,
   }), [
     destinationCountry,
     destinationId,
@@ -65,7 +97,18 @@ export default function CreateTripScreen() {
     destinationName,
     endDate,
     startDate,
+    tripTitle,
   ]);
+
+  const handleChangeTripTitle = React.useCallback((value: string) => {
+    pendingTripTitle = value;
+    setTripTitle(value);
+  }, []);
+
+  const handleBack = React.useCallback(() => {
+    pendingTripTitle = '';
+    router.back();
+  }, [router]);
 
   const handleOpenDestination = React.useCallback(() => {
     router.push({
@@ -84,11 +127,12 @@ export default function CreateTripScreen() {
   const handleCreate = React.useCallback(async () => {
     if (!canCreate) return;
 
+    const nextTripTitle = tripTitle.trim();
     const nextDestinationName = destinationName;
     const nextStartDate = startDate;
     const nextEndDate = endDate;
 
-    if (!nextDestinationName || !nextStartDate || !nextEndDate) {
+    if (!nextTripTitle || !nextDestinationName || !nextStartDate || !nextEndDate) {
       return;
     }
 
@@ -105,7 +149,7 @@ export default function CreateTripScreen() {
           isEndDateUndecided: false,
           startDate: nextStartDate,
           status: 'draft',
-          title: `${nextDestinationName} 여행`,
+          title: nextTripTitle,
         });
         createdTripId = trip.id;
       } catch (error) {
@@ -120,6 +164,7 @@ export default function CreateTripScreen() {
       }
     }
 
+    pendingTripTitle = '';
     router.replace({
       pathname: '/trip-created',
       params: {
@@ -130,6 +175,7 @@ export default function CreateTripScreen() {
         startDate: nextStartDate,
         endDate: nextEndDate,
         tripId: createdTripId,
+        tripTitle: nextTripTitle,
       },
     } as Href);
   }, [
@@ -143,34 +189,63 @@ export default function CreateTripScreen() {
     endDate,
     router,
     startDate,
+    tripTitle,
   ]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar style="dark" />
-      <ScreenHeader title="직접 여행 만들기" onBackPress={() => router.back()} style={styles.header} />
+      <ScreenHeader title="직접 여행 만들기" onBackPress={handleBack} style={styles.header} />
 
-      <View style={styles.copyBlock}>
-        <Text style={styles.title}>어떤 여행을 정리할까요?</Text>
-        <Text style={styles.description}>여행지와 기간을 입력하여 직접 여행을 생성해보세요</Text>
-      </View>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: ctaBottom + 48 + Spacing['4xl'] },
+        ]}
+      >
+        <View style={styles.copyBlock}>
+          <Text style={styles.title}>어떤 여행을 정리할까요?</Text>
+          <Text style={styles.description}>여행 제목과 여행지, 기간을 입력하여 직접 여행을 생성해보세요</Text>
+        </View>
 
-      <View style={styles.form}>
-        <CreateTripField
-          icon="map-pin"
-          label="여행지"
-          value={destinationLabel ?? ''}
-          placeholder="도시나 국가를 선택해주세요"
-          onPress={handleOpenDestination}
-        />
-        <CreateTripField
-          icon="calendar"
-          label="여행 기간"
-          value={dateLabel}
-          placeholder="여행 날짜를 선택해주세요"
-          onPress={handleOpenDate}
-        />
-      </View>
+        <View style={styles.form}>
+          <View style={styles.fieldBlock}>
+            <Text style={styles.fieldLabel}>여행 제목</Text>
+            <View style={styles.titleInputContainer}>
+              <Feather name="edit-3" size={18} color={Colors.foundation.grey600} />
+              <TextInput
+                accessibilityLabel="여행 제목"
+                autoCorrect={false}
+                maxLength={TRIP_TITLE_MAX_LENGTH}
+                onChangeText={handleChangeTripTitle}
+                placeholder="여행 제목을 입력해주세요"
+                placeholderTextColor={Colors.foundation.grey500}
+                returnKeyType="done"
+                selectionColor={Colors.foundation.black}
+                style={styles.titleInput}
+                value={tripTitle}
+              />
+            </View>
+          </View>
+
+          <CreateTripField
+            icon="map-pin"
+            label="여행지"
+            value={destinationLabel ?? ''}
+            placeholder="도시나 국가를 선택해주세요"
+            onPress={handleOpenDestination}
+          />
+          <CreateTripField
+            icon="calendar"
+            label="여행 기간"
+            value={dateLabel}
+            placeholder="여행 날짜를 선택해주세요"
+            onPress={handleOpenDate}
+          />
+        </View>
+      </ScrollView>
 
       <Pressable
         accessibilityRole="button"
@@ -226,10 +301,11 @@ const styles = StyleSheet.create({
   header: {
     height: 44,
   },
+  scrollContent: {
+    paddingTop: Spacing['4xl'] * 3,
+    paddingHorizontal: Spacing.xl,
+  },
   copyBlock: {
-    position: 'absolute',
-    top: 163,
-    left: Spacing.xl,
     width: 270,
   },
   title: {
@@ -237,16 +313,13 @@ const styles = StyleSheet.create({
     color: Colors.foundation.black,
   },
   description: {
-    width: 165,
+    width: 210,
     marginTop: Spacing.lg,
     ...Typography.body1Regular,
     color: GREY_700,
   },
   form: {
-    position: 'absolute',
-    top: 360,
-    left: Spacing.xl,
-    right: Spacing.xl,
+    marginTop: Spacing['4xl'] * 2,
     gap: Spacing['3xl'],
   },
   fieldBlock: {
@@ -254,6 +327,24 @@ const styles = StyleSheet.create({
   },
   fieldLabel: {
     ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+  },
+  titleInputContainer: {
+    height: 56,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: Colors.light.borderDefault,
+    backgroundColor: Colors.foundation.white,
+    paddingHorizontal: Spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  titleInput: {
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 0,
+    ...Typography.body2Emphasized,
     color: Colors.foundation.black,
   },
   fieldInput: {
