@@ -29,6 +29,7 @@ import MaskedView from '@react-native-masked-view/masked-view';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
+import PrimaryButton from '@/components/common/PrimaryButton';
 import StartTripSetupModal, {
   type StartTripSetupValue,
 } from '@/components/home/StartTripSetupModal';
@@ -938,7 +939,11 @@ export default function DayArchiveDetailScreen() {
         },
     [editingArchiveEntry, selectedDay.dateLabel, selectedDay.weekdayLabel, selectedRouteDayId, selectedRouteDayIndex],
   );
-  const { data: supabasePlaces } = useTripDayPlaces(selectedSupabaseTripDayId);
+  const {
+    data: supabasePlaces,
+    isError: isSupabasePlacesError,
+    isSuccess: isSupabasePlacesSuccess,
+  } = useTripDayPlaces(selectedSupabaseTripDayId);
   const { data: supabaseRecords } = useTripDayRecords(selectedSupabaseTripDayId);
   const visibleArchivePlaces = useMemo(
     () =>
@@ -967,6 +972,11 @@ export default function DayArchiveDetailScreen() {
         ? supabaseEntries
         : fallbackEntries
   ).filter((entry) => !deletedArchivePlaceIds.has(getEntryPlaceId(entry)));
+  const isSupabaseDayEmpty =
+    isSupabaseArchiveTrip &&
+    Boolean(selectedSupabaseTripDayId) &&
+    isSupabasePlacesSuccess &&
+    (supabasePlaces?.length ?? 0) === 0;
 
   React.useEffect(() => {
     if (!__DEV__ || !isSupabaseArchiveTrip) {
@@ -1388,6 +1398,15 @@ export default function DayArchiveDetailScreen() {
     Alert.alert(label, '\uC774 \uAE30\uB2A5\uC740 \uC5EC\uD589 \uD3B8\uC9D1 \uD50C\uB85C\uC6B0\uB85C \uC5F0\uACB0\uB420 \uC608\uC815\uC785\uB2C8\uB2E4.');
   };
 
+  const openPlaceCreateModal = React.useCallback(() => {
+    if (isSupabaseArchiveTrip && !selectedSupabaseTripDayId) {
+      return;
+    }
+
+    setEditingArchiveEntry(null);
+    setPlaceCreateModalVisible(true);
+  }, [isSupabaseArchiveTrip, selectedSupabaseTripDayId]);
+
   const handleSelectHeaderAction = (actionId: ArchiveHeaderActionId) => {
     setHeaderMenuVisible(false);
 
@@ -1412,8 +1431,7 @@ export default function DayArchiveDetailScreen() {
     }
 
     if (actionId === 'place') {
-      setEditingArchiveEntry(null);
-      setPlaceCreateModalVisible(true);
+      openPlaceCreateModal();
       return;
     }
 
@@ -1446,11 +1464,20 @@ export default function DayArchiveDetailScreen() {
 
   if (
     isSupabaseArchiveTrip &&
-    (isSupabaseTripError || isSupabaseTripDaysError || !supabaseTrip || dayOptions.length === 0)
+    (isSupabaseTripError || isSupabaseTripDaysError || !supabaseTrip)
   ) {
     return (
       <ArchiveEmptyState
         title={'\uC5EC\uD589\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC5B4\uC694'}
+        description={'\uC774\uC804 \uD654\uBA74\uC73C\uB85C \uB3CC\uC544\uAC00 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.'}
+      />
+    );
+  }
+
+  if (isSupabaseArchiveTrip && dayOptions.length === 0) {
+    return (
+      <ArchiveEmptyState
+        title={'\uC5EC\uD589 \uB0A0\uC9DC\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC5B4\uC694'}
         description={'\uC774\uC804 \uD654\uBA74\uC73C\uB85C \uB3CC\uC544\uAC00 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.'}
       />
     );
@@ -1574,18 +1601,42 @@ export default function DayArchiveDetailScreen() {
           <MapPlaceholderCard align="top" style={styles.archiveMapCard} />
 
           <View style={styles.entries}>
-            {entries.map((entry) => (
-              <PlaceEntryCard
-                key={entry.id}
-                entry={entry}
-                flagScreen={isSupabaseArchiveTrip ? 'saved_day_archive_detail' : undefined}
-                showRating={false}
-                variant="archive"
-                onLongPress={() => handleDeleteArchiveEntry(entry)}
-                onPress={() => handleOpenPlaceDetail(entry)}
-                onPhotoGridOpen={() => handleOpenPlacePhotoGrid(entry)}
-              />
-            ))}
+            {isSupabasePlacesError ? (
+              <View style={styles.dayEmptyState}>
+                <Text style={styles.dayEmptyTitle}>{'\uC7A5\uC18C\uB97C \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694'}</Text>
+                <Text style={styles.dayEmptyDescription}>
+                  {'\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uD655\uC778\uD574 \uC8FC\uC138\uC694.'}
+                </Text>
+              </View>
+            ) : isSupabaseDayEmpty ? (
+              <View style={styles.dayEmptyState}>
+                <Text style={styles.dayEmptyTitle}>{'\uC774 \uB0A0\uC9DC\uC5D0\uB294 \uC544\uC9C1 \uAE30\uB85D\uB41C \uC7A5\uC18C\uAC00 \uC5C6\uC5B4\uC694'}</Text>
+                <Text style={styles.dayEmptyDescription}>
+                  {'\uC7A5\uC18C\uB97C \uCD94\uAC00\uD574 \uC5EC\uD589 \uAE30\uB85D\uC744 \uC2DC\uC791\uD574 \uBCF4\uC138\uC694.'}
+                </Text>
+                <View style={styles.emptyStateButtonWrapper}>
+                  <PrimaryButton
+                    label={'\uC7A5\uC18C \uCD94\uAC00'}
+                    onPress={openPlaceCreateModal}
+                    style={styles.emptyStateAddButton}
+                    textStyle={styles.emptyStateAddButtonText}
+                  />
+                </View>
+              </View>
+            ) : (
+              entries.map((entry) => (
+                <PlaceEntryCard
+                  key={entry.id}
+                  entry={entry}
+                  flagScreen={isSupabaseArchiveTrip ? 'saved_day_archive_detail' : undefined}
+                  showRating={false}
+                  variant="archive"
+                  onLongPress={() => handleDeleteArchiveEntry(entry)}
+                  onPress={() => handleOpenPlaceDetail(entry)}
+                  onPhotoGridOpen={() => handleOpenPlacePhotoGrid(entry)}
+                />
+              ))
+            )}
           </View>
         </View>
       </ScrollView>
@@ -1938,6 +1989,38 @@ const styles = StyleSheet.create({
   },
   entries: {
     gap: 40,
+  },
+  dayEmptyState: {
+    alignItems: 'center',
+    paddingVertical: Spacing['3xl'],
+    paddingHorizontal: Spacing.xl,
+    gap: Spacing.sm,
+  },
+  dayEmptyTitle: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+  },
+  dayEmptyDescription: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+    textAlign: 'center',
+    marginBottom: Spacing.sm,
+  },
+  emptyStateButtonWrapper: {
+    width: '100%',
+    alignItems: 'center',
+    marginTop: Spacing.sm,
+  },
+  emptyStateAddButton: {
+    width: 220,
+    height: 52,
+    alignSelf: 'center',
+    borderRadius: 28,
+  },
+  emptyStateAddButtonText: {
+    ...Typography.body2Emphasized,
+    textAlign: 'center',
   },
   menuOverlay: {
     flex: 1,
