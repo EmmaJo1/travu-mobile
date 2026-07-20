@@ -7,7 +7,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,9 +20,6 @@ import { ActiveTripExistsError } from '@/services/supabase/trips';
 
 const BACKGROUND = Colors.light.bgScreen;
 const GREY_700 = '#595959';
-const TRIP_TITLE_MAX_LENGTH = 40;
-
-let pendingTripTitle = '';
 
 function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
@@ -49,6 +45,7 @@ export default function CreateTripScreen() {
   const params = useLocalSearchParams();
   const { canUseSupabaseUserData } = useAuth();
   const createTripMutation = useCreateTrip();
+  const createRequestInFlightRef = React.useRef(false);
 
   const destinationId = firstParam(params.destinationId);
   const destinationName = firstParam(params.destinationName);
@@ -56,29 +53,10 @@ export default function CreateTripScreen() {
   const destinationLabel = firstParam(params.destinationLabel);
   const startDate = firstParam(params.startDate);
   const endDate = firstParam(params.endDate);
-  const routeTripTitle = firstParam(params.tripTitle);
-  const hasRouteSelections = Boolean(destinationName || startDate || endDate);
-  const [tripTitle, setTripTitle] = React.useState(() => {
-    const initialTitle = routeTripTitle ?? (hasRouteSelections ? pendingTripTitle : '');
-    pendingTripTitle = initialTitle;
-    return initialTitle;
-  });
-
-  React.useEffect(() => {
-    if (routeTripTitle !== undefined) {
-      pendingTripTitle = routeTripTitle;
-      setTripTitle(routeTripTitle);
-      return;
-    }
-
-    if (!hasRouteSelections) {
-      pendingTripTitle = '';
-      setTripTitle('');
-    }
-  }, [hasRouteSelections, routeTripTitle]);
 
   const dateLabel = formatDateLabel(startDate, endDate);
-  const canCreate = Boolean(destinationName && startDate && endDate);
+  const isCreating = createTripMutation.isPending;
+  const canCreate = Boolean(destinationName && startDate && endDate) && !isCreating;
   const ctaBottom = Math.max(insets.bottom + 32, 64);
 
   const sharedParams = React.useMemo(() => ({
@@ -88,7 +66,6 @@ export default function CreateTripScreen() {
     destinationLabel,
     startDate,
     endDate,
-    tripTitle,
   }), [
     destinationCountry,
     destinationId,
@@ -96,16 +73,9 @@ export default function CreateTripScreen() {
     destinationName,
     endDate,
     startDate,
-    tripTitle,
   ]);
 
-  const handleChangeTripTitle = React.useCallback((value: string) => {
-    pendingTripTitle = value;
-    setTripTitle(value);
-  }, []);
-
   const handleBack = React.useCallback(() => {
-    pendingTripTitle = '';
     router.back();
   }, [router]);
 
@@ -124,7 +94,7 @@ export default function CreateTripScreen() {
   }, [router, sharedParams]);
 
   const handleCreate = React.useCallback(async () => {
-    if (!canCreate) return;
+    if (!canCreate || createRequestInFlightRef.current) return;
 
     const nextDestinationName = destinationName;
     const nextStartDate = startDate;
@@ -134,7 +104,7 @@ export default function CreateTripScreen() {
       return;
     }
 
-    const nextTripTitle = tripTitle.trim() || nextDestinationName;
+    createRequestInFlightRef.current = true;
     let createdTripId: string | undefined;
 
     if (canUseSupabaseUserData) {
@@ -148,10 +118,12 @@ export default function CreateTripScreen() {
           isEndDateUndecided: false,
           startDate: nextStartDate,
           status: 'draft',
-          title: nextTripTitle,
+          title: nextDestinationName,
         });
         createdTripId = trip.id;
       } catch (error) {
+        createRequestInFlightRef.current = false;
+
         if (error instanceof ActiveTripExistsError) {
           Alert.alert('이미 진행 중인 여행이 있어요.', '기존 여행을 종료한 뒤 새 여행을 시작해주세요.');
           return;
@@ -163,7 +135,6 @@ export default function CreateTripScreen() {
       }
     }
 
-    pendingTripTitle = '';
     router.replace({
       pathname: '/trip-created',
       params: {
@@ -174,7 +145,6 @@ export default function CreateTripScreen() {
         startDate: nextStartDate,
         endDate: nextEndDate,
         tripId: createdTripId,
-        tripTitle: nextTripTitle,
       },
     } as Href);
   }, [
@@ -188,7 +158,6 @@ export default function CreateTripScreen() {
     endDate,
     router,
     startDate,
-    tripTitle,
   ]);
 
   return (
@@ -197,7 +166,6 @@ export default function CreateTripScreen() {
       <ScreenHeader title="직접 여행 만들기" onBackPress={handleBack} style={styles.header} />
 
       <ScrollView
-        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
           styles.scrollContent,
@@ -206,29 +174,10 @@ export default function CreateTripScreen() {
       >
         <View style={styles.copyBlock}>
           <Text style={styles.title}>어떤 여행을 정리할까요?</Text>
-          <Text style={styles.description}>여행지와 기간을 입력하고, 필요하면 여행 제목도 정해보세요</Text>
+          <Text style={styles.description}>여행지와 기간을 입력하여 직접 여행을 생성해보세요</Text>
         </View>
 
         <View style={styles.form}>
-          <View style={styles.fieldBlock}>
-            <Text style={styles.fieldLabel}>여행 제목 (선택)</Text>
-            <View style={styles.titleInputContainer}>
-              <Feather name="edit-3" size={18} color={Colors.foundation.grey600} />
-              <TextInput
-                accessibilityLabel="여행 제목"
-                autoCorrect={false}
-                maxLength={TRIP_TITLE_MAX_LENGTH}
-                onChangeText={handleChangeTripTitle}
-                placeholder="입력하지 않으면 여행지명이 사용돼요"
-                placeholderTextColor={Colors.foundation.grey500}
-                returnKeyType="done"
-                selectionColor={Colors.foundation.black}
-                style={styles.titleInput}
-                value={tripTitle}
-              />
-            </View>
-          </View>
-
           <CreateTripField
             icon="map-pin"
             label="여행지"
@@ -257,7 +206,9 @@ export default function CreateTripScreen() {
           pressed && canCreate && styles.ctaPressed,
         ]}
       >
-        <Text style={[styles.ctaLabel, !canCreate && styles.ctaLabelDisabled]}>여행 만들기</Text>
+        <Text style={[styles.ctaLabel, !canCreate && styles.ctaLabelDisabled]}>
+          {isCreating ? '여행 만드는 중...' : '여행 만들기'}
+        </Text>
       </Pressable>
     </SafeAreaView>
   );
@@ -326,24 +277,6 @@ const styles = StyleSheet.create({
   },
   fieldLabel: {
     ...Typography.body1Emphasized,
-    color: Colors.foundation.black,
-  },
-  titleInputContainer: {
-    height: 56,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.light.borderDefault,
-    backgroundColor: Colors.foundation.white,
-    paddingHorizontal: Spacing.lg,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  titleInput: {
-    flex: 1,
-    minWidth: 0,
-    paddingVertical: 0,
-    ...Typography.body2Emphasized,
     color: Colors.foundation.black,
   },
   fieldInput: {
