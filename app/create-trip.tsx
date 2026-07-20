@@ -77,9 +77,8 @@ export default function CreateTripScreen() {
     }
   }, [hasRouteSelections, routeTripTitle]);
 
-  const normalizedTripTitle = tripTitle.trim();
   const dateLabel = formatDateLabel(startDate, endDate);
-  const canCreate = Boolean(normalizedTripTitle && destinationName && startDate && endDate);
+  const canCreate = Boolean(destinationName && startDate && endDate);
   const ctaBottom = Math.max(insets.bottom + 32, 64);
 
   const sharedParams = React.useMemo(() => ({
@@ -127,15 +126,15 @@ export default function CreateTripScreen() {
   const handleCreate = React.useCallback(async () => {
     if (!canCreate) return;
 
-    const nextTripTitle = tripTitle.trim();
     const nextDestinationName = destinationName;
     const nextStartDate = startDate;
     const nextEndDate = endDate;
 
-    if (!nextTripTitle || !nextDestinationName || !nextStartDate || !nextEndDate) {
+    if (!nextDestinationName || !nextStartDate || !nextEndDate) {
       return;
     }
 
+    const nextTripTitle = tripTitle.trim() || nextDestinationName;
     let createdTripId: string | undefined;
 
     if (canUseSupabaseUserData) {
@@ -207,12 +206,12 @@ export default function CreateTripScreen() {
       >
         <View style={styles.copyBlock}>
           <Text style={styles.title}>어떤 여행을 정리할까요?</Text>
-          <Text style={styles.description}>여행 제목과 여행지, 기간을 입력하여 직접 여행을 생성해보세요</Text>
+          <Text style={styles.description}>여행지와 기간을 입력하고, 필요하면 여행 제목도 정해보세요</Text>
         </View>
 
         <View style={styles.form}>
           <View style={styles.fieldBlock}>
-            <Text style={styles.fieldLabel}>여행 제목</Text>
+            <Text style={styles.fieldLabel}>여행 제목 (선택)</Text>
             <View style={styles.titleInputContainer}>
               <Feather name="edit-3" size={18} color={Colors.foundation.grey600} />
               <TextInput
@@ -220,7 +219,7 @@ export default function CreateTripScreen() {
                 autoCorrect={false}
                 maxLength={TRIP_TITLE_MAX_LENGTH}
                 onChangeText={handleChangeTripTitle}
-                placeholder="여행 제목을 입력해주세요"
+                placeholder="입력하지 않으면 여행지명이 사용돼요"
                 placeholderTextColor={Colors.foundation.grey500}
                 returnKeyType="done"
                 selectionColor={Colors.foundation.black}
