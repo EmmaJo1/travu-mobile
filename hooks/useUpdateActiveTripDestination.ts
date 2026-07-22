@@ -3,42 +3,31 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
 import { useAuth } from '@/providers/AuthProvider';
 import {
-  ActiveTripExistsError,
-  createTripWithDays,
-  type CreateTripWithDaysInput,
+  updateActiveTripDestination,
+  type UpdateActiveTripDestinationInput,
 } from '@/services/supabase/trips';
 
-export function useCreateTrip() {
+export function useUpdateActiveTripDestination() {
   const queryClient = useQueryClient();
   const { canUseSupabaseUserData, user } = useAuth();
 
   return useMutation({
-    mutationFn: (input: CreateTripWithDaysInput) => {
+    mutationFn: (input: UpdateActiveTripDestinationInput) => {
       if (!canUseSupabaseUserData || !user?.id) {
-        throw new Error('A Supabase session is required to create a trip.');
+        throw new Error('A Supabase session is required to update a trip destination.');
       }
 
-      return createTripWithDays(input);
+      return updateActiveTripDestination(input);
     },
     onSuccess: async (trip) => {
       const userId = user?.id;
 
-      if (trip.status === 'active') {
-        queryClient.setQueryData(supabaseQueryKeys.activeTrip(userId), trip);
-      }
-
+      queryClient.setQueryData(supabaseQueryKeys.activeTrip(userId), trip);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.myTrips(userId) }),
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.activeTrip(userId) }),
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.myTrips(userId) }),
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.recentTripsRoot(userId) }),
       ]);
-    },
-    onError: async (error) => {
-      if (error instanceof ActiveTripExistsError) {
-        await queryClient.invalidateQueries({
-          queryKey: supabaseQueryKeys.activeTrip(user?.id),
-        });
-      }
     },
   });
 }

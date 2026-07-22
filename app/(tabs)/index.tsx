@@ -4,6 +4,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Location from 'expo-location';
 import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import {
   setStatusBarBackgroundColor,
@@ -62,6 +63,7 @@ import { useCreateTrip } from '@/hooks/useCreateTrip';
 import { useActiveTrip, useMyTrips, useRecentTrips } from '@/hooks/useMyTrips';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
 import { useTripDays } from '@/hooks/useTripDays';
+import { useUpdateActiveTripDestination } from '@/hooks/useUpdateActiveTripDestination';
 import { useAuth } from '@/providers/AuthProvider';
 import { ActiveTripExistsError, type TripRow } from '@/services/supabase/trips';
 import {
@@ -164,6 +166,7 @@ type PhotoImportHomeFlowStatus = 'idle' | 'analyzing' | 'completed';
 type DestinationSource = 'currentLocation' | 'manual' | 'unknown';
 
 interface ActiveTripState {
+  tripId?: string;
   destination: DestinationOption;
   visitedDestinations: DestinationOption[];
   startDate: string;
@@ -290,6 +293,29 @@ type CurrentLocationDestination = {
   longitude: number;
 };
 
+type CurrentCoordinates = Pick<GeolocationCoordinates, 'latitude' | 'longitude'>;
+
+class LocationPermissionDeniedError extends Error {
+  constructor() {
+    super('Foreground location permission was denied.');
+    this.name = 'LocationPermissionDeniedError';
+  }
+}
+
+class LocationServicesUnavailableError extends Error {
+  constructor() {
+    super('Location services are unavailable.');
+    this.name = 'LocationServicesUnavailableError';
+  }
+}
+
+class CurrentLocationUnavailableError extends Error {
+  constructor() {
+    super('Current location could not be determined.');
+    this.name = 'CurrentLocationUnavailableError';
+  }
+}
+
 type ReverseGeocodeAddress = {
   city?: string;
   town?: string;
@@ -343,7 +369,7 @@ function createUnknownDestination(): DestinationOption {
   };
 }
 
-function requestBrowserCoordinates(): Promise<GeolocationCoordinates> {
+function requestBrowserCoordinates(): Promise<CurrentCoordinates> {
   return new Promise((resolve, reject) => {
     const geolocation = globalThis.navigator?.geolocation;
 
@@ -353,7 +379,10 @@ function requestBrowserCoordinates(): Promise<GeolocationCoordinates> {
     }
 
     geolocation.getCurrentPosition(
-      (position) => resolve(position.coords),
+      (position) => resolve({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      }),
       reject,
       {
         enableHighAccuracy: false,
@@ -362,6 +391,42 @@ function requestBrowserCoordinates(): Promise<GeolocationCoordinates> {
       },
     );
   });
+}
+
+async function requestNativeCoordinates(): Promise<CurrentCoordinates> {
+  let servicesEnabled: boolean;
+
+  try {
+    servicesEnabled = await Location.hasServicesEnabledAsync();
+  } catch {
+    throw new LocationServicesUnavailableError();
+  }
+
+  if (!servicesEnabled) {
+    throw new LocationServicesUnavailableError();
+  }
+
+  const currentPermission = await Location.getForegroundPermissionsAsync();
+  const permission = currentPermission.status === 'undetermined'
+    ? await Location.requestForegroundPermissionsAsync()
+    : currentPermission;
+
+  if (permission.status !== 'granted') {
+    throw new LocationPermissionDeniedError();
+  }
+
+  try {
+    const position = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+
+    return {
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude,
+    };
+  } catch {
+    throw new CurrentLocationUnavailableError();
+  }
 }
 
 async function reverseGeocodeCurrentLocation(
@@ -401,7 +466,9 @@ async function reverseGeocodeCurrentLocation(
 }
 
 async function resolveCurrentLocationDestination(): Promise<CurrentLocationDestination> {
-  const coords = await requestBrowserCoordinates();
+  const coords = Platform.OS === 'web'
+    ? await requestBrowserCoordinates()
+    : await requestNativeCoordinates();
   const destination = await reverseGeocodeCurrentLocation(coords.latitude, coords.longitude);
 
   return {
@@ -622,7 +689,7 @@ function createDestinationFromTrip(trip: TripRow): DestinationOption {
   const countryName = trip.destination_country ?? trip.destination_country_ko ?? '';
 
   return {
-    id: trip.id,
+    id: createDestinationId('supabase', displayName),
     name: displayName,
     country: countryName,
     displayName,
@@ -636,6 +703,7 @@ function createActiveTripStateFromSupabaseTrip(trip: TripRow): ActiveTripState {
 
   return {
     ...INITIAL_ACTIVE_TRIP,
+    tripId: trip.id,
     destination,
     visitedDestinations: [destination],
     startDate: trip.start_date ?? getTodayDateKey(),
@@ -659,8 +727,8 @@ export default function HomeScreen() {
   const { canUseSupabaseUserData } = useAuth();
   const createTripMutation = useCreateTrip();
   const completeTripMutation = useCompleteTrip();
+  const updateInitialDestinationMutation = useUpdateActiveTripDestination();
   const { data: supabaseActiveTrip } = useActiveTrip();
-  const { data: supabaseActiveTripDays } = useTripDays(supabaseActiveTrip?.id);
   const { data: supabaseTrips } = useMyTrips();
   const { data: supabaseRecentTrips } = useRecentTrips(3);
   const { currentTrip, todaySummary } = HOME_MOCK_DATA;
@@ -688,6 +756,7 @@ export default function HomeScreen() {
   const [isStartTripConfirmVisible, setStartTripConfirmVisible] = React.useState(false);
   const [isStartTripSetupVisible, setStartTripSetupVisible] = React.useState(false);
   const [isQuickStartingTrip, setQuickStartingTrip] = React.useState(false);
+  const [isSelectingInitialDestination, setSelectingInitialDestination] = React.useState(false);
   const [isFirstUserEmptyState, setIsFirstUserEmptyState] = React.useState(false);
   const [photoImportHomeFlowStatus, setPhotoImportHomeFlowStatus] =
     React.useState<PhotoImportHomeFlowStatus>('idle');
@@ -711,6 +780,9 @@ export default function HomeScreen() {
   const [isPlaceCreateModalVisible, setPlaceCreateModalVisible] = React.useState(false);
   const handledTabActionIdRef = React.useRef<string | null>(null);
   const isCompletingTripRef = React.useRef(false);
+  const tripStartRequestInFlightRef = React.useRef(false);
+  const activeTripId = activeTrip.tripId ?? supabaseActiveTrip?.id;
+  const { data: supabaseActiveTripDays } = useTripDays(activeTripId);
 
   React.useEffect(() => {
     if (params.photoImportPreview !== 'analyzing') {
@@ -865,7 +937,39 @@ export default function HomeScreen() {
     reopenTravelStatusSheet();
   }, [reopenTravelStatusSheet]);
 
-  const handleSaveDestination = React.useCallback((destination: DestinationOption) => {
+  const handleSaveDestination = React.useCallback(async (destination: DestinationOption) => {
+    let updatedAt = new Date().toISOString();
+
+    if (isSelectingInitialDestination && canUseSupabaseUserData) {
+      if (tripStartRequestInFlightRef.current) {
+        return;
+      }
+
+      if (!activeTrip.tripId) {
+        Alert.alert('여행지를 저장하지 못했어요.', '잠시 후 다시 시도해주세요.');
+        return;
+      }
+
+      tripStartRequestInFlightRef.current = true;
+
+      try {
+        const updatedTrip = await updateInitialDestinationMutation.mutateAsync({
+          destinationCity: getEnglishLocationLabel(destination),
+          destinationCityKo: destination.displayName,
+          destinationCountry: getEnglishCountryLabel(destination.countryName),
+          destinationCountryKo: destination.countryName || null,
+          tripId: activeTrip.tripId,
+        });
+        updatedAt = updatedTrip.updated_at;
+      } catch (error) {
+        console.warn('Failed to update the initial trip destination in Supabase.', error);
+        Alert.alert('여행지를 저장하지 못했어요.', '잠시 후 다시 시도해주세요.');
+        return;
+      } finally {
+        tripStartRequestInFlightRef.current = false;
+      }
+    }
+
     setActiveTrip((prev) => ({
       ...prev,
       destination,
@@ -876,11 +980,21 @@ export default function HomeScreen() {
       destinationSource: 'manual',
       latitude: undefined,
       longitude: undefined,
-      updatedAt: new Date().toISOString(),
+      updatedAt,
     }));
     setDestinationSearchVisible(false);
-    reopenTravelStatusSheet();
-  }, [reopenTravelStatusSheet]);
+    setSelectingInitialDestination(false);
+
+    if (!isSelectingInitialDestination) {
+      reopenTravelStatusSheet();
+    }
+  }, [
+    activeTrip.tripId,
+    canUseSupabaseUserData,
+    isSelectingInitialDestination,
+    reopenTravelStatusSheet,
+    updateInitialDestinationMutation,
+  ]);
 
   const tripDayCount = Math.max(
     activeTrip.dayNumber,
@@ -949,7 +1063,7 @@ export default function HomeScreen() {
     router.push({
       pathname: '/place-detail',
       params: {
-        tripId: activeTrip.destination.id,
+        tripId: activeTripId ?? activeTrip.destination.id,
         dayId: selectedRouteDayId,
         tripDayId: selectedRouteTripDayId,
         date: selectedDateKey,
@@ -969,6 +1083,7 @@ export default function HomeScreen() {
   }, [
     activeTrip.destination.countryName,
     activeTrip.destination.id,
+    activeTripId,
     router,
     selectedDateKey,
     selectedRouteDayId,
@@ -1070,7 +1185,7 @@ export default function HomeScreen() {
         ? [
             {
               id: `manual-record-${createdAt}`,
-              tripId: activeTrip.destination.id,
+              tripId: activeTripId ?? activeTrip.destination.id,
               dayId: selectedDateKey,
               placeId,
               text: input.text,
@@ -1092,7 +1207,7 @@ export default function HomeScreen() {
       }),
     );
     setPlaceCreateModalVisible(false);
-  }, [activeTrip.destination.displayName, activeTrip.destination.id, currentTrip.heroImage, selectedDateKey]);
+  }, [activeTrip.destination.displayName, activeTrip.destination.id, activeTripId, currentTrip.heroImage, selectedDateKey]);
 
   const handleConfirmEndTrip = React.useCallback(async () => {
     if (isCompletingTripRef.current) {
@@ -1169,8 +1284,12 @@ export default function HomeScreen() {
 
   const handleCancelDestinationSearch = React.useCallback(() => {
     setDestinationSearchVisible(false);
-    reopenTravelStatusSheet();
-  }, [reopenTravelStatusSheet]);
+    setSelectingInitialDestination(false);
+
+    if (!isSelectingInitialDestination) {
+      reopenTravelStatusSheet();
+    }
+  }, [isSelectingInitialDestination, reopenTravelStatusSheet]);
 
   const handleCancelEndTripConfirm = React.useCallback(() => {
     setEndTripConfirmVisible(false);
@@ -1194,7 +1313,36 @@ export default function HomeScreen() {
     });
   }, []);
 
-  const startOpenEndedTrip = React.useCallback((params: {
+  const handleTripStartError = React.useCallback((error: unknown) => {
+    if (error instanceof ActiveTripExistsError) {
+      Alert.alert('이미 진행 중인 여행이 있어요.', '기존 여행을 종료한 뒤 새 여행을 시작해주세요.');
+      return;
+    }
+
+    console.warn('Failed to create trip in Supabase.', error);
+    Alert.alert('여행을 저장하지 못했어요.', '잠시 후 다시 시도해주세요.');
+  }, []);
+
+  const runTripStartRequest = React.useCallback(async (
+    operation: () => Promise<boolean>,
+  ): Promise<boolean> => {
+    if (tripStartRequestInFlightRef.current) {
+      return false;
+    }
+
+    tripStartRequestInFlightRef.current = true;
+
+    try {
+      return await operation();
+    } catch (error) {
+      handleTripStartError(error);
+      return false;
+    } finally {
+      tripStartRequestInFlightRef.current = false;
+    }
+  }, [handleTripStartError]);
+
+  const startOpenEndedTrip = React.useCallback(async (params: {
     destination: DestinationOption;
     destinationSource: DestinationSource;
     latitude?: number;
@@ -1202,9 +1350,25 @@ export default function HomeScreen() {
   }) => {
     const now = new Date().toISOString();
     const today = getTodayDateKey();
+    const destinationCity = getEnglishLocationLabel(params.destination);
+    const destinationCountry = getEnglishCountryLabel(params.destination.countryName);
+    const createdTrip = canUseSupabaseUserData
+      ? await createTripMutation.mutateAsync({
+          destinationCity,
+          destinationCityKo: params.destination.displayName,
+          destinationCountry: destinationCountry || null,
+          destinationCountryKo: params.destination.countryName || null,
+          endDate: today,
+          isEndDateUndecided: true,
+          startDate: today,
+          status: 'active',
+          title: `${destinationCity} 여행`,
+        })
+      : undefined;
 
     setActiveTrip((prev) => ({
       ...prev,
+      tripId: createdTrip?.id,
       destination: params.destination,
       visitedDestinations: mergeVisitedDestinations(
         [],
@@ -1219,99 +1383,97 @@ export default function HomeScreen() {
       isEndDateUndecided: true,
       dayNumber: 1,
       isRecording: true,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: createdTrip?.created_at ?? now,
+      updatedAt: createdTrip?.updated_at ?? now,
     }));
     setStartTripSetupVisible(false);
-    setIsTraveling(true);
-  }, []);
-
-  const startTripWithSetup = React.useCallback(async (setup: StartTripSetupValue) => {
-    const now = new Date().toISOString();
-    const hasSetupDestination = setup.destinationName.trim().length > 0;
-    const setupDestination: DestinationOption = hasSetupDestination
-      ? {
-          id: `manual-${setup.destinationName.toLowerCase().replace(/\s+/g, '-')}`,
-          name: setup.destinationName,
-          country: setup.countryName,
-          displayName: setup.destinationName,
-          countryName: setup.countryName,
-          type: 'city',
-        }
-      : createUnknownDestination();
-    const setupDestinations = setup.destinations?.length
-      ? setup.destinations
-      : hasSetupDestination
-        ? [setupDestination]
-        : [];
-    const primaryDestination = setupDestinations[0] ?? setupDestination;
-    const destinationCity = getEnglishLocationLabel(primaryDestination);
-    const destinationCountry = getEnglishCountryLabel(primaryDestination.countryName);
-
-    if (canUseSupabaseUserData) {
-      try {
-        await createTripMutation.mutateAsync({
-          destinationCity,
-          destinationCityKo: primaryDestination.displayName,
-          destinationCountry,
-          destinationCountryKo: primaryDestination.countryName,
-          endDate: setup.endDate,
-          isEndDateUndecided: setup.isEndDateUndecided ?? false,
-          startDate: setup.startDate,
-          status: 'active',
-          title: `${destinationCity} 여행`,
-        });
-      } catch (error) {
-        if (error instanceof ActiveTripExistsError) {
-          Alert.alert('이미 진행 중인 여행이 있어요.', '기존 여행을 종료한 뒤 새 여행을 시작해주세요.');
-          return;
-        }
-
-        console.warn('Failed to create trip in Supabase.', error);
-        Alert.alert('여행을 저장하지 못했어요.', '잠시 후 다시 시도해주세요.');
-        return;
-      }
-    }
-
-    setStartTripSetupVisible(false);
-    setActiveTrip((prev) => ({
-      ...prev,
-      destination: primaryDestination,
-      visitedDestinations: mergeVisitedDestinations(
-        [],
-        setupDestinations.filter((destination) => destination.type !== 'country'),
-      ),
-      startDate: setup.startDate,
-      endDate: setup.endDate,
-      openEnded: setup.isEndDateUndecided ?? false,
-      destinationSource: 'manual',
-      latitude: undefined,
-      longitude: undefined,
-      isEndDateUndecided: setup.isEndDateUndecided ?? false,
-      dayNumber: 1,
-      isRecording: true,
-      createdAt: now,
-      updatedAt: now,
-    }));
     setIsTraveling(true);
   }, [canUseSupabaseUserData, createTripMutation]);
+
+  const startTripWithSetup = React.useCallback(async (setup: StartTripSetupValue) => {
+    await runTripStartRequest(async () => {
+      const now = new Date().toISOString();
+      const hasSetupDestination = setup.destinationName.trim().length > 0;
+      const setupDestination: DestinationOption = hasSetupDestination
+        ? {
+            id: createDestinationId('manual', setup.destinationName),
+            name: setup.destinationName,
+            country: setup.countryName,
+            displayName: setup.destinationName,
+            countryName: setup.countryName,
+            type: 'city',
+          }
+        : createUnknownDestination();
+      const setupDestinations = setup.destinations?.length
+        ? setup.destinations
+        : hasSetupDestination
+          ? [setupDestination]
+          : [];
+      const primaryDestination = setupDestinations[0] ?? setupDestination;
+      const destinationCity = getEnglishLocationLabel(primaryDestination);
+      const destinationCountry = getEnglishCountryLabel(primaryDestination.countryName);
+      const createdTrip = canUseSupabaseUserData
+        ? await createTripMutation.mutateAsync({
+            destinationCity,
+            destinationCityKo: primaryDestination.displayName,
+            destinationCountry: destinationCountry || null,
+            destinationCountryKo: primaryDestination.countryName || null,
+            endDate: setup.endDate,
+            isEndDateUndecided: setup.isEndDateUndecided ?? false,
+            startDate: setup.startDate,
+            status: 'active',
+            title: `${destinationCity} 여행`,
+          })
+        : undefined;
+
+      setStartTripSetupVisible(false);
+      setActiveTrip((prev) => ({
+        ...prev,
+        tripId: createdTrip?.id,
+        destination: primaryDestination,
+        visitedDestinations: mergeVisitedDestinations(
+          [],
+          setupDestinations.filter((destination) => destination.type !== 'country'),
+        ),
+        startDate: setup.startDate,
+        endDate: setup.endDate,
+        openEnded: setup.isEndDateUndecided ?? false,
+        destinationSource: 'manual',
+        latitude: undefined,
+        longitude: undefined,
+        isEndDateUndecided: setup.isEndDateUndecided ?? false,
+        dayNumber: 1,
+        isRecording: true,
+        createdAt: createdTrip?.created_at ?? now,
+        updatedAt: createdTrip?.updated_at ?? now,
+      }));
+      setIsTraveling(true);
+      return true;
+    });
+  }, [canUseSupabaseUserData, createTripMutation, runTripStartRequest]);
 
   const handleCancelStartTripSetup = React.useCallback(() => {
     setStartTripSetupVisible(false);
   }, []);
 
-  const startTripWithoutLocation = React.useCallback(() => {
-    startOpenEndedTrip({
-      destination: createUnknownDestination(),
-      destinationSource: 'unknown',
-    });
-  }, [startOpenEndedTrip]);
+  const startTripWithoutLocation = React.useCallback(() =>
+    runTripStartRequest(async () => {
+      await startOpenEndedTrip({
+        destination: createUnknownDestination(),
+        destinationSource: 'unknown',
+      });
+      return true;
+    }), [runTripStartRequest, startOpenEndedTrip]);
 
-  const startTripThenSelectDestination = React.useCallback(() => {
-    startTripWithoutLocation();
-    requestAnimationFrame(() => {
-      setDestinationSearchVisible(true);
-    });
+  const startTripThenSelectDestination = React.useCallback(async () => {
+    const didStart = await startTripWithoutLocation();
+
+    if (didStart) {
+      setSelectingInitialDestination(true);
+      requestAnimationFrame(() => {
+        setDestinationSearchVisible(true);
+      });
+    }
   }, [startTripWithoutLocation]);
 
   const showQuickStartLocationFallback = React.useCallback(() => {
@@ -1336,27 +1498,40 @@ export default function HomeScreen() {
   }, [startTripThenSelectDestination, startTripWithoutLocation]);
 
   const handleQuickStartWithCurrentLocation = React.useCallback(async () => {
-    if (isQuickStartingTrip) {
+    if (isQuickStartingTrip || tripStartRequestInFlightRef.current) {
       return;
     }
 
     setQuickStartingTrip(true);
 
     try {
-      const currentLocation = await resolveCurrentLocationDestination();
+      await runTripStartRequest(async () => {
+        let currentLocation;
 
-      startOpenEndedTrip({
-        destination: currentLocation.destination,
-        destinationSource: 'currentLocation',
-        latitude: currentLocation.latitude,
-        longitude: currentLocation.longitude,
+        try {
+          currentLocation = await resolveCurrentLocationDestination();
+        } catch {
+          showQuickStartLocationFallback();
+          return false;
+        }
+
+        await startOpenEndedTrip({
+          destination: currentLocation.destination,
+          destinationSource: 'currentLocation',
+          latitude: currentLocation.latitude,
+          longitude: currentLocation.longitude,
+        });
+        return true;
       });
-    } catch {
-      showQuickStartLocationFallback();
     } finally {
       setQuickStartingTrip(false);
     }
-  }, [isQuickStartingTrip, showQuickStartLocationFallback, startOpenEndedTrip]);
+  }, [
+    isQuickStartingTrip,
+    runTripStartRequest,
+    showQuickStartLocationFallback,
+    startOpenEndedTrip,
+  ]);
 
   const statusButtonLabel = activeTrip.isRecording ? '여행 중' : '종료됨';
   const statusBadgeLabel = activeTrip.isRecording ? '여행 기록 중' : '여행 종료됨';
@@ -1543,7 +1718,7 @@ export default function HomeScreen() {
       <PlaceCreateModal
         visible={isPlaceCreateModalVisible}
         mode="create"
-        tripId={activeTrip.destination.id}
+        tripId={activeTripId ?? activeTrip.destination.id}
         dayId={selectedRouteDayId}
         tripDestinationName={activeTrip.destination.displayName}
         tripDestinationCountry={activeTrip.destination.countryName}

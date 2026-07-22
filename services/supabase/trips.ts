@@ -26,6 +26,14 @@ export type CreateTripWithDaysInput = {
   title: string;
 };
 
+export type UpdateActiveTripDestinationInput = {
+  destinationCity: string;
+  destinationCityKo?: string | null;
+  destinationCountry?: string | null;
+  destinationCountryKo?: string | null;
+  tripId: string;
+};
+
 function throwIfError(error: Error | null) {
   if (error) {
     throw error;
@@ -243,6 +251,48 @@ export function updateTrip(tripId: string, patch: TablesUpdate<'trips'>) {
     .eq('id', tripId)
     .select()
     .single();
+}
+
+export async function updateActiveTripDestination(
+  input: UpdateActiveTripDestinationInput,
+): Promise<TripRow> {
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  throwIfError(authError);
+
+  if (!authData.user) {
+    throw new Error('A Supabase session is required to update a trip destination.');
+  }
+
+  const { data, error } = await supabase
+    .from('trips')
+    .update({
+      destination_city: normalizeText(input.destinationCity),
+      destination_city_ko:
+        normalizeText(input.destinationCityKo) || normalizeText(input.destinationCity) || null,
+      destination_country:
+        normalizeText(input.destinationCountry) ||
+        normalizeText(input.destinationCountryKo) ||
+        null,
+      destination_country_ko:
+        normalizeText(input.destinationCountryKo) ||
+        normalizeText(input.destinationCountry) ||
+        null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', input.tripId)
+    .eq('user_id', authData.user.id)
+    .eq('status', 'active')
+    .is('deleted_at', null)
+    .select()
+    .maybeSingle();
+
+  throwIfError(error);
+
+  if (!data) {
+    throw new Error('No active trip was found to update.');
+  }
+
+  return data;
 }
 
 export async function softDeleteTrip(tripId: string): Promise<SoftDeletedTrip> {
