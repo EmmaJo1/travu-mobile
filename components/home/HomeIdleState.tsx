@@ -136,7 +136,7 @@ export default function HomeIdleState({
   const today = React.useMemo(() => new Date(), []);
   const heroDateLabel = React.useMemo(() => formatIdleHeroDate(today), [today]);
   const summaryTrips =
-    supabaseSummaryTrips && supabaseSummaryTrips.length > 0
+    supabaseSummaryTrips !== undefined
       ? supabaseSummaryTrips
       : savedMyPageTrips;
   const monthlySummary = React.useMemo(
@@ -152,7 +152,7 @@ export default function HomeIdleState({
 
   const recentTrips = React.useMemo(
     () => {
-      if (supabaseRecentTrips && supabaseRecentTrips.length > 0) {
+      if (supabaseRecentTrips !== undefined) {
         return getRecentTrips(supabaseRecentTrips);
       }
 

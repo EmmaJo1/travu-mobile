@@ -87,9 +87,9 @@ function getInclusiveDayCount(startDate?: string | null, endDate?: string | null
 
 function getDisplayCity(trip: TripRow) {
   return (
+    normalizeText(trip.destination_city_ko) ||
     normalizeText(trip.destination_city) ||
     normalizeText(trip.title) ||
-    normalizeText(trip.destination_city_ko) ||
     FALLBACK_TRIP_TITLE
   );
 }

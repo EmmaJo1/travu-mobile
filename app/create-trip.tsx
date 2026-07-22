@@ -166,6 +166,7 @@ export default function CreateTripScreen() {
       <ScreenHeader title="직접 여행 만들기" onBackPress={handleBack} style={styles.header} />
 
       <ScrollView
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
           styles.scrollContent,
@@ -174,7 +175,7 @@ export default function CreateTripScreen() {
       >
         <View style={styles.copyBlock}>
           <Text style={styles.title}>어떤 여행을 정리할까요?</Text>
-          <Text style={styles.description}>여행지와 기간을 입력하여 직접 여행을 생성해보세요</Text>
+          <Text style={styles.description}>여행지와 기간을 입력해 여행을 만들어보세요</Text>
         </View>
 
         <View style={styles.form}>
@@ -256,14 +257,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
   },
   copyBlock: {
-    width: 270,
+    width: '100%',
   },
   title: {
+    width: 270,
     ...Typography.title1,
     color: Colors.foundation.black,
   },
   description: {
-    width: 210,
     marginTop: Spacing.lg,
     ...Typography.body1Regular,
     color: GREY_700,

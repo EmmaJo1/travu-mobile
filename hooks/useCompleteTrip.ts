@@ -16,12 +16,14 @@ export function useCompleteTrip() {
 
       return completeActiveTrip();
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       const userId = user?.id;
 
-      void queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.activeTrip(userId) });
-      void queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.myTrips(userId) });
-      void queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.recentTripsRoot(userId) });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.activeTrip(userId) }),
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.myTrips(userId) }),
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.recentTripsRoot(userId) }),
+      ]);
     },
   });
 }

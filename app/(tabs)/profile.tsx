@@ -95,7 +95,7 @@ export default function ProfileScreen() {
   const [deletedTripIds, setDeletedTripIds] = useState<string[]>([]);
   const savedTrips = useSavedMyPageTrips();
   const { profile } = useUserProfile();
-  const { user } = useAuth();
+  const { canUseSupabaseUserData, user } = useAuth();
   const { data: supabaseTrips } = useMyTrips();
   const deleteTripMutation = useDeleteTrip();
   const supabaseTripIds = useMemo(
@@ -106,14 +106,13 @@ export default function ProfileScreen() {
   const myPageTrips = useMemo(
     () => {
       const deletedTripIdSet = new Set(deletedTripIds);
-      const hasSupabaseTrips = Array.isArray(supabaseTrips) && supabaseTrips.length > 0;
-      const sourceTrips = hasSupabaseTrips
-        ? mapSupabaseTripsToMyPageTrips(supabaseTrips)
+      const sourceTrips = canUseSupabaseUserData
+        ? mapSupabaseTripsToMyPageTrips(supabaseTrips ?? [])
         : mergeSavedAndMockTrips(savedTrips);
 
       return sourceTrips.filter((trip) => !deletedTripIdSet.has(trip.id));
     },
-    [deletedTripIds, savedTrips, supabaseTrips],
+    [canUseSupabaseUserData, deletedTripIds, savedTrips, supabaseTrips],
   );
   const profileStats = useMemo(
     () => ({

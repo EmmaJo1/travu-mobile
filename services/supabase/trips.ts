@@ -109,7 +109,7 @@ export async function fetchActiveTrip(): Promise<TripRow | null> {
   return data;
 }
 
-export async function completeActiveTrip(): Promise<TripRow | null> {
+export async function completeActiveTrip(): Promise<TripRow> {
   const { data: authData, error: authError } = await supabase.auth.getUser();
   throwIfError(authError);
 
@@ -120,7 +120,7 @@ export async function completeActiveTrip(): Promise<TripRow | null> {
   const { data, error } = await supabase
     .from('trips')
     .update({
-      status: 'completed',
+      status: 'archived',
       updated_at: new Date().toISOString(),
     })
     .eq('user_id', authData.user.id)
@@ -130,6 +130,11 @@ export async function completeActiveTrip(): Promise<TripRow | null> {
     .maybeSingle();
 
   throwIfError(error);
+
+  if (!data) {
+    throw new Error('No active trip was found to complete.');
+  }
+
   return data;
 }
 

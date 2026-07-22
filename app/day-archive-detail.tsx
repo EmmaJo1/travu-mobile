@@ -19,7 +19,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  TextInput,
   useWindowDimensions,
   View,
   type ImageSourcePropType,
@@ -328,7 +327,7 @@ function createArchiveCoverPhotoOptions(places: ArchiveDetailPlace[]): ArchiveCo
   );
 }
 
-type ArchiveHeaderActionId = 'cover' | 'title' | 'info' | 'place' | 'delete';
+type ArchiveHeaderActionId = 'cover' | 'info' | 'place' | 'delete';
 
 const ARCHIVE_HEADER_ACTIONS: {
   destructive?: boolean;
@@ -337,15 +336,12 @@ const ARCHIVE_HEADER_ACTIONS: {
   label: string;
 }[] = [
   { id: 'cover', icon: 'image', label: '\uB300\uD45C \uC0AC\uC9C4 \uBCC0\uACBD' },
-  { id: 'title', icon: 'edit-3', label: '\uC5EC\uD589 \uC774\uB984 \uC218\uC815' },
   { id: 'info', icon: 'settings', label: '\uC5EC\uD589 \uC815\uBCF4 \uC218\uC815' },
   { id: 'place', icon: 'map-pin', label: '\uC7A5\uC18C \uCD94\uAC00' },
   { id: 'delete', destructive: true, icon: 'trash-2', label: '\uC5EC\uD589 \uC0AD\uC81C' },
 ];
 
-const LABEL_EDIT_TRIP_TITLE = '\uC5EC\uD589 \uC774\uB984 \uC218\uC815';
 const LABEL_CANCEL = '\uCDE8\uC18C';
-const LABEL_SAVE = '\uC800\uC7A5';
 const LABEL_DELETE_TRIP_TITLE = '\uC5EC\uD589\uC744 \uC0AD\uC81C\uD560\uAE4C\uC694?';
 const LABEL_DELETE_TRIP_MESSAGE =
   '\uC0AD\uC81C\uD55C \uC5EC\uD589\uC740 \uC5EC\uD589 \uB9AC\uC2A4\uD2B8\uC5D0\uC11C \uC0AC\uB77C\uC9D1\uB2C8\uB2E4.';
@@ -834,9 +830,7 @@ export default function DayArchiveDetailScreen() {
       MOCK_MY_PAGE_TRIPS.find((trip) => trip.id === routeTripId) ??
       savedTrips[0];
   const [localTripPatch, setLocalTripPatch] = useState<Partial<MyPageTrip>>({});
-  const [isTitleEditorVisible, setTitleEditorVisible] = useState(false);
   const [isTripInfoEditorVisible, setTripInfoEditorVisible] = useState(false);
-  const [titleDraft, setTitleDraft] = useState('');
   const activeTrip = useMemo(
     () => {
       const sourceTrip = isSupabaseArchiveTrip
@@ -1247,33 +1241,10 @@ export default function DayArchiveDetailScreen() {
     [closeCoverPhotoPicker, updateArchiveTrip],
   );
 
-  const openTitleEditor = React.useCallback(() => {
-    setTitleDraft(resolveArchiveHeroTitle(activeTrip));
-    setTitleEditorVisible(true);
-  }, [activeTrip]);
-
-  const handleSaveTitle = React.useCallback(() => {
-    const nextTitle = titleDraft.trim();
-
-    if (!nextTitle) {
-      return;
-    }
-
-    updateArchiveTrip({
-      title: nextTitle.toUpperCase(),
-      titleEn: nextTitle,
-    });
-    setTitleEditorVisible(false);
-  }, [titleDraft, updateArchiveTrip]);
-
   const handleSaveTripInfo = React.useCallback(
     (value: StartTripSetupValue) => {
-      const primaryDestination = value.destinations?.[0];
       const destinationName = value.destinationName.trim();
       const countryName = value.countryName.trim();
-      const englishTitle =
-        primaryDestination?.englishDisplayName ??
-        (isEnglishLike(destinationName) ? destinationName : activeTrip?.titleEn ?? activeTrip?.title);
       const nextDateRangeLabel = formatArchiveDateRangeLabel(value.startDate, value.endDate);
 
       // TODO: Persist edited archive trip info to Supabase when backend sync is connected.
@@ -1282,14 +1253,12 @@ export default function DayArchiveDetailScreen() {
         country: countryName,
         dateRangeLabel: nextDateRangeLabel,
         daysCount: getInclusiveArchiveDays(value.startDate, value.endDate),
-        title: englishTitle ? englishTitle.toUpperCase() : activeTrip?.title,
-        titleEn: englishTitle,
         visitedCities: value.visitedCities ?? [],
         visitedCountries: value.visitedCountries ?? [],
       });
       setTripInfoEditorVisible(false);
     },
-    [activeTrip?.title, activeTrip?.titleEn, updateArchiveTrip],
+    [updateArchiveTrip],
   );
 
   const handleCreateArchivePlace = React.useCallback(
@@ -1412,11 +1381,6 @@ export default function DayArchiveDetailScreen() {
 
     if (actionId === 'cover') {
       openCoverPhotoPicker();
-      return;
-    }
-
-    if (actionId === 'title') {
-      openTitleEditor();
       return;
     }
 
@@ -1738,43 +1702,6 @@ export default function DayArchiveDetailScreen() {
                 </Text>
               </View>
             )}
-          </Pressable>
-        </Pressable>
-      </Modal>
-      <Modal
-        animationType="fade"
-        transparent
-        visible={isTitleEditorVisible}
-        onRequestClose={() => setTitleEditorVisible(false)}
-      >
-        <Pressable style={styles.titleEditorOverlay} onPress={() => setTitleEditorVisible(false)}>
-          <Pressable style={styles.titleEditorCard}>
-            <Text style={styles.titleEditorTitle}>{LABEL_EDIT_TRIP_TITLE}</Text>
-            <TextInput
-              autoCapitalize="words"
-              autoFocus
-              onChangeText={setTitleDraft}
-              placeholder="Paris"
-              placeholderTextColor={Colors.foundation.grey500}
-              style={styles.titleEditorInput}
-              value={titleDraft}
-            />
-            <View style={styles.titleEditorActions}>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setTitleEditorVisible(false)}
-                style={styles.titleEditorSecondaryButton}
-              >
-                <Text style={styles.titleEditorSecondaryText}>{LABEL_CANCEL}</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={handleSaveTitle}
-                style={styles.titleEditorPrimaryButton}
-              >
-                <Text style={styles.titleEditorPrimaryText}>{LABEL_SAVE}</Text>
-              </Pressable>
-            </View>
           </Pressable>
         </Pressable>
       </Modal>
@@ -2128,60 +2055,5 @@ const styles = StyleSheet.create({
     ...Typography.body2Regular,
     color: Colors.foundation.grey600,
     textAlign: 'center',
-  },
-  titleEditorOverlay: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.xl,
-    backgroundColor: 'rgba(0, 0, 0, 0.35)',
-  },
-  titleEditorCard: {
-    width: '100%',
-    maxWidth: 340,
-    padding: Spacing.xl,
-    borderRadius: Radius.lg,
-    backgroundColor: Colors.foundation.white,
-    ...Shadows.modal,
-  },
-  titleEditorTitle: {
-    ...Typography.body1Emphasized,
-    color: Colors.foundation.black,
-  },
-  titleEditorInput: {
-    height: 48,
-    marginTop: Spacing.lg,
-    paddingHorizontal: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.foundation.grey100,
-    borderRadius: Radius.sm,
-    ...Typography.body1Regular,
-    color: Colors.foundation.black,
-  },
-  titleEditorActions: {
-    marginTop: Spacing.lg,
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: Spacing.sm,
-  },
-  titleEditorSecondaryButton: {
-    height: 40,
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.lg,
-  },
-  titleEditorSecondaryText: {
-    ...Typography.body2Emphasized,
-    color: Colors.foundation.grey700,
-  },
-  titleEditorPrimaryButton: {
-    height: 40,
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.lg,
-    borderRadius: Radius.sm,
-    backgroundColor: Colors.foundation.black,
-  },
-  titleEditorPrimaryText: {
-    ...Typography.body2Emphasized,
-    color: Colors.foundation.white,
   },
 });

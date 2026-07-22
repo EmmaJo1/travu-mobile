@@ -710,6 +710,7 @@ export default function HomeScreen() {
   const scheduleDayScrollRef = React.useRef<ScrollView | null>(null);
   const [isPlaceCreateModalVisible, setPlaceCreateModalVisible] = React.useState(false);
   const handledTabActionIdRef = React.useRef<string | null>(null);
+  const isCompletingTripRef = React.useRef(false);
 
   React.useEffect(() => {
     if (params.photoImportPreview !== 'analyzing') {
@@ -1094,6 +1095,11 @@ export default function HomeScreen() {
   }, [activeTrip.destination.displayName, activeTrip.destination.id, currentTrip.heroImage, selectedDateKey]);
 
   const handleConfirmEndTrip = React.useCallback(async () => {
+    if (isCompletingTripRef.current) {
+      return;
+    }
+
+    isCompletingTripRef.current = true;
     const destinationName = getEnglishLocationLabel(activeTrip.destination);
     const completedEndDate = activeTrip.endDate ?? getTodayDateKey();
     const visitedCities = getUniqueTravelValues(
@@ -1106,35 +1112,37 @@ export default function HomeScreen() {
       activeTrip.destination.countryName,
     ]);
 
-    if (canUseSupabaseUserData) {
-      try {
+    try {
+      if (canUseSupabaseUserData) {
         await completeTripMutation.mutateAsync();
-      } catch (error) {
-        console.warn('Failed to complete active trip in Supabase.', error);
-        Alert.alert('여행을 종료하지 못했어요.', '잠시 후 다시 시도해주세요.');
-        return;
+      } else {
+        addSavedCompletedTrip({
+          id: `${activeTrip.destination.id}-${activeTrip.startDate}-${completedEndDate}`,
+          destinationName,
+          countryName: activeTrip.destination.countryName,
+          visitedCities,
+          visitedCountries,
+          startDate: activeTrip.startDate,
+          endDate: completedEndDate,
+          coverImage: currentTrip.heroImage,
+          daysCount: getInclusiveDayCount(activeTrip.startDate, completedEndDate),
+          photoCount: tripTotalStats.photoCount,
+        });
       }
-    }
 
-    addSavedCompletedTrip({
-      id: `${activeTrip.destination.id}-${activeTrip.startDate}-${completedEndDate}`,
-      destinationName,
-      countryName: activeTrip.destination.countryName,
-      visitedCities,
-      visitedCountries,
-      startDate: activeTrip.startDate,
-      endDate: completedEndDate,
-      coverImage: currentTrip.heroImage,
-      daysCount: getInclusiveDayCount(activeTrip.startDate, completedEndDate),
-      photoCount: tripTotalStats.photoCount,
-    });
-    setActiveTrip((prev) => ({
-      ...prev,
-      isRecording: false,
-    }));
-    setEndTripConfirmVisible(false);
-    setTravelStatusSheetVisible(false);
-    setEndTripCompleteVisible(true);
+      setActiveTrip((prev) => ({
+        ...prev,
+        isRecording: false,
+      }));
+      setEndTripConfirmVisible(false);
+      setTravelStatusSheetVisible(false);
+      setEndTripCompleteVisible(true);
+    } catch (error) {
+      console.warn('Failed to complete active trip in Supabase.', error);
+      Alert.alert('여행을 종료하지 못했어요.', '잠시 후 다시 시도해주세요.');
+    } finally {
+      isCompletingTripRef.current = false;
+    }
   }, [
     activeTrip,
     canUseSupabaseUserData,
@@ -1363,16 +1371,16 @@ export default function HomeScreen() {
   const homeHeaderTop = getHomeHeaderTop(insets.top);
   const photoImportResultCount = photoImportCandidates.length;
   const idleRecentTrips = React.useMemo(
-    () => supabaseRecentTrips && supabaseRecentTrips.length > 0
-      ? mapSupabaseTripsToIdleRecentTrips(supabaseRecentTrips)
+    () => canUseSupabaseUserData
+      ? mapSupabaseTripsToIdleRecentTrips(supabaseRecentTrips ?? [])
       : undefined,
-    [supabaseRecentTrips],
+    [canUseSupabaseUserData, supabaseRecentTrips],
   );
   const idleSummaryTrips = React.useMemo(
-    () => supabaseTrips && supabaseTrips.length > 0
-      ? mapSupabaseTripsToHomeSummaryTrips(supabaseTrips)
+    () => canUseSupabaseUserData
+      ? mapSupabaseTripsToHomeSummaryTrips(supabaseTrips ?? [])
       : undefined,
-    [supabaseTrips],
+    [canUseSupabaseUserData, supabaseTrips],
   );
   const shouldShowPhotoTripDetectionProgressCard =
     !hasSavedPhotoImportResults &&
