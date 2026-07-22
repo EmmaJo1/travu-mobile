@@ -36,7 +36,7 @@ import {
   type IdleRecentTrip,
 } from '@/constants/mockIdleHomeData';
 import { addSavedIdleDetectedTrip, useSavedMyPageTrips } from '@/constants/savedMyPageTrips';
-import { Colors, FontFamily, Typography } from '@/constants/theme';
+import { Colors, FontFamily, Spacing, Typography } from '@/constants/theme';
 import type { HomeSummaryTripInput } from '@/utils/supabaseTripMappers';
 
 const HERO_HEIGHT = 299;
@@ -60,7 +60,6 @@ const MONTH_LABELS = [
   'NOVEMBER',
   'DECEMBER',
 ] as const;
-const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 const MULTI_WORD_CITY_NAMES = new Set([
   'ho chi minh',
   'hong kong',
@@ -99,6 +98,7 @@ type MonthlySummaryDateRange = {
 interface HomeIdleStateProps {
   onPressStartTrip?: () => void;
   headerTop?: number;
+  headerLocationLabel: string;
   isFirstUserEmptyState?: boolean;
   showPhotoImportResultsCard?: boolean;
   showPhotoTripDetectionProgressCard?: boolean;
@@ -116,6 +116,7 @@ interface HomeIdleStateProps {
 export default function HomeIdleState({
   onPressStartTrip,
   headerTop = 0,
+  headerLocationLabel,
   isFirstUserEmptyState = false,
   showPhotoImportResultsCard = false,
   showPhotoTripDetectionProgressCard = false,
@@ -134,7 +135,6 @@ export default function HomeIdleState({
   const [detectedTrips, setDetectedTrips] = React.useState<DetectedTrip[]>([]);
   const [isRefreshing, setRefreshing] = React.useState(false);
   const today = React.useMemo(() => new Date(), []);
-  const heroDateLabel = React.useMemo(() => formatIdleHeroDate(today), [today]);
   const summaryTrips =
     supabaseSummaryTrips !== undefined
       ? supabaseSummaryTrips
@@ -253,12 +253,14 @@ export default function HomeIdleState({
           <View style={[styles.heroHeader, { top: headerTop }]}>
             <View style={styles.locationRow}>
               <Ionicons name="location-outline" size={16} color={Colors.foundation.white} />
-              <Text style={styles.locationLabel}>Seoul</Text>
+              <Text
+                style={styles.locationLabel}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {headerLocationLabel}
+              </Text>
             </View>
-
-            <Text style={styles.heroDate} pointerEvents="none">
-              {heroDateLabel}
-            </Text>
 
             <Pressable
               accessibilityRole="button"
@@ -401,12 +403,6 @@ export default function HomeIdleState({
 }
 
 function noop() {}
-
-function formatIdleHeroDate(date: Date) {
-  const day = date.getDate();
-
-  return `${date.getMonth() + 1}. ${day} ${WEEKDAY_LABELS[date.getDay()]}`;
-}
 
 function getMonthRange(date: Date) {
   const year = date.getFullYear();
@@ -725,31 +721,23 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   locationRow: {
-    width: 67,
+    flex: 1,
+    minWidth: 0,
     height: 27.05,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    marginRight: Spacing.md,
     zIndex: 1,
   },
   locationLabel: {
-    width: 45,
+    flexShrink: 1,
+    minWidth: 0,
     height: 24,
     fontFamily: 'Sansita Swashed',
     fontSize: 18,
     lineHeight: 24,
     fontWeight: '700',
-    color: Colors.foundation.white,
-  },
-  heroDate: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 10,
-    fontFamily: FontFamily.pretendardSemiBold,
-    fontSize: 18,
-    lineHeight: 24,
-    textAlign: 'center',
     color: Colors.foundation.white,
   },
   startButton: {

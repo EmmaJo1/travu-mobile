@@ -151,6 +151,40 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['trip_days']['Insert']>;
         Relationships: [];
       };
+      trip_destinations: {
+        Row: {
+          id: string;
+          trip_id: string;
+          destination_key: string;
+          name: string;
+          name_ko: string | null;
+          country: string | null;
+          country_ko: string | null;
+          destination_type: 'city' | 'country';
+          sort_order: number;
+          is_primary: boolean;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          trip_id: string;
+          destination_key: string;
+          name: string;
+          name_ko?: string | null;
+          country?: string | null;
+          country_ko?: string | null;
+          destination_type?: 'city' | 'country';
+          sort_order: number;
+          is_primary?: boolean;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: Partial<Database['public']['Tables']['trip_destinations']['Insert']>;
+        Relationships: [];
+      };
       places: {
         Row: {
           id: string;
@@ -307,7 +341,15 @@ export interface Database {
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      sync_active_trip_destinations: {
+        Args: {
+          p_trip_id: string;
+          p_destinations: Json;
+        };
+        Returns: Database['public']['Tables']['trip_destinations']['Row'][];
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };

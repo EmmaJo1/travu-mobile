@@ -16,6 +16,7 @@ import React from 'react';
 import {
   Alert,
   Animated,
+  AppState,
   Easing,
   Image,
   InteractionManager,
@@ -63,8 +64,17 @@ import { useCreateTrip } from '@/hooks/useCreateTrip';
 import { useActiveTrip, useMyTrips, useRecentTrips } from '@/hooks/useMyTrips';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
 import { useTripDays } from '@/hooks/useTripDays';
-import { useUpdateActiveTripDestination } from '@/hooks/useUpdateActiveTripDestination';
+import {
+  useSyncActiveTripDestinations,
+  useTripDestinations,
+} from '@/hooks/useTripDestinations';
+import { useUpdateActiveTripDateRange } from '@/hooks/useUpdateActiveTripDateRange';
 import { useAuth } from '@/providers/AuthProvider';
+import { TripDateRangeHasDataError } from '@/services/supabase/tripDays';
+import type {
+  TripDestinationInput,
+  TripDestinationRow,
+} from '@/services/supabase/tripDestinations';
 import { ActiveTripExistsError, type TripRow } from '@/services/supabase/trips';
 import {
   mapSupabaseTripsToHomeSummaryTrips,
@@ -91,6 +101,9 @@ const SCHEDULE_SHEET_ENTER_TRANSLATE_Y = 48;
 const SCHEDULE_SHEET_EXIT_TRANSLATE_Y = 360;
 const SCHEDULE_DAY_ROW_HEIGHT = 68;
 const SCHEDULE_DAY_CENTER_OFFSET = 160;
+const HEADER_LOCATION_LAST_KNOWN_MAX_AGE_MS = 60 * 1000;
+const HEADER_LOCATION_LAST_KNOWN_REQUIRED_ACCURACY_METERS = 500;
+const HEADER_LOCATION_REFRESH_DEBOUNCE_MS = 30 * 1000;
 
 const HEADER_DIM_COLORS = [
   'rgba(38,38,38,0.4)',
@@ -116,6 +129,17 @@ function getHomeHeaderTop(safeAreaTop: number) {
 }
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 const ENGLISH_DESTINATION_LABELS: Record<string, string> = {
+  'kr-seoul': 'Seoul',
+  'kr-busan': 'Busan',
+  'kr-daegu': 'Daegu',
+  'kr-incheon': 'Incheon',
+  'kr-gwangju': 'Gwangju',
+  'kr-daejeon': 'Daejeon',
+  'kr-ulsan': 'Ulsan',
+  'kr-sejong': 'Sejong',
+  'kr-gyeonggi-gwangju': 'Gwangju',
+  'kr-gyeonggi-suwon': 'Suwon',
+  'kr-jeju-jeju': 'Jeju',
   'city-jeju-kr': 'Jeju',
   'city-seoul-kr': 'Seoul',
   'city-busan-kr': 'Busan',
@@ -141,6 +165,26 @@ const ENGLISH_DESTINATION_LABELS: Record<string, string> = {
   '\uC624\uC0AC\uCE74': 'Osaka',
   '\uB3C4\uCFC4': 'Tokyo',
   '\uD30C\uB9AC': 'Paris',
+  '\uC11C\uC6B8': 'Seoul',
+  '\uC11C\uC6B8\uD2B9\uBCC4\uC2DC': 'Seoul',
+  '\uAD11\uC8FC': 'Gwangju',
+  '\uAD11\uC8FC\uAD11\uC5ED\uC2DC': 'Gwangju',
+  '\uBD80\uC0B0': 'Busan',
+  '\uBD80\uC0B0\uAD11\uC5ED\uC2DC': 'Busan',
+  '\uB300\uAD6C': 'Daegu',
+  '\uB300\uAD6C\uAD11\uC5ED\uC2DC': 'Daegu',
+  '\uC778\uCC9C': 'Incheon',
+  '\uC778\uCC9C\uAD11\uC5ED\uC2DC': 'Incheon',
+  '\uB300\uC804': 'Daejeon',
+  '\uB300\uC804\uAD11\uC5ED\uC2DC': 'Daejeon',
+  '\uC6B8\uC0B0': 'Ulsan',
+  '\uC6B8\uC0B0\uAD11\uC5ED\uC2DC': 'Ulsan',
+  '\uC138\uC885': 'Sejong',
+  '\uC138\uC885\uD2B9\uBCC4\uC790\uCE58\uC2DC': 'Sejong',
+  '\uC81C\uC8FC': 'Jeju',
+  '\uC81C\uC8FC\uC2DC': 'Jeju',
+  '\uC218\uC6D0': 'Suwon',
+  '\uC218\uC6D0\uC2DC': 'Suwon',
   시드니: 'Sydney',
   sydney: 'Sydney',
   호주: 'Australia',
@@ -149,14 +193,6 @@ const ENGLISH_DESTINATION_LABELS: Record<string, string> = {
   'new york': 'New York',
   대한민국: 'Korea',
   한국: 'Korea',
-  서울: 'Seoul',
-  광주: 'Gwangju',
-  부산: 'Busan',
-  대구: 'Daegu',
-  인천: 'Incheon',
-  대전: 'Daejeon',
-  울산: 'Ulsan',
-  제주: 'Jeju',
   '위치 미정': 'Set location',
   미국: 'USA',
 };
@@ -232,19 +268,6 @@ function getDestinationKey(destination: DestinationOption) {
   return `${name}|${country}`;
 }
 
-function mergeVisitedDestinations(
-  currentDestinations: DestinationOption[],
-  nextDestinations: DestinationOption[],
-) {
-  const destinationMap = new Map<string, DestinationOption>();
-
-  [...currentDestinations, ...nextDestinations].forEach((destination) => {
-    destinationMap.set(getDestinationKey(destination), destination);
-  });
-
-  return [...destinationMap.values()];
-}
-
 function getUniqueTravelValues(values: string[]) {
   const valueMap = new Map<string, string>();
 
@@ -294,6 +317,21 @@ type CurrentLocationDestination = {
 };
 
 type CurrentCoordinates = Pick<GeolocationCoordinates, 'latitude' | 'longitude'>;
+type HeaderLocationUpdateOptions = {
+  force?: boolean;
+  reason: 'initial' | 'focus' | 'foreground';
+};
+type HeaderLocationGeocodeResult = {
+  label: string;
+  selectedLocality: string;
+  address: {
+    city?: string | null;
+    subregion?: string | null;
+    district?: string | null;
+    region?: string | null;
+    country?: string | null;
+  };
+};
 
 class LocationPermissionDeniedError extends Error {
   constructor() {
@@ -366,6 +404,84 @@ function createUnknownDestination(): DestinationOption {
     displayName: '위치 미정',
     countryName: '',
     type: 'city',
+  };
+}
+
+function getEnglishDeviceLocationLabelFromLocality(locality: string): string {
+  const trimmed = locality.trim();
+
+  if (!trimmed) {
+    return '';
+  }
+
+  const normalized = trimmed.toLowerCase();
+  const directLabel = ENGLISH_DESTINATION_LABELS[normalized] ?? ENGLISH_DESTINATION_LABELS[trimmed];
+
+  if (directLabel) {
+    return directLabel;
+  }
+
+  const koreanCityLabels: [string, string][] = [
+    ['서울', 'Seoul'],
+    ['광주', 'Gwangju'],
+    ['부산', 'Busan'],
+    ['대구', 'Daegu'],
+    ['인천', 'Incheon'],
+    ['대전', 'Daejeon'],
+    ['울산', 'Ulsan'],
+    ['세종', 'Sejong'],
+    ['제주', 'Jeju'],
+    ['수원', 'Suwon'],
+  ];
+  const matchedKoreanCity = koreanCityLabels.find(([cityName]) => trimmed.includes(cityName));
+
+  if (matchedKoreanCity) {
+    return matchedKoreanCity[1];
+  }
+
+  if (/^[\x00-\x7F]+$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  return trimmed;
+}
+
+async function ensureHeaderLocationPermission(): Promise<boolean> {
+  const currentPermission = await Location.getForegroundPermissionsAsync();
+  const permission = currentPermission.status === 'undetermined'
+    ? await Location.requestForegroundPermissionsAsync()
+    : currentPermission;
+
+  return permission.status === 'granted';
+}
+
+async function getDeviceLocationHeaderLabel(
+  coords: CurrentCoordinates,
+): Promise<HeaderLocationGeocodeResult> {
+  const [address] = await Location.reverseGeocodeAsync({
+    latitude: coords.latitude,
+    longitude: coords.longitude,
+  });
+
+  const locality =
+    address?.city?.trim() ||
+    address?.subregion?.trim() ||
+    address?.district?.trim() ||
+    address?.region?.trim() ||
+    '';
+
+  const label = getEnglishDeviceLocationLabelFromLocality(locality);
+
+  return {
+    label,
+    selectedLocality: locality,
+    address: {
+      city: address?.city,
+      subregion: address?.subregion,
+      district: address?.district,
+      region: address?.region,
+      country: address?.country,
+    },
   };
 }
 
@@ -630,10 +746,9 @@ function formatDateRangeDescription(
 function getEnglishLocationLabel(destination: DestinationOption): string {
   const candidates = [
     destination.englishDisplayName,
-    destination.englishCountryName,
     destination.id,
     destination.displayName,
-    destination.countryName,
+    destination.name,
   ].filter(Boolean) as string[];
 
   for (const value of candidates) {
@@ -667,11 +782,7 @@ function getEnglishLocationLabel(destination: DestinationOption): string {
     return matchedKoreanCity[1];
   }
 
-  if (/^[\x00-\x7F]+$/.test(destination.countryName)) {
-    return destination.countryName;
-  }
-
-  return 'Travel';
+  return destination.name.trim() || destination.displayName.trim() || 'Travel';
 }
 
 function getEnglishCountryLabel(countryName: string): string {
@@ -685,8 +796,14 @@ function getEnglishCountryLabel(countryName: string): string {
 }
 
 function createDestinationFromTrip(trip: TripRow): DestinationOption {
-  const displayName = trip.destination_city ?? trip.destination_city_ko ?? trip.title;
-  const countryName = trip.destination_country ?? trip.destination_country_ko ?? '';
+  const displayName =
+    trip.destination_city_ko?.trim() ||
+    trip.destination_city?.trim() ||
+    trip.title;
+  const countryName =
+    trip.destination_country_ko?.trim() ||
+    trip.destination_country?.trim() ||
+    '';
 
   return {
     id: createDestinationId('supabase', displayName),
@@ -694,8 +811,75 @@ function createDestinationFromTrip(trip: TripRow): DestinationOption {
     country: countryName,
     displayName,
     countryName,
+    englishDisplayName: trip.destination_city?.trim() || undefined,
+    englishCountryName: trip.destination_country?.trim() || undefined,
     type: 'city',
   };
+}
+
+function createDestinationFromTripDestination(row: TripDestinationRow): DestinationOption {
+  const displayName = row.name_ko?.trim() || row.name.trim();
+  const countryName = row.country_ko?.trim() || row.country?.trim() || '';
+
+  return {
+    id: row.destination_key,
+    name: displayName,
+    country: countryName,
+    displayName,
+    countryName,
+    englishDisplayName: row.name.trim(),
+    englishCountryName: row.country?.trim() || undefined,
+    type: row.destination_type,
+  };
+}
+
+function createTripDestinationInput(destination: DestinationOption): TripDestinationInput {
+  const localizedName = destination.displayName.trim() || destination.name.trim();
+  const localizedCountry =
+    destination.countryName.trim() || destination.country?.trim() || '';
+
+  return {
+    destinationKey: destination.id || getDestinationKey(destination),
+    name:
+      destination.englishDisplayName?.trim() ||
+      getEnglishLocationLabel(destination) ||
+      destination.name.trim(),
+    nameKo: localizedName,
+    country:
+      destination.englishCountryName?.trim() ||
+      getEnglishCountryLabel(localizedCountry) ||
+      destination.country?.trim() ||
+      null,
+    countryKo: localizedCountry || null,
+    destinationType: destination.type === 'country' ? 'country' : 'city',
+  };
+}
+
+function getDestinationStateSignature(destinations: DestinationOption[]) {
+  return destinations
+    .map((destination) => [
+      destination.id,
+      destination.displayName,
+      destination.countryName,
+      destination.englishDisplayName ?? '',
+      destination.englishCountryName ?? '',
+      destination.type,
+    ].join(':'))
+    .join('|');
+}
+
+function formatActiveTripTitle(destinations: DestinationOption[]) {
+  const primaryDestination = destinations[0];
+
+  if (!primaryDestination) {
+    return '위치 미정 여행';
+  }
+
+  if (destinations.length === 1) {
+    return `${primaryDestination.displayName} 여행`;
+  }
+
+  return `${primaryDestination.displayName} 외 ${destinations.length - 1}곳 여행`;
 }
 
 function createActiveTripStateFromSupabaseTrip(trip: TripRow): ActiveTripState {
@@ -727,7 +911,8 @@ export default function HomeScreen() {
   const { canUseSupabaseUserData } = useAuth();
   const createTripMutation = useCreateTrip();
   const completeTripMutation = useCompleteTrip();
-  const updateInitialDestinationMutation = useUpdateActiveTripDestination();
+  const updateDateRangeMutation = useUpdateActiveTripDateRange();
+  const syncDestinationsMutation = useSyncActiveTripDestinations();
   const { data: supabaseActiveTrip } = useActiveTrip();
   const { data: supabaseTrips } = useMyTrips();
   const { data: supabaseRecentTrips } = useRecentTrips(3);
@@ -746,6 +931,7 @@ export default function HomeScreen() {
     dismissPhotoImportSavedModal,
   } = usePhotoImportFlow();
 
+  const [deviceHeaderLocationLabel, setDeviceHeaderLocationLabel] = React.useState('');
   const [isTraveling, setIsTraveling] = React.useState(false);
   const [activeTrip, setActiveTrip] = React.useState(INITIAL_ACTIVE_TRIP);
   const [isTravelStatusSheetVisible, setTravelStatusSheetVisible] = React.useState(false);
@@ -781,8 +967,110 @@ export default function HomeScreen() {
   const handledTabActionIdRef = React.useRef<string | null>(null);
   const isCompletingTripRef = React.useRef(false);
   const tripStartRequestInFlightRef = React.useRef(false);
+  const tripEditRequestInFlightRef = React.useRef(false);
+  const headerLocationRequestIdRef = React.useRef(0);
+  const headerLocationRequestInFlightRef = React.useRef(false);
+  const lastHeaderLocationRequestAtRef = React.useRef(0);
   const activeTripId = activeTrip.tripId ?? supabaseActiveTrip?.id;
   const { data: supabaseActiveTripDays } = useTripDays(activeTripId);
+  const { data: supabaseTripDestinations } = useTripDestinations(activeTripId);
+
+  const updateDeviceHeaderLocation = React.useCallback(async ({
+    force = false,
+  }: HeaderLocationUpdateOptions) => {
+    const now = Date.now();
+
+    if (
+      !force &&
+      now - lastHeaderLocationRequestAtRef.current < HEADER_LOCATION_REFRESH_DEBOUNCE_MS
+    ) {
+      return;
+    }
+
+    if (headerLocationRequestInFlightRef.current) {
+      return;
+    }
+
+    const requestId = headerLocationRequestIdRef.current + 1;
+    headerLocationRequestIdRef.current = requestId;
+    headerLocationRequestInFlightRef.current = true;
+    lastHeaderLocationRequestAtRef.current = now;
+
+    const applyHeaderLabel = (label: string) => {
+      if (headerLocationRequestIdRef.current === requestId) {
+        setDeviceHeaderLocationLabel(label);
+      }
+    };
+
+    try {
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+
+      if (!servicesEnabled) {
+        applyHeaderLabel('');
+        return;
+      }
+
+      const hasPermission = await ensureHeaderLocationPermission();
+
+      if (!hasPermission) {
+        applyHeaderLabel('');
+        return;
+      }
+
+      try {
+        const lastKnownPosition = await Location.getLastKnownPositionAsync({
+          maxAge: HEADER_LOCATION_LAST_KNOWN_MAX_AGE_MS,
+          requiredAccuracy: HEADER_LOCATION_LAST_KNOWN_REQUIRED_ACCURACY_METERS,
+        });
+
+        if (lastKnownPosition) {
+          const result = await getDeviceLocationHeaderLabel(lastKnownPosition.coords);
+
+          if (result.label) {
+            applyHeaderLabel(result.label);
+          }
+        }
+      } catch {
+        // Current-position lookup below is still allowed to update the header.
+      }
+
+      const currentPosition = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const result = await getDeviceLocationHeaderLabel(currentPosition.coords);
+      applyHeaderLabel(result.label);
+    } catch {
+      applyHeaderLabel('');
+    } finally {
+      if (headerLocationRequestIdRef.current === requestId) {
+        headerLocationRequestInFlightRef.current = false;
+      }
+    }
+  }, []);
+
+  React.useEffect(() => {
+    updateDeviceHeaderLocation({ force: true, reason: 'initial' });
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        updateDeviceHeaderLocation({ force: true, reason: 'foreground' });
+      }
+    });
+
+    return () => {
+      headerLocationRequestIdRef.current += 1;
+      headerLocationRequestInFlightRef.current = false;
+      subscription.remove();
+    };
+  }, [updateDeviceHeaderLocation]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      updateDeviceHeaderLocation({ force: true, reason: 'focus' });
+
+      return undefined;
+    }, [updateDeviceHeaderLocation]),
+  );
 
   React.useEffect(() => {
     if (params.photoImportPreview !== 'analyzing') {
@@ -829,6 +1117,46 @@ export default function HomeScreen() {
     setActiveTrip(createActiveTripStateFromSupabaseTrip(supabaseActiveTrip));
     setIsTraveling(true);
   }, [isTraveling, supabaseActiveTrip]);
+
+  React.useEffect(() => {
+    if (
+      !isTraveling ||
+      !activeTripId ||
+      activeTrip.tripId !== activeTripId ||
+      !supabaseTripDestinations?.length
+    ) {
+      return;
+    }
+
+    const restoredDestinations = [...supabaseTripDestinations]
+      .sort((a, b) => {
+        if (a.is_primary !== b.is_primary) {
+          return a.is_primary ? -1 : 1;
+        }
+
+        return a.sort_order - b.sort_order;
+      })
+      .map(createDestinationFromTripDestination);
+    const restoredSignature = getDestinationStateSignature(restoredDestinations);
+
+    setActiveTrip((current) => {
+      const currentSignature = getDestinationStateSignature(current.visitedDestinations);
+
+      if (
+        current.tripId !== activeTripId ||
+        (current.destination.id === restoredDestinations[0].id &&
+          currentSignature === restoredSignature)
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        destination: restoredDestinations[0],
+        visitedDestinations: restoredDestinations,
+      };
+    });
+  }, [activeTrip.tripId, activeTripId, isTraveling, supabaseTripDestinations]);
 
   React.useEffect(() => {
     if (photoImportHomeFlowStatus !== 'analyzing') {
@@ -920,28 +1248,84 @@ export default function HomeScreen() {
     closeSheetThenOpen('endTrip');
   }, [closeSheetThenOpen]);
 
-  const handleSaveDateRange = React.useCallback((range: {
+  const handleSaveDateRange = React.useCallback(async (range: {
     startDate: string;
     endDate: string;
     isEndDateUndecided?: boolean;
   }) => {
+    const isEndDateUndecided = range.isEndDateUndecided ?? false;
+    let updatedEndDate: string | null = range.endDate;
+    let updatedAt = new Date().toISOString();
+    let updatedTripDayCount = getInclusiveDayCount(range.startDate, range.endDate);
+
+    if (canUseSupabaseUserData) {
+      if (tripEditRequestInFlightRef.current) {
+        return;
+      }
+
+      if (!activeTrip.tripId) {
+        Alert.alert('여행 기간을 저장하지 못했어요.', '잠시 후 다시 시도해주세요.');
+        return;
+      }
+
+      tripEditRequestInFlightRef.current = true;
+
+      try {
+        const result = await updateDateRangeMutation.mutateAsync({
+          tripId: activeTrip.tripId,
+          startDate: range.startDate,
+          endDate: range.endDate,
+          isEndDateUndecided,
+        });
+        updatedEndDate = result.trip.end_date;
+        updatedAt = result.trip.updated_at;
+        updatedTripDayCount = result.tripDays.length;
+      } catch (error) {
+        if (error instanceof TripDateRangeHasDataError) {
+          Alert.alert(
+            '기간을 줄일 수 없어요',
+            '제외되는 날짜에 장소, 사진 또는 기록이 있어요.\n해당 데이터를 다른 날짜로 옮긴 뒤 다시 시도해주세요.',
+          );
+        } else {
+          console.warn('Failed to update the active trip date range in Supabase.', error);
+          Alert.alert('여행 기간을 저장하지 못했어요.', '잠시 후 다시 시도해주세요.');
+        }
+        return;
+      } finally {
+        tripEditRequestInFlightRef.current = false;
+      }
+    }
+
     setActiveTrip((prev) => ({
       ...prev,
       startDate: range.startDate,
-      endDate: range.endDate,
-      openEnded: range.isEndDateUndecided ?? false,
-      isEndDateUndecided: range.isEndDateUndecided ?? false,
-      updatedAt: new Date().toISOString(),
+      endDate: updatedEndDate,
+      openEnded: isEndDateUndecided,
+      isEndDateUndecided,
+      updatedAt,
     }));
+    setSelectedTripDayIndex((currentIndex) =>
+      Math.min(currentIndex, Math.max(0, updatedTripDayCount - 1)),
+    );
     setDatePickerVisible(false);
     reopenTravelStatusSheet();
-  }, [reopenTravelStatusSheet]);
+  }, [
+    activeTrip.tripId,
+    canUseSupabaseUserData,
+    reopenTravelStatusSheet,
+    updateDateRangeMutation,
+  ]);
 
-  const handleSaveDestination = React.useCallback(async (destination: DestinationOption) => {
+  const handleSaveDestination = React.useCallback(async (destinations: DestinationOption[]) => {
+    if (destinations.length === 0) {
+      return;
+    }
+
     let updatedAt = new Date().toISOString();
+    const primaryDestination = destinations[0];
 
-    if (isSelectingInitialDestination && canUseSupabaseUserData) {
-      if (tripStartRequestInFlightRef.current) {
+    if (canUseSupabaseUserData) {
+      if (tripEditRequestInFlightRef.current) {
         return;
       }
 
@@ -950,33 +1334,27 @@ export default function HomeScreen() {
         return;
       }
 
-      tripStartRequestInFlightRef.current = true;
+      tripEditRequestInFlightRef.current = true;
 
       try {
-        const updatedTrip = await updateInitialDestinationMutation.mutateAsync({
-          destinationCity: getEnglishLocationLabel(destination),
-          destinationCityKo: destination.displayName,
-          destinationCountry: getEnglishCountryLabel(destination.countryName),
-          destinationCountryKo: destination.countryName || null,
+        const updatedDestinations = await syncDestinationsMutation.mutateAsync({
+          destinations: destinations.map(createTripDestinationInput),
           tripId: activeTrip.tripId,
         });
-        updatedAt = updatedTrip.updated_at;
+        updatedAt = updatedDestinations[0]?.updated_at ?? updatedAt;
       } catch (error) {
-        console.warn('Failed to update the initial trip destination in Supabase.', error);
+        console.warn('Failed to update the active trip destination in Supabase.', error);
         Alert.alert('여행지를 저장하지 못했어요.', '잠시 후 다시 시도해주세요.');
         return;
       } finally {
-        tripStartRequestInFlightRef.current = false;
+        tripEditRequestInFlightRef.current = false;
       }
     }
 
     setActiveTrip((prev) => ({
       ...prev,
-      destination,
-      visitedDestinations: mergeVisitedDestinations(
-        prev.visitedDestinations,
-        destination.type === 'country' ? [] : [destination],
-      ),
+      destination: primaryDestination,
+      visitedDestinations: destinations,
       destinationSource: 'manual',
       latitude: undefined,
       longitude: undefined,
@@ -993,20 +1371,28 @@ export default function HomeScreen() {
     canUseSupabaseUserData,
     isSelectingInitialDestination,
     reopenTravelStatusSheet,
-    updateInitialDestinationMutation,
+    syncDestinationsMutation,
   ]);
 
   const tripDayCount = Math.max(
     activeTrip.dayNumber,
     getInclusiveDayCount(activeTrip.startDate, activeTrip.endDate),
   );
-  const tripDays = React.useMemo(
+  const localTripDays = React.useMemo(
     () =>
       Array.from({ length: tripDayCount }, (_, index) => ({
         dayNumber: index + 1,
         dateKey: addDaysToDateKey(activeTrip.startDate, index),
       })),
     [activeTrip.startDate, tripDayCount],
+  );
+  const tripDays = React.useMemo(
+    () => canUseSupabaseUserData && supabaseActiveTripDays?.length
+      ? [...supabaseActiveTripDays]
+          .sort((a, b) => a.day_index - b.day_index)
+          .map((day) => ({ dayNumber: day.day_index, dateKey: day.date }))
+      : localTripDays,
+    [canUseSupabaseUserData, localTripDays, supabaseActiveTripDays],
   );
   const selectedTripDay = tripDays[selectedTripDayIndex] ?? tripDays[0];
   const selectedDateKey = selectedTripDay?.dateKey ?? activeTrip.startDate;
@@ -1278,11 +1664,19 @@ export default function HomeScreen() {
   }, [router]);
 
   const handleCancelDatePicker = React.useCallback(() => {
+    if (tripEditRequestInFlightRef.current) {
+      return;
+    }
+
     setDatePickerVisible(false);
     reopenTravelStatusSheet();
   }, [reopenTravelStatusSheet]);
 
   const handleCancelDestinationSearch = React.useCallback(() => {
+    if (tripEditRequestInFlightRef.current) {
+      return;
+    }
+
     setDestinationSearchVisible(false);
     setSelectingInitialDestination(false);
 
@@ -1354,6 +1748,7 @@ export default function HomeScreen() {
     const destinationCountry = getEnglishCountryLabel(params.destination.countryName);
     const createdTrip = canUseSupabaseUserData
       ? await createTripMutation.mutateAsync({
+          destinations: [createTripDestinationInput(params.destination)],
           destinationCity,
           destinationCityKo: params.destination.displayName,
           destinationCountry: destinationCountry || null,
@@ -1370,10 +1765,7 @@ export default function HomeScreen() {
       ...prev,
       tripId: createdTrip?.id,
       destination: params.destination,
-      visitedDestinations: mergeVisitedDestinations(
-        [],
-        params.destination.type === 'country' ? [] : [params.destination],
-      ),
+      visitedDestinations: [params.destination],
       destinationSource: params.destinationSource,
       latitude: params.latitude,
       longitude: params.longitude,
@@ -1414,6 +1806,9 @@ export default function HomeScreen() {
       const destinationCountry = getEnglishCountryLabel(primaryDestination.countryName);
       const createdTrip = canUseSupabaseUserData
         ? await createTripMutation.mutateAsync({
+            destinations: setupDestinations.length
+              ? setupDestinations.map(createTripDestinationInput)
+              : [createTripDestinationInput(primaryDestination)],
             destinationCity,
             destinationCityKo: primaryDestination.displayName,
             destinationCountry: destinationCountry || null,
@@ -1431,10 +1826,9 @@ export default function HomeScreen() {
         ...prev,
         tripId: createdTrip?.id,
         destination: primaryDestination,
-        visitedDestinations: mergeVisitedDestinations(
-          [],
-          setupDestinations.filter((destination) => destination.type !== 'country'),
-        ),
+        visitedDestinations: setupDestinations.length
+          ? setupDestinations
+          : [primaryDestination],
         startDate: setup.startDate,
         endDate: setup.endDate,
         openEnded: setup.isEndDateUndecided ?? false,
@@ -1542,7 +1936,7 @@ export default function HomeScreen() {
     activeTrip.endDate,
     activeTrip.isEndDateUndecided,
   );
-  const headerLocationLabel = getEnglishLocationLabel(activeTrip.destination);
+  const renderedHeaderLocationLabel = deviceHeaderLocationLabel.trim() || 'Set location';
   const homeHeaderTop = getHomeHeaderTop(insets.top);
   const photoImportResultCount = photoImportCandidates.length;
   const idleRecentTrips = React.useMemo(
@@ -1592,6 +1986,7 @@ export default function HomeScreen() {
         <HomeIdleState
           onPressStartTrip={handlePressStartTripFromIdle}
           headerTop={homeHeaderTop}
+          headerLocationLabel={renderedHeaderLocationLabel}
           isFirstUserEmptyState={isFirstUserEmptyState}
           showPhotoImportResultsCard={shouldShowPhotoImportResultsCard}
           showPhotoTripDetectionProgressCard={shouldShowPhotoTripDetectionProgressCard}
@@ -1666,7 +2061,7 @@ export default function HomeScreen() {
                   numberOfLines={1}
                   ellipsizeMode="tail"
                 >
-                  {headerLocationLabel}
+                  {renderedHeaderLocationLabel}
                 </Text>
               </View>
 
@@ -1883,7 +2278,7 @@ export default function HomeScreen() {
         visible={isTravelStatusSheetVisible}
         onClose={handleCloseTravelStatusSheet}
         onDismiss={handleTravelStatusSheetDismiss}
-        title={`${activeTrip.destination.displayName} 여행`}
+        title={formatActiveTripTitle(activeTrip.visitedDestinations)}
         dateLabel={sheetDateLabel}
         weekdayLabel={WEEKDAY_LABELS[parseDateKey(activeTrip.startDate).getDay()]}
         dayLabel={`Day ${activeTrip.dayNumber}`}
@@ -1900,13 +2295,15 @@ export default function HomeScreen() {
         startDate={activeTrip.startDate}
         endDate={activeTrip.endDate ?? activeTrip.startDate}
         isEndDateUndecided={activeTrip.isEndDateUndecided}
+        isSaving={updateDateRangeMutation.isPending}
         onCancel={handleCancelDatePicker}
         onSave={handleSaveDateRange}
       />
 
       <DestinationSearchModal
         visible={isDestinationSearchVisible}
-        currentDestination={activeTrip.destination}
+        currentDestinations={isSelectingInitialDestination ? [] : activeTrip.visitedDestinations}
+        isSaving={syncDestinationsMutation.isPending}
         onCancel={handleCancelDestinationSearch}
         onSave={handleSaveDestination}
       />

@@ -1,6 +1,10 @@
 import { supabase } from '@/lib/supabase';
 import type { Tables, TablesInsert, TablesUpdate } from '@/types/supabase';
 import { createTripDaysForRange } from '@/services/supabase/tripDays';
+import {
+  syncActiveTripDestinations,
+  type TripDestinationInput,
+} from '@/services/supabase/tripDestinations';
 
 export type TripRow = Tables<'trips'>;
 export type SoftDeletedTrip = Pick<TripRow, 'deleted_at' | 'id' | 'updated_at'>;
@@ -15,6 +19,7 @@ export class ActiveTripExistsError extends Error {
 type CreateTripStatus = Extract<TripRow['status'], 'active' | 'draft' | 'detected'>;
 
 export type CreateTripWithDaysInput = {
+  destinations?: TripDestinationInput[];
   destinationCity?: string | null;
   destinationCityKo?: string | null;
   destinationCountry?: string | null;
@@ -42,6 +47,10 @@ function throwIfError(error: Error | null) {
 
 function normalizeText(value?: string | null) {
   return value?.trim() ?? '';
+}
+
+function createLegacyDestinationKey(name: string, country: string) {
+  return `legacy:${name.toLowerCase()}|${country.toLowerCase()}`;
 }
 
 export function listTripsByUser(userId: string) {
@@ -232,13 +241,31 @@ export async function createTripWithDays(input: CreateTripWithDaysInput): Promis
 
   try {
     await createTripDaysForRange(trip.id, input.startDate, input.endDate);
-  } catch (tripDaysError) {
+
+    if (status === 'active') {
+      const destinations = input.destinations?.length
+        ? input.destinations
+        : [{
+            destinationKey: createLegacyDestinationKey(destinationCity, destinationCountry ?? ''),
+            name: destinationCity,
+            nameKo: destinationCityKo,
+            country: destinationCountry,
+            countryKo: destinationCountryKo,
+            destinationType: 'city' as const,
+          }];
+
+      await syncActiveTripDestinations({
+        tripId: trip.id,
+        destinations,
+      });
+    }
+  } catch (creationError) {
     try {
       await softDeleteTrip(trip.id);
     } catch {
-      // Keep the original trip day creation error as the actionable failure.
+      // Keep the original dependent-row creation error as the actionable failure.
     }
-    throw tripDaysError;
+    throw creationError;
   }
 
   return trip;

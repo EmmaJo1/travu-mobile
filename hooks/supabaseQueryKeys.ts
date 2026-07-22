@@ -12,6 +12,8 @@ export const supabaseQueryKeys = {
     ['supabase', 'places', 'detail', userId ?? 'no-user', placeId ?? 'no-place'] as const,
   tripDays: (userId?: string | null, tripId?: string | null) =>
     ['supabase', 'trip-days', userId ?? 'no-user', tripId ?? 'no-trip'] as const,
+  tripDestinations: (userId?: string | null, tripId?: string | null) =>
+    ['supabase', 'trip-destinations', userId ?? 'no-user', tripId ?? 'no-trip'] as const,
   tripDayPlaces: (userId?: string | null, tripDayId?: string | null) =>
     ['supabase', 'places', 'trip-day', userId ?? 'no-user', tripDayId ?? 'no-trip-day'] as const,
   tripDayRecords: (userId?: string | null, tripDayId?: string | null) =>

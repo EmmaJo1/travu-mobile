@@ -25,6 +25,7 @@ interface TripDatePickerModalProps {
   startDate: string;
   endDate: string;
   isEndDateUndecided?: boolean;
+  isSaving?: boolean;
   onCancel: () => void;
   onSave: (range: TripDateRangeValue) => void;
 }
@@ -96,6 +97,7 @@ export default function TripDatePickerModal({
   startDate,
   endDate,
   isEndDateUndecided = false,
+  isSaving = false,
   onCancel,
   onSave,
 }: TripDatePickerModalProps) {
@@ -281,12 +283,17 @@ export default function TripDatePickerModal({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <Pressable style={styles.overlay} onPress={onCancel}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={isSaving ? undefined : onCancel}
+    >
+      <Pressable style={styles.overlay} onPress={isSaving ? undefined : onCancel}>
         <Pressable style={styles.modal} onPress={(event) => event.stopPropagation()}>
           <View style={styles.header}>
             <Text style={styles.title}>여행 기간 수정</Text>
-            <Pressable hitSlop={12} onPress={onCancel}>
+            <Pressable disabled={isSaving} hitSlop={12} onPress={onCancel}>
               <Text style={styles.closeText}>×</Text>
             </Pressable>
           </View>
@@ -506,12 +513,14 @@ export default function TripDatePickerModal({
           ) : null}
 
           <View style={styles.actionRow}>
-            <Pressable style={styles.cancelButton} onPress={onCancel}>
+            <Pressable disabled={isSaving} style={styles.cancelButton} onPress={onCancel}>
               <Text style={styles.cancelLabel}>취소</Text>
             </Pressable>
             <AuthActionButton
               label="저장"
               state={canSave ? 'on' : 'off'}
+              disabled={!canSave}
+              loading={isSaving}
               onPress={handleSave}
               style={styles.saveButton}
             />

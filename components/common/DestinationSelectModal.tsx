@@ -30,6 +30,7 @@ type DestinationSelectModalProps = {
   initialCategoryId?: string;
   selectedDestination?: DestinationOption | null;
   selectedDestinations?: DestinationOption[];
+  isConfirming?: boolean;
   onSelectDestination: (destination: DestinationOption) => void;
   onConfirmDestinations?: (destinations: DestinationOption[]) => void;
   onClose: () => void;
@@ -294,6 +295,7 @@ export default function DestinationSelectModal({
   initialCategoryId = 'popular',
   selectedDestination,
   selectedDestinations,
+  isConfirming = false,
   onSelectDestination,
   onConfirmDestinations,
   onClose,
@@ -531,7 +533,8 @@ export default function DestinationSelectModal({
               )}
 
               <AuthActionButton
-                disabled={selectedCount === 0}
+                disabled={selectedCount === 0 || isConfirming}
+                loading={isConfirming}
                 label={selectedCount > 0 ? `완료 (${selectedCount})` : '완료'}
                 onPress={handleConfirm}
                 state={selectedCount > 0 ? 'on' : 'off'}
