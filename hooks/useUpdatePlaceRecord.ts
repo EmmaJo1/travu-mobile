@@ -75,6 +75,10 @@ export function useUpdatePlaceRecord() {
         ? await updateRecord(input.recordId, {
           text: recordText,
           visited_at: visitedAt,
+        }, {
+          placeId: input.placeId,
+          tripDayId: input.tripDayId,
+          tripId: input.tripId,
         })
         : shouldCreateRecord
           ? await createRecordForPlace({

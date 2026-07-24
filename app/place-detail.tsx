@@ -9,8 +9,11 @@ import {
   Animated,
   Easing,
   Image,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
   PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -58,7 +61,12 @@ import { useTripDays } from '@/hooks/useTripDays';
 import { useAuth } from '@/providers/AuthProvider';
 import { updatePlace, type PlaceRow, type UpdatePlacePatch } from '@/services/supabase/places';
 import type { TripDayRow } from '@/services/supabase/tripDays';
-import { createRecordForPlace, type RecordRow } from '@/services/supabase/records';
+import {
+  createRecordForPlace,
+  softDeleteRecord,
+  updateRecord,
+  type RecordRow,
+} from '@/services/supabase/records';
 
 type PlaceDetailRouteParams = {
   tripId?: string;
@@ -873,8 +881,10 @@ export default function PlaceDetailScreen() {
   const [selectedRecordPhotoIds, setSelectedRecordPhotoIds] = React.useState<string[]>([]);
   const [recordDraft, setRecordDraft] = React.useState('');
   const [recordTimeLabel, setRecordTimeLabel] = React.useState(initialDetail?.timeLabel ?? '');
+  const [editingRecordId, setEditingRecordId] = React.useState<string | null>(null);
   const [hasRecordTimeBeenEdited, setRecordTimeEdited] = React.useState(false);
   const [isRecordSaving, setRecordSaving] = React.useState(false);
+  const [isRecordDeleting, setRecordDeleting] = React.useState(false);
   const [isDeleteConfirmOpen, setDeleteConfirmOpen] = React.useState(false);
   const [isPhotoDeleteConfirmOpen, setPhotoDeleteConfirmOpen] = React.useState(false);
   const [pendingDeleteRecordId, setPendingDeleteRecordId] = React.useState<string | null>(null);
@@ -883,6 +893,7 @@ export default function PlaceDetailScreen() {
   const [pendingDeletePhotoIds, setPendingDeletePhotoIds] = React.useState<string[]>([]);
   const [gridSelectionResetSignal, setGridSelectionResetSignal] = React.useState(0);
   const isRecordSavingRef = React.useRef(false);
+  const isRecordDeletingRef = React.useRef(false);
   const recordPhotoPickerOpenTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordSheetRestoreTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const supabaseTripIdForPlace = shouldUseSupabasePlaceDetail && isSupabaseUuid(initialDetail?.tripId)
@@ -912,6 +923,7 @@ export default function PlaceDetailScreen() {
   }, [detailSyncKey]);
 
   const prepareRecordComposer = React.useCallback((photoIds: string[]) => {
+    setEditingRecordId(null);
     setSelectedRecordPhotoIds(photoIds);
     setRecordDraft('');
     const earliestPhotoDate = getEarliestRecordPhotoTakenDate(photoIds, photos);
@@ -922,6 +934,23 @@ export default function PlaceDetailScreen() {
     );
     setRecordTimeEdited(false);
   }, [photos]);
+
+  const openRecordEditor = React.useCallback((recordId: string) => {
+    const record = records.find((item) => item.id === recordId);
+
+    if (!record) {
+      return;
+    }
+
+    setOpenSwipeRecordId(null);
+    setEditingRecordId(record.id);
+    setSelectedRecordPhotoIds(record.photoIds ?? []);
+    setRecordDraft(record.text ?? '');
+    setRecordTimeLabel(record.time ?? '');
+    setRecordTimeEdited(false);
+    setRecordModalMode('sheet');
+    setRecordModalOpen(true);
+  }, [records]);
 
   const openRecordComposer = React.useCallback((
     photoIds: string[],
@@ -1048,11 +1077,76 @@ export default function PlaceDetailScreen() {
   }, []);
 
   const cancelDeleteRecord = React.useCallback(() => {
+    if (isRecordDeletingRef.current) {
+      return;
+    }
+
     setPendingDeleteRecordId(null);
   }, []);
 
-  const confirmDeleteRecord = React.useCallback(() => {
-    if (!pendingDeleteRecordId) {
+  const confirmDeleteRecord = React.useCallback(async () => {
+    if (
+      !pendingDeleteRecordId ||
+      isRecordDeletingRef.current ||
+      isRecordDeleting
+    ) {
+      return;
+    }
+
+    if (shouldUseSupabasePlaceDetail) {
+      const tripDayId = initialDetail?.dayId || routeDayId || '';
+      const tripId = initialDetail?.tripId || routeTripId || '';
+      const placeId = initialDetail?.placeId || routePlaceId || '';
+
+      if (!tripDayId || !tripId || !placeId) {
+        Alert.alert(
+          '\uAE30\uB85D\uC744 \uC0AD\uC81C\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC5EC\uD589 \uB0A0\uC9DC\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC5B4\uC694. \uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+        );
+        return;
+      }
+
+      isRecordDeletingRef.current = true;
+      setRecordDeleting(true);
+
+      try {
+        await softDeleteRecord(pendingDeleteRecordId, {
+          placeId,
+          tripDayId,
+          tripId,
+        });
+        setRecords((currentRecords) =>
+          currentRecords.filter((record) => record.id !== pendingDeleteRecordId),
+        );
+        setPendingDeleteRecordId(null);
+
+        void Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.placeDetail(user?.id, placeId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, tripDayId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDayRecords(user?.id, tripDayId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDays(user?.id, tripId),
+          }),
+        ]).catch((error: unknown) => {
+          console.warn('[place-detail] invalidate after record delete failed', error);
+        });
+      } catch (error) {
+        console.warn('[place-detail] delete record failed', error);
+        Alert.alert(
+          '\uAE30\uB85D\uC744 \uC0AD\uC81C\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+        );
+      } finally {
+        isRecordDeletingRef.current = false;
+        setRecordDeleting(false);
+      }
+
       return;
     }
 
@@ -1060,7 +1154,19 @@ export default function PlaceDetailScreen() {
       currentRecords.filter((record) => record.id !== pendingDeleteRecordId),
     );
     setPendingDeleteRecordId(null);
-  }, [pendingDeleteRecordId]);
+  }, [
+    initialDetail?.dayId,
+    initialDetail?.placeId,
+    initialDetail?.tripId,
+    isRecordDeleting,
+    pendingDeleteRecordId,
+    queryClient,
+    routeDayId,
+    routePlaceId,
+    routeTripId,
+    shouldUseSupabasePlaceDetail,
+    user?.id,
+  ]);
 
   const handleConfirmDeletePlace = React.useCallback(async () => {
     if (!initialDetail) {
@@ -1242,6 +1348,17 @@ export default function PlaceDetailScreen() {
     if (!trimmedText) {
       return;
     }
+    const editingRecord = editingRecordId
+      ? records.find((record) => record.id === editingRecordId)
+      : undefined;
+
+    if (editingRecordId && !editingRecord) {
+      Alert.alert(
+        '\uAE30\uB85D\uC744 \uC218\uC815\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+        '\uC218\uC815\uD560 \uAE30\uB85D\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC5B4\uC694. \uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+      );
+      return;
+    }
 
     if (shouldUseSupabasePlaceDetail) {
       const tripDayId = initialDetail.dayId || routeDayId || '';
@@ -1270,32 +1387,59 @@ export default function PlaceDetailScreen() {
           },
           placeInfo.dateLabel,
         ) ?? null;
-        const record = await createRecordForPlace({
-          placeId: initialDetail.placeId,
-          text: trimmedText,
-          tripDayId,
-          tripId,
-          visitedAt,
-        });
+        if (editingRecordId) {
+          const updatedRecord = await updateRecord(
+            editingRecordId,
+            {
+              text: trimmedText,
+              visited_at: visitedAt,
+            },
+            {
+              placeId: initialDetail.placeId,
+              tripDayId,
+              tripId,
+            },
+          );
 
-        setRecords((currentRecords) => [
-          ...currentRecords,
-          {
-            id: record.id,
-            tripId: record.trip_id,
-            dayId: record.trip_day_id ?? tripDayId,
-            placeId: record.place_id,
-            time: formatSupabaseVisitedTime(record.visited_at) || recordTimeLabel,
-            text: record.text ?? trimmedText,
-            photoIds: selectedRecordPhotoIds,
-            createdAt: record.created_at,
-            updatedAt: record.updated_at,
-          },
-        ]);
+          setRecords((currentRecords) => currentRecords.map((record) => (
+            record.id === updatedRecord.id
+              ? {
+                ...record,
+                time: formatSupabaseVisitedTime(updatedRecord.visited_at) || recordTimeLabel,
+                text: updatedRecord.text ?? trimmedText,
+                updatedAt: updatedRecord.updated_at,
+              }
+              : record
+          )));
+        } else {
+          const record = await createRecordForPlace({
+            placeId: initialDetail.placeId,
+            text: trimmedText,
+            tripDayId,
+            tripId,
+            visitedAt,
+          });
+
+          setRecords((currentRecords) => [
+            ...currentRecords,
+            {
+              id: record.id,
+              tripId: record.trip_id,
+              dayId: record.trip_day_id ?? tripDayId,
+              placeId: record.place_id,
+              time: formatSupabaseVisitedTime(record.visited_at) || recordTimeLabel,
+              text: record.text ?? trimmedText,
+              photoIds: selectedRecordPhotoIds,
+              createdAt: record.created_at,
+              updatedAt: record.updated_at,
+            },
+          ]);
+        }
         setRecordDraft('');
         setSelectedRecordPhotoIds([]);
         setRecordTimeLabel(createCurrentTimeLabel());
         setRecordTimeEdited(false);
+        setEditingRecordId(null);
         setRecordModalOpen(false);
         void refetchPlaceDetailData();
 
@@ -1313,12 +1457,14 @@ export default function PlaceDetailScreen() {
             queryKey: supabaseQueryKeys.tripDays(user?.id, tripId),
           }),
         ]).catch((error: unknown) => {
-          console.warn('[place-detail] invalidate after record create failed', error);
+          console.warn('[place-detail] invalidate after record save failed', error);
         });
       } catch (error) {
-        console.warn('[place-detail] create record failed', error);
+        console.warn('[place-detail] save record failed', error);
         Alert.alert(
-          '\uAE30\uB85D\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          editingRecordId
+            ? '\uAE30\uB85D\uC744 \uC218\uC815\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694'
+            : '\uAE30\uB85D\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
           '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
         );
       } finally {
@@ -1329,28 +1475,43 @@ export default function PlaceDetailScreen() {
       return;
     }
 
-    setRecords((currentRecords) => [
-      ...currentRecords,
-      {
-        id: `record-${Date.now()}`,
-        tripId: initialDetail.tripId,
-        dayId: initialDetail.dayId,
-        placeId: initialDetail.placeId,
-        time: recordTimeLabel,
-        text: trimmedText,
-        photoIds: selectedRecordPhotoIds,
-        createdAt: new Date().toISOString(),
-      },
-    ]);
+    if (editingRecordId) {
+      setRecords((currentRecords) => currentRecords.map((record) => (
+        record.id === editingRecordId
+          ? {
+            ...record,
+            time: recordTimeLabel,
+            text: trimmedText,
+            updatedAt: new Date().toISOString(),
+          }
+          : record
+      )));
+    } else {
+      setRecords((currentRecords) => [
+        ...currentRecords,
+        {
+          id: `record-${Date.now()}`,
+          tripId: initialDetail.tripId,
+          dayId: initialDetail.dayId,
+          placeId: initialDetail.placeId,
+          time: recordTimeLabel,
+          text: trimmedText,
+          photoIds: selectedRecordPhotoIds,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    }
     setRecordDraft('');
     setSelectedRecordPhotoIds([]);
     setRecordTimeLabel(createCurrentTimeLabel());
     setRecordTimeEdited(false);
+    setEditingRecordId(null);
     setRecordModalOpen(false);
   };
 
   const handleCloseRecordModal = () => {
     setRecordModalOpen(false);
+    setEditingRecordId(null);
   };
 
   const handlePressAddRecord = () => {
@@ -1800,6 +1961,7 @@ export default function PlaceDetailScreen() {
                   isSwipeOpen={openSwipeRecordId === record.id}
                   onCloseSwipe={handleCloseSwipeRecord}
                   onOpenSwipe={setOpenSwipeRecordId}
+                  onPressEdit={openRecordEditor}
                   onRequestDelete={requestDeleteRecord}
                   onSwipeEnd={() => setRecordSwipeActive(false)}
                   onSwipeStart={() => setRecordSwipeActive(true)}
@@ -2025,6 +2187,7 @@ export default function PlaceDetailScreen() {
       />
 
       <RecordCreateModal
+        allowPhotoChanges={editingRecordId == null}
         draft={recordDraft}
         mode={recordModalMode}
         onChangeDraft={setRecordDraft}
@@ -2035,6 +2198,7 @@ export default function PlaceDetailScreen() {
         onSave={handleSaveRecord}
         isSaving={isRecordSaving}
         photos={selectedRecordPhotos}
+        title={editingRecordId ? '\uAE30\uB85D \uC218\uC815' : '\uAE30\uB85D \uCD94\uAC00'}
         timeLabel={recordTimeLabel}
         visible={isRecordModalOpen}
       />
@@ -2056,6 +2220,7 @@ export default function PlaceDetailScreen() {
       />
 
       <ConfirmRecordDeleteModal
+        isDeleting={isRecordDeleting}
         onCancel={cancelDeleteRecord}
         onDelete={confirmDeleteRecord}
         visible={pendingDeleteRecordId != null}
@@ -2087,6 +2252,7 @@ interface SwipeableRecordItemProps {
   isSwipeOpen: boolean;
   onCloseSwipe: () => void;
   onOpenSwipe: (recordId: string) => void;
+  onPressEdit: (recordId: string) => void;
   onRequestDelete: (recordId: string) => void;
   onSwipeEnd: () => void;
   onSwipeStart: () => void;
@@ -2101,6 +2267,7 @@ const SwipeableRecordItem = React.memo(function SwipeableRecordItem({
   isSwipeOpen,
   onCloseSwipe,
   onOpenSwipe,
+  onPressEdit,
   onRequestDelete,
   onSwipeEnd,
   onSwipeStart,
@@ -2274,8 +2441,11 @@ const SwipeableRecordItem = React.memo(function SwipeableRecordItem({
         ]}
       >
         <Pressable
+          accessibilityLabel={'\uAE30\uB85D \uC218\uC815'}
+          accessibilityRole="button"
           delayLongPress={320}
           onLongPress={handleDeletePress}
+          onPress={() => onPressEdit(recordId)}
           style={styles.recordItemPressable}
         >
           <View style={styles.recordTimeColumn}>
@@ -2581,6 +2751,8 @@ interface RecordCreateModalProps {
   timeLabel?: string;
   presentation?: 'modal' | 'inline';
   allowPhotoPicker?: boolean;
+  allowPhotoChanges?: boolean;
+  title?: string;
   onChangeDraft: (value: string) => void;
   onChangeTime: (value: string) => void;
   onClose: () => void;
@@ -2598,6 +2770,8 @@ function RecordCreateModal({
   timeLabel,
   presentation = 'modal',
   allowPhotoPicker = true,
+  allowPhotoChanges = true,
+  title = '\uAE30\uB85D \uCD94\uAC00',
   onChangeDraft,
   onChangeTime,
   onClose,
@@ -2607,14 +2781,58 @@ function RecordCreateModal({
   isSaving = false,
 }: RecordCreateModalProps) {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const [isTimePickerOpen, setTimePickerOpen] = React.useState(false);
   const [isSheetPresented, setSheetPresented] = React.useState(visible);
+  const [isKeyboardVisible, setKeyboardVisible] = React.useState(false);
+  const [keyboardTopY, setKeyboardTopY] = React.useState(windowHeight);
   const dimOpacity = React.useRef(new Animated.Value(0)).current;
   const sheetTranslateY = React.useRef(new Animated.Value(320)).current;
+  const formScrollRef = React.useRef<ScrollView>(null);
+  const recordInputOffsetYRef = React.useRef(0);
   const isScreenMode = mode === 'screen';
   const isInlinePresentation = presentation === 'inline';
   const saveDisabled = isSaving || !draft.trim();
   const showMemoPlaceholder = draft.length === 0;
+  const keyboardBottomOffset = isKeyboardVisible
+    ? Math.max(windowHeight - keyboardTopY, 0)
+    : 0;
+  const keyboardSheetTopClearance = insets.top + Spacing['3xl'];
+  const keyboardSheetMaxHeight = Math.max(
+    windowHeight - keyboardBottomOffset - keyboardSheetTopClearance,
+    0,
+  );
+
+  const scrollRecordInputIntoView = React.useCallback(() => {
+    requestAnimationFrame(() => {
+      formScrollRef.current?.scrollTo({
+        animated: true,
+        y: Math.max(recordInputOffsetYRef.current - Spacing.lg, 0),
+      });
+    });
+  }, []);
+
+  React.useEffect(() => {
+    const keyboardShowEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const keyboardHideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSubscription = Keyboard.addListener(keyboardShowEvent, (event) => {
+      Keyboard.scheduleLayoutAnimation(event);
+      setKeyboardTopY(event.endCoordinates.screenY);
+      setKeyboardVisible(true);
+      scrollRecordInputIntoView();
+    });
+    const hideSubscription = Keyboard.addListener(keyboardHideEvent, (event) => {
+      Keyboard.scheduleLayoutAnimation(event);
+      setKeyboardVisible(false);
+      setKeyboardTopY(windowHeight);
+      formScrollRef.current?.scrollTo({ animated: true, y: 0 });
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [scrollRecordInputIntoView, windowHeight]);
 
   React.useEffect(() => {
     if (isScreenMode) {
@@ -2664,95 +2882,133 @@ function RecordCreateModal({
     return undefined;
   }, [dimOpacity, isScreenMode, sheetTranslateY, visible]);
 
+  const handleSavePress = React.useCallback(() => {
+    Keyboard.dismiss();
+    void onSave();
+  }, [onSave]);
+  const handleBackdropPress = React.useCallback(() => {
+    if (isKeyboardVisible) {
+      Keyboard.dismiss();
+      return;
+    }
+
+    onClose();
+  }, [isKeyboardVisible, onClose]);
+
   const content = (
     <View style={isScreenMode ? styles.recordScreenContent : styles.recordSheetContent}>
-      <View style={styles.recordModalHeader}>
-        {isScreenMode ? (
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={onClose} style={styles.recordCloseButton}>
-            <Feather name="chevron-left" size={28} color={Colors.foundation.black} />
-          </Pressable>
-        ) : (
+      <ScrollView
+        contentContainerStyle={
+          isScreenMode
+            ? styles.recordScreenScrollContent
+            : styles.recordSheetScrollContent
+        }
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        keyboardShouldPersistTaps="handled"
+        ref={formScrollRef}
+        showsVerticalScrollIndicator={false}
+        style={isScreenMode ? styles.recordScreenScroll : styles.recordSheetScroll}
+      >
+        <View style={styles.recordModalHeader}>
+          {isScreenMode ? (
+            <Pressable accessibilityRole="button" hitSlop={10} onPress={onClose} style={styles.recordCloseButton}>
+              <Feather name="chevron-left" size={28} color={Colors.foundation.black} />
+            </Pressable>
+          ) : (
+            <View style={styles.recordCloseButton} />
+          )}
+          <Text style={styles.recordModalTitle}>{title}</Text>
           <View style={styles.recordCloseButton} />
-        )}
-        <Text style={styles.recordModalTitle}>{'\uAE30\uB85D \uCD94\uAC00'}</Text>
-        <View style={styles.recordCloseButton} />
-      </View>
-
-      <View style={styles.selectedPhotosBlock}>
-        <View style={styles.selectedPhotosHeader}>
-          <Text style={styles.selectedPhotosLabel}>{'\uC0AC\uC9C4 \uC5F0\uACB0'}</Text>
-          <Text style={styles.selectedPhotosOptional}>{'\uC120\uD0DD \uC0AC\uD56D'}</Text>
         </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.selectedPhotoRow}>
-            {allowPhotoPicker ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={onOpenPhotoPicker}
-                style={[styles.selectedPhotoThumb, styles.linkPhotoButton]}
-              >
-                <Feather name="plus" size={20} color={Colors.foundation.grey600} />
-                <Text style={styles.linkPhotoButtonText}>{'\uC0AC\uC9C4 \uCD94\uAC00'}</Text>
-              </Pressable>
-            ) : null}
-            {photos.map((photo) => (
-              <View key={photo.id} style={styles.linkedPhotoThumbWrap}>
-                <Image resizeMode="cover" source={photo.source} style={styles.selectedPhotoThumb} />
+
+        <View style={styles.selectedPhotosBlock}>
+          <View style={styles.selectedPhotosHeader}>
+            <Text style={styles.selectedPhotosLabel}>{'\uC0AC\uC9C4 \uC5F0\uACB0'}</Text>
+            <Text style={styles.selectedPhotosOptional}>{'\uC120\uD0DD \uC0AC\uD56D'}</Text>
+          </View>
+          <ScrollView
+            horizontal
+            keyboardShouldPersistTaps="handled"
+            showsHorizontalScrollIndicator={false}
+          >
+            <View style={styles.selectedPhotoRow}>
+              {allowPhotoPicker && allowPhotoChanges ? (
                 <Pressable
                   accessibilityRole="button"
-                  hitSlop={8}
-                  onPress={() => onRemovePhoto(photo.id)}
-                  style={styles.unlinkPhotoButton}
+                  onPress={onOpenPhotoPicker}
+                  style={[styles.selectedPhotoThumb, styles.linkPhotoButton]}
                 >
-                  <Feather name="x" size={12} color={Colors.foundation.white} />
+                  <Feather name="plus" size={20} color={Colors.foundation.grey600} />
+                  <Text style={styles.linkPhotoButtonText}>{'\uC0AC\uC9C4 \uCD94\uAC00'}</Text>
                 </Pressable>
-              </View>
-            ))}
+              ) : null}
+              {photos.map((photo) => (
+                <View key={photo.id} style={styles.linkedPhotoThumbWrap}>
+                  <Image resizeMode="cover" source={photo.source} style={styles.selectedPhotoThumb} />
+                  {allowPhotoChanges ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      hitSlop={8}
+                      onPress={() => onRemovePhoto(photo.id)}
+                      style={styles.unlinkPhotoButton}
+                    >
+                      <Feather name="x" size={12} color={Colors.foundation.white} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          </ScrollView>
+        </View>
+
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setTimePickerOpen(true)}
+          style={styles.timeRow}
+        >
+          <Text style={styles.timeLabel}>{'\uBC29\uBB38 \uC2DC\uAC04'}</Text>
+          <View style={styles.timeValueRow}>
+            <Text style={styles.timeValue}>{timeLabel ?? '\uC2DC\uAC04 \uBBF8\uC815'}</Text>
+            <Feather name="chevron-right" size={18} color={Colors.foundation.grey500} />
           </View>
-        </ScrollView>
-      </View>
+        </Pressable>
 
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => setTimePickerOpen(true)}
-        style={styles.timeRow}
-      >
-        <Text style={styles.timeLabel}>{'\uBC29\uBB38 \uC2DC\uAC04'}</Text>
-        <View style={styles.timeValueRow}>
-          <Text style={styles.timeValue}>{timeLabel ?? '\uC2DC\uAC04 \uBBF8\uC815'}</Text>
-          <Feather name="chevron-right" size={18} color={Colors.foundation.grey500} />
+        <View
+          onLayout={(event) => {
+            recordInputOffsetYRef.current = event.nativeEvent.layout.y;
+          }}
+          style={styles.memoBlock}
+        >
+          <Text style={styles.memoLabel}>{'\uAE30\uB85D'}</Text>
+          <View style={styles.recordInputFrame}>
+            <AppTextInput
+              multiline
+              maxLength={1000}
+              onChangeText={onChangeDraft}
+              onFocus={scrollRecordInputIntoView}
+              placeholder=""
+              placeholderTextColor={Colors.foundation.grey500}
+              style={styles.recordInput}
+              value={draft}
+            />
+            {showMemoPlaceholder ? (
+              <Text pointerEvents="none" style={styles.recordInputPlaceholder}>
+                {'\uC774 \uC7A5\uC18C\uC5D0\uC11C \uC5B4\uB5A4 \uC21C\uAC04\uC744 \uAE30\uC5B5\uD558\uB098\uC694?'}
+              </Text>
+            ) : null}
+          </View>
+          <Text style={styles.memoCount}>{draft.length}/1000</Text>
         </View>
-      </Pressable>
 
-      <View style={styles.memoBlock}>
-        <Text style={styles.memoLabel}>{'\uAE30\uB85D'}</Text>
-        <View style={styles.recordInputFrame}>
-          <AppTextInput
-            multiline
-            maxLength={1000}
-            onChangeText={onChangeDraft}
-            placeholder=""
-            placeholderTextColor={Colors.foundation.grey500}
-            style={styles.recordInput}
-            value={draft}
-          />
-          {showMemoPlaceholder ? (
-            <Text pointerEvents="none" style={styles.recordInputPlaceholder}>
-              {'\uC774 \uC7A5\uC18C\uC5D0\uC11C \uC5B4\uB5A4 \uC21C\uAC04\uC744 \uAE30\uC5B5\uD558\uB098\uC694?'}
-            </Text>
-          ) : null}
-        </View>
-        <Text style={styles.memoCount}>{draft.length}/1000</Text>
-      </View>
-
-      <Pressable
-        accessibilityRole="button"
-        disabled={saveDisabled}
-        onPress={onSave}
-        style={[styles.saveButton, saveDisabled && styles.saveButtonDisabled]}
-      >
-        <Text style={styles.saveButtonText}>{'\uC800\uC7A5\uD558\uAE30'}</Text>
-      </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={saveDisabled}
+          onPress={handleSavePress}
+          style={[styles.saveButton, saveDisabled && styles.saveButtonDisabled]}
+        >
+          <Text style={styles.saveButtonText}>{'\uC800\uC7A5\uD558\uAE30'}</Text>
+        </Pressable>
+      </ScrollView>
       <TimeWheelPickerModal
         onClose={() => setTimePickerOpen(false)}
         onConfirm={(nextTime) => {
@@ -2768,7 +3024,14 @@ function RecordCreateModal({
   if (isScreenMode) {
     return (
       <Modal animationType="slide" visible={visible} onRequestClose={onClose}>
-        <SafeAreaView style={styles.recordScreen}>{content}</SafeAreaView>
+        <SafeAreaView style={styles.recordScreen}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.recordKeyboardView}
+          >
+            {content}
+          </KeyboardAvoidingView>
+        </SafeAreaView>
       </Modal>
     );
   }
@@ -2776,11 +3039,15 @@ function RecordCreateModal({
   const sheetContent = (
     <View style={styles.sheetOverlay}>
       <Animated.View style={[styles.sheetDim, { opacity: dimOpacity }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <Pressable style={StyleSheet.absoluteFill} onPress={handleBackdropPress} />
       </Animated.View>
       <Animated.View
         style={[
           styles.recordSheet,
+          isKeyboardVisible && {
+            marginBottom: keyboardBottomOffset,
+            maxHeight: keyboardSheetMaxHeight,
+          },
           {
             paddingBottom: insets.bottom + Spacing.xl,
             transform: [{ translateY: sheetTranslateY }],
@@ -2811,7 +3078,8 @@ function RecordCreateModal({
 interface ConfirmDeleteModalProps {
   visible: boolean;
   onCancel: () => void;
-  onDelete: () => void;
+  onDelete: () => Promise<void> | void;
+  isDeleting?: boolean;
 }
 
 function ConfirmDeleteModal({ visible, onCancel, onDelete }: ConfirmDeleteModalProps) {
@@ -2837,21 +3105,37 @@ function ConfirmDeleteModal({ visible, onCancel, onDelete }: ConfirmDeleteModalP
   );
 }
 
-function ConfirmRecordDeleteModal({ visible, onCancel, onDelete }: ConfirmDeleteModalProps) {
+function ConfirmRecordDeleteModal({
+  visible,
+  onCancel,
+  onDelete,
+  isDeleting = false,
+}: ConfirmDeleteModalProps) {
   return (
     <Modal animationType="fade" transparent visible={visible} onRequestClose={onCancel}>
       <View style={styles.overlay}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} />
+        <Pressable
+          disabled={isDeleting}
+          style={StyleSheet.absoluteFill}
+          onPress={onCancel}
+        />
         <View style={styles.deleteModal}>
-          <Text style={styles.deleteTitle}>{'\uC0AD\uC81C\uD558\uC2DC\uACA0\uC2B5\uB2C8\uAE4C?'}</Text>
+          <Text style={styles.deleteTitle}>{'\uAE30\uB85D\uC744 \uC0AD\uC81C\uD560\uAE4C\uC694?'}</Text>
           <Text style={styles.deleteDescription}>
-            {'\uC774 \uAE30\uB85D\uC740 \uC0AD\uC81C \uD6C4 \uBCF5\uAD6C\uD560 \uC218 \uC5C6\uC5B4\uC694.'}
+            {'\uC0AD\uC81C\uD55C \uAE30\uB85D\uC740 \uC774 \uC7A5\uC18C\uC5D0\uC11C \uB354 \uC774\uC0C1 \uD45C\uC2DC\uB418\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.'}
           </Text>
           <View style={styles.deleteButtonRow}>
-            <Pressable onPress={onCancel} style={styles.secondaryButton}>
+            <Pressable disabled={isDeleting} onPress={onCancel} style={styles.secondaryButton}>
               <Text style={styles.secondaryButtonText}>{'\uCDE8\uC18C'}</Text>
             </Pressable>
-            <Pressable onPress={onDelete} style={styles.destructiveButton}>
+            <Pressable
+              disabled={isDeleting}
+              onPress={onDelete}
+              style={[
+                styles.destructiveButton,
+                isDeleting && styles.destructiveButtonDisabled,
+              ]}
+            >
               <Text style={styles.destructiveButtonText}>{'\uC0AD\uC81C'}</Text>
             </Pressable>
           </View>
@@ -3345,6 +3629,13 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.foundation.grey300,
   },
   recordSheetContent: {
+    flexShrink: 1,
+  },
+  recordSheetScroll: {
+    flexShrink: 1,
+  },
+  recordSheetScrollContent: {
+    flexGrow: 1,
     gap: Spacing.lg,
     padding: Spacing.xl,
   },
@@ -3352,10 +3643,20 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.light.bgScreen,
   },
+  recordKeyboardView: {
+    flex: 1,
+  },
   recordScreenContent: {
     flex: 1,
+  },
+  recordScreenScroll: {
+    flex: 1,
+  },
+  recordScreenScrollContent: {
+    flexGrow: 1,
     gap: Spacing.xl,
     paddingHorizontal: Spacing.xl,
+    paddingBottom: Spacing.xl,
   },
   recordModalHeader: {
     minHeight: 44,
@@ -3539,6 +3840,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: Radius.sm,
     backgroundColor: DESTRUCTIVE,
+  },
+  destructiveButtonDisabled: {
+    backgroundColor: Colors.foundation.grey300,
   },
   destructiveButtonText: {
     ...Typography.body2Emphasized,

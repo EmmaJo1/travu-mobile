@@ -11,6 +11,12 @@ export interface CreateRecordForPlaceInput {
   visitedAt?: string | null;
 }
 
+export interface RecordMutationContext {
+  placeId: string;
+  tripDayId: string;
+  tripId: string;
+}
+
 export type UpdateRecordPatch = Pick<
   TablesUpdate<'records'>,
   'text' | 'updated_at' | 'visited_at'
@@ -33,13 +39,78 @@ async function getCurrentUserId() {
   return data.user.id;
 }
 
+async function validateActiveRecordContext(
+  recordId: string,
+  context: RecordMutationContext,
+  userId: string,
+) {
+  const [
+    { data: record, error: recordError },
+    { data: place, error: placeError },
+    { data: tripDay, error: tripDayError },
+    { data: trip, error: tripError },
+  ] = await Promise.all([
+    supabase
+      .from('records')
+      .select('id, user_id, place_id, trip_id, trip_day_id, deleted_at')
+      .eq('id', recordId)
+      .eq('user_id', userId)
+      .is('deleted_at', null)
+      .maybeSingle(),
+    supabase
+      .from('places')
+      .select('id, user_id, trip_id, trip_day_id, deleted_at')
+      .eq('id', context.placeId)
+      .eq('user_id', userId)
+      .is('deleted_at', null)
+      .maybeSingle(),
+    supabase
+      .from('trip_days')
+      .select('id, trip_id, date, deleted_at')
+      .eq('id', context.tripDayId)
+      .eq('trip_id', context.tripId)
+      .is('deleted_at', null)
+      .maybeSingle(),
+    supabase
+      .from('trips')
+      .select('id, user_id, deleted_at')
+      .eq('id', context.tripId)
+      .eq('user_id', userId)
+      .is('deleted_at', null)
+      .maybeSingle(),
+  ]);
+
+  throwIfError(recordError);
+  throwIfError(placeError);
+  throwIfError(tripDayError);
+  throwIfError(tripError);
+
+  const hasValidRelationship =
+    record?.user_id === userId &&
+    record.place_id === context.placeId &&
+    record.trip_id === context.tripId &&
+    record.trip_day_id === context.tripDayId &&
+    place?.user_id === userId &&
+    place.trip_id === context.tripId &&
+    place.trip_day_id === context.tripDayId &&
+    tripDay?.trip_id === context.tripId &&
+    trip?.user_id === userId;
+
+  if (!hasValidRelationship || !tripDay) {
+    throw new Error('The selected record does not belong to the active place and trip day.');
+  }
+
+  return { record, tripDay };
+}
+
 export function listRecordsByPlace(placeId: string) {
   return supabase
     .from('records')
     .select('*, record_photos(*)')
     .eq('place_id', placeId)
     .is('deleted_at', null)
-    .order('visited_at', { ascending: true, nullsFirst: false });
+    .order('visited_at', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true });
 }
 
 export async function fetchRecordsByPlaceId(placeId: string): Promise<RecordRow[]> {
@@ -152,30 +223,59 @@ export async function createRecordForPlace(
 export async function updateRecord(
   recordId: string,
   patch: UpdateRecordPatch,
-): Promise<{ id: string; updated_at: string }> {
+  context: RecordMutationContext,
+): Promise<RecordRow> {
   const userId = await getCurrentUserId();
+  const normalizedText = patch.text?.trim();
+  const visitedAt = patch.visited_at;
+
+  if (!normalizedText) {
+    throw new Error('A record must contain text.');
+  }
+
+  if (!visitedAt || Number.isNaN(new Date(visitedAt).getTime())) {
+    throw new Error('A record must contain a valid visit time.');
+  }
+
+  const { tripDay } = await validateActiveRecordContext(recordId, context, userId);
+
+  if (visitedAt.slice(0, 10) !== tripDay.date) {
+    throw new Error('The record visit time must belong to the selected trip day.');
+  }
+
   const updatedAt = patch.updated_at ?? new Date().toISOString();
   const payload: UpdateRecordPatch = {
-    ...patch,
+    text: normalizedText,
     updated_at: updatedAt,
+    visited_at: visitedAt,
   };
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('records')
     .update(payload)
     .eq('id', recordId)
     .eq('user_id', userId)
-    .is('deleted_at', null);
+    .is('deleted_at', null)
+    .select()
+    .maybeSingle();
 
   throwIfError(error);
-  return { id: recordId, updated_at: updatedAt };
+
+  if (!data) {
+    throw new Error('The record could not be updated.');
+  }
+
+  return data;
 }
 
 export async function softDeleteRecord(
   recordId: string,
+  context: RecordMutationContext,
 ): Promise<{ deleted_at: string; id: string; updated_at: string }> {
   const userId = await getCurrentUserId();
+  await validateActiveRecordContext(recordId, context, userId);
+
   const timestamp = new Date().toISOString();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('records')
     .update({
       deleted_at: timestamp,
@@ -183,10 +283,21 @@ export async function softDeleteRecord(
     })
     .eq('id', recordId)
     .eq('user_id', userId)
-    .is('deleted_at', null);
+    .is('deleted_at', null)
+    .select('id, deleted_at, updated_at')
+    .maybeSingle();
 
   throwIfError(error);
-  return { deleted_at: timestamp, id: recordId, updated_at: timestamp };
+
+  if (!data?.deleted_at) {
+    throw new Error('The record could not be deleted.');
+  }
+
+  return {
+    deleted_at: data.deleted_at,
+    id: data.id,
+    updated_at: data.updated_at,
+  };
 }
 
 export async function softDeleteRecordsByPlaceId(
