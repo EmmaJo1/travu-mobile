@@ -250,6 +250,12 @@ export interface Database {
           trip_id: string | null;
           trip_day_id: string | null;
           place_id: string | null;
+          storage_path: string | null;
+          file_name: string | null;
+          mime_type: string | null;
+          width: number | null;
+          height: number | null;
+          file_size: number | null;
           image_url: string | null;
           thumbnail_url: string | null;
           local_uri: string | null;
@@ -271,6 +277,12 @@ export interface Database {
           trip_id?: string | null;
           trip_day_id?: string | null;
           place_id?: string | null;
+          storage_path?: string | null;
+          file_name?: string | null;
+          mime_type?: string | null;
+          width?: number | null;
+          height?: number | null;
+          file_size?: number | null;
           image_url?: string | null;
           thumbnail_url?: string | null;
           local_uri?: string | null;
