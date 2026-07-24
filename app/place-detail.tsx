@@ -882,6 +882,7 @@ export default function PlaceDetailScreen() {
   const [isRecordSwipeActive, setRecordSwipeActive] = React.useState(false);
   const [pendingDeletePhotoIds, setPendingDeletePhotoIds] = React.useState<string[]>([]);
   const [gridSelectionResetSignal, setGridSelectionResetSignal] = React.useState(0);
+  const isRecordSavingRef = React.useRef(false);
   const recordPhotoPickerOpenTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordSheetRestoreTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const supabaseTripIdForPlace = shouldUseSupabasePlaceDetail && isSupabaseUuid(initialDetail?.tripId)
@@ -1233,7 +1234,7 @@ export default function PlaceDetailScreen() {
   };
 
   const handleSaveRecord = async () => {
-    if (isRecordSaving) {
+    if (isRecordSavingRef.current || isRecordSaving) {
       return;
     }
 
@@ -1254,6 +1255,7 @@ export default function PlaceDetailScreen() {
         return;
       }
 
+      isRecordSavingRef.current = true;
       setRecordSaving(true);
 
       try {
@@ -1320,6 +1322,7 @@ export default function PlaceDetailScreen() {
           '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
         );
       } finally {
+        isRecordSavingRef.current = false;
         setRecordSaving(false);
       }
 

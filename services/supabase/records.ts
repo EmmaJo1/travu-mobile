@@ -6,7 +6,7 @@ export type RecordRow = Tables<'records'>;
 export interface CreateRecordForPlaceInput {
   placeId: string;
   text?: string | null;
-  tripDayId?: string | null;
+  tripDayId: string;
   tripId: string;
   visitedAt?: string | null;
 }
@@ -76,10 +76,64 @@ export async function createRecordForPlace(
   input: CreateRecordForPlaceInput,
 ): Promise<RecordRow> {
   const userId = await getCurrentUserId();
+  const normalizedText = input.text?.trim();
+
+  if (!normalizedText) {
+    throw new Error('A record must contain text.');
+  }
+
+  if (!input.visitedAt || Number.isNaN(new Date(input.visitedAt).getTime())) {
+    throw new Error('A record must contain a valid visit time.');
+  }
+
+  const [
+    { data: place, error: placeError },
+    { data: tripDay, error: tripDayError },
+    { data: trip, error: tripError },
+  ] = await Promise.all([
+    supabase
+      .from('places')
+      .select('id, user_id, trip_id, trip_day_id, deleted_at')
+      .eq('id', input.placeId)
+      .eq('user_id', userId)
+      .is('deleted_at', null)
+      .maybeSingle(),
+    supabase
+      .from('trip_days')
+      .select('id, trip_id, date, deleted_at')
+      .eq('id', input.tripDayId)
+      .eq('trip_id', input.tripId)
+      .is('deleted_at', null)
+      .maybeSingle(),
+    supabase
+      .from('trips')
+      .select('id, user_id, deleted_at')
+      .eq('id', input.tripId)
+      .eq('user_id', userId)
+      .is('deleted_at', null)
+      .maybeSingle(),
+  ]);
+
+  throwIfError(placeError);
+  throwIfError(tripDayError);
+  throwIfError(tripError);
+
+  const hasValidParentRelationship =
+    place?.user_id === userId &&
+    place.trip_id === input.tripId &&
+    place.trip_day_id === input.tripDayId &&
+    tripDay?.trip_id === input.tripId &&
+    input.visitedAt.slice(0, 10) === tripDay.date &&
+    trip?.user_id === userId;
+
+  if (!hasValidParentRelationship) {
+    throw new Error('The selected place and trip day do not belong to the same active trip.');
+  }
+
   const payload: TablesInsert<'records'> = {
     place_id: input.placeId,
-    text: input.text ?? null,
-    trip_day_id: input.tripDayId ?? null,
+    text: normalizedText,
+    trip_day_id: input.tripDayId,
     trip_id: input.tripId,
     user_id: userId,
     visited_at: input.visitedAt ?? null,
