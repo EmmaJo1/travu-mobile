@@ -80,6 +80,7 @@ interface PlaceCreateModalProps {
   tripLongitude?: number;
   dayOptions?: PlaceEntryDayOption[];
   selectedDayId?: string;
+  requireTripDay?: boolean;
   showPhotoSection?: boolean;
   showRecordField?: boolean;
   showCategoryField?: boolean;
@@ -267,7 +268,11 @@ function toDateKey(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function parseDayOptionDate(day: PlaceEntryDayOption): Date | null {
+function parseDayOptionDate(day?: PlaceEntryDayOption): Date | null {
+  if (!day) {
+    return null;
+  }
+
   const matched = day.dateLabel.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})$/);
 
   if (!matched) {
@@ -361,6 +366,7 @@ export default function PlaceCreateModal({
   tripLongitude,
   dayOptions = [],
   selectedDayId,
+  requireTripDay = false,
   showPhotoSection = true,
   showRecordField = false,
   showCategoryField = true,
@@ -481,7 +487,11 @@ export default function PlaceCreateModal({
 
     const trimmedPlace = (selectedPlace?.placeName ?? place).trim();
 
-    if (!trimmedPlace || (availableDayOptions.length > 0 && !selectedDay)) {
+    if (
+      !trimmedPlace ||
+      (availableDayOptions.length > 0 && !selectedDay) ||
+      (requireTripDay && !selectedDay)
+    ) {
       return;
     }
 
@@ -517,7 +527,8 @@ export default function PlaceCreateModal({
   const canSubmit =
     !isSubmitting &&
     (selectedPlace?.placeName ?? place).trim().length > 0 &&
-    (availableDayOptions.length === 0 || Boolean(selectedDay));
+    (availableDayOptions.length === 0 || Boolean(selectedDay)) &&
+    (!requireTripDay || Boolean(selectedDay));
 
   const applySelectedPlace = (nextPlace: SelectedPlace) => {
     setSelectedPlace(nextPlace);

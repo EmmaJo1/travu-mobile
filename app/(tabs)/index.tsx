@@ -48,6 +48,7 @@ import TravelStatusSheet from '@/components/home/TravelStatusSheet';
 import TripDatePickerModal from '@/components/home/TripDatePickerModal';
 import PlaceCreateModal, {
   type PlaceCreateInput,
+  type PlaceEntryDayOption,
 } from '@/components/record/PlaceCreateModal';
 import TodaySummary from '@/components/trip/TodaySummary';
 import { setActiveTraveling } from '@/constants/activeTravelSession';
@@ -60,10 +61,13 @@ import type { DestinationOption } from '@/constants/mockTripDestinations';
 import { addSavedCompletedTrip } from '@/constants/savedMyPageTrips';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useCompleteTrip } from '@/hooks/useCompleteTrip';
+import { useCreatePlaceRecord } from '@/hooks/useCreatePlaceRecord';
 import { useCreateTrip } from '@/hooks/useCreateTrip';
 import { useActiveTrip, useMyTrips, useRecentTrips } from '@/hooks/useMyTrips';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
 import { useTripDays } from '@/hooks/useTripDays';
+import { useTripDayPlaces } from '@/hooks/useTripDayPlaces';
+import { useTripDayRecords } from '@/hooks/useTripDayRecords';
 import {
   useSyncActiveTripDestinations,
   useTripDestinations,
@@ -76,6 +80,7 @@ import type {
   TripDestinationRow,
 } from '@/services/supabase/tripDestinations';
 import { ActiveTripExistsError, type TripRow } from '@/services/supabase/trips';
+import { mapSupabasePlacesToPlaceEntries } from '@/utils/supabasePlaceRecordMappers';
 import {
   mapSupabaseTripsToHomeSummaryTrips,
   mapSupabaseTripsToIdleRecentTrips,
@@ -252,6 +257,58 @@ type PlaceRecord = {
   createdAt: string;
   updatedAt?: string;
 };
+
+function mapSupabasePlacesToHomeTimelineItems({
+  fallbackCityLabel,
+  fallbackImageSource,
+  places,
+  records,
+  tripDayDates,
+}: {
+  fallbackCityLabel: string;
+  fallbackImageSource: TodayTimelineItem['imageSource'];
+  places: Parameters<typeof mapSupabasePlacesToPlaceEntries>[0];
+  records: Parameters<typeof mapSupabasePlacesToPlaceEntries>[1];
+  tripDayDates: Map<string, string>;
+}): EditableTimelineItem[] {
+  const recordsByPlaceId = records.reduce((map, record) => {
+    const placeRecords = map.get(record.place_id) ?? [];
+    placeRecords.push(record);
+    map.set(record.place_id, placeRecords);
+    return map;
+  }, new Map<string, typeof records>());
+
+  return mapSupabasePlacesToPlaceEntries(places, records).map((entry) => {
+    const placeRecords = recordsByPlaceId.get(entry.placeId ?? entry.id) ?? [];
+    const recordTexts = placeRecords
+      .map((record) => record.text?.trim())
+      .filter((text): text is string => Boolean(text));
+
+    return {
+      id: entry.placeId ?? entry.id,
+      dayDateKey: entry.tripDayId ? tripDayDates.get(entry.tripDayId) : undefined,
+      timeLabel: entry.time ?? '',
+      placeName: entry.placeName ?? entry.place,
+      categoryLabel: entry.category ?? '직접 추가',
+      cityLabel: entry.cityName ?? entry.city ?? fallbackCityLabel,
+      memoCount: entry.recordCount ?? placeRecords.length,
+      photoCount: entry.photoCount ?? 0,
+      imageSource: fallbackImageSource,
+      records: placeRecords.length > 0
+        ? placeRecords.map((record) => ({
+            id: record.id,
+            tripId: record.trip_id,
+            dayId: record.trip_day_id ?? entry.tripDayId ?? '',
+            placeId: record.place_id,
+            text: record.text?.trim() || undefined,
+            createdAt: record.created_at,
+            updatedAt: record.updated_at,
+          }))
+        : undefined,
+      memoEntries: recordTexts.length > 0 ? recordTexts : undefined,
+    };
+  });
+}
 
 function getDestinationDisplayName(destination: DestinationOption) {
   return destination.name ?? destination.displayName;
@@ -604,6 +661,21 @@ function formatHeroDateLabel(dateKey: string): string {
   return `${date.getMonth() + 1}.${date.getDate()} ${WEEKDAY_LABELS[date.getDay()]}`;
 }
 
+function toPlaceEntryDayOption(day: {
+  id: string;
+  date: string;
+  day_index: number;
+}): PlaceEntryDayOption {
+  const date = parseDateKey(day.date);
+
+  return {
+    id: day.id,
+    dayNumber: day.day_index,
+    dateLabel: `${date.getFullYear()}.${date.getMonth() + 1}.${date.getDate()}`,
+    weekdayLabel: WEEKDAY_LABELS[date.getDay()],
+  };
+}
+
 function formatTimelineFallbackTimeLabel(date = new Date()): string {
   const hours = date.getHours();
   const minutes = date.getMinutes();
@@ -910,6 +982,7 @@ export default function HomeScreen() {
   }>();
   const { canUseSupabaseUserData } = useAuth();
   const createTripMutation = useCreateTrip();
+  const createPlaceRecordMutation = useCreatePlaceRecord();
   const completeTripMutation = useCompleteTrip();
   const updateDateRangeMutation = useUpdateActiveTripDateRange();
   const syncDestinationsMutation = useSyncActiveTripDestinations();
@@ -972,7 +1045,10 @@ export default function HomeScreen() {
   const headerLocationRequestInFlightRef = React.useRef(false);
   const lastHeaderLocationRequestAtRef = React.useRef(0);
   const activeTripId = activeTrip.tripId ?? supabaseActiveTrip?.id;
-  const { data: supabaseActiveTripDays } = useTripDays(activeTripId);
+  const {
+    data: supabaseActiveTripDays,
+    isLoading: isSupabaseTripDaysLoading,
+  } = useTripDays(activeTripId);
   const { data: supabaseTripDestinations } = useTripDestinations(activeTripId);
 
   const updateDeviceHeaderLocation = React.useCallback(async ({
@@ -1386,26 +1462,53 @@ export default function HomeScreen() {
       })),
     [activeTrip.startDate, tripDayCount],
   );
-  const tripDays = React.useMemo(
-    () => canUseSupabaseUserData && supabaseActiveTripDays?.length
-      ? [...supabaseActiveTripDays]
-          .sort((a, b) => a.day_index - b.day_index)
-          .map((day) => ({ dayNumber: day.day_index, dateKey: day.date }))
-      : localTripDays,
-    [canUseSupabaseUserData, localTripDays, supabaseActiveTripDays],
+  const activeSupabaseTripDays = React.useMemo(
+    () =>
+      [...(supabaseActiveTripDays ?? [])]
+        .filter((day) => day.deleted_at === null)
+        .sort((a, b) => a.day_index - b.day_index),
+    [supabaseActiveTripDays],
   );
-  const selectedTripDay = tripDays[selectedTripDayIndex] ?? tripDays[0];
+  const tripDays = React.useMemo(
+    () => canUseSupabaseUserData && activeSupabaseTripDays.length
+      ? activeSupabaseTripDays.map((day) => ({
+          dayNumber: day.day_index,
+          dateKey: day.date,
+        }))
+      : localTripDays,
+    [activeSupabaseTripDays, canUseSupabaseUserData, localTripDays],
+  );
+  const selectedTripDayAtIndex = tripDays[selectedTripDayIndex];
+  const selectedTripDay = selectedTripDayAtIndex ?? tripDays[0];
   const selectedDateKey = selectedTripDay?.dateKey ?? activeTrip.startDate;
   const selectedSupabaseTripDay = React.useMemo(
     () =>
-      supabaseActiveTripDays?.find((day) => day.date === selectedDateKey) ??
-      supabaseActiveTripDays?.find((day) => day.day_index === selectedTripDayIndex + 1),
-    [selectedDateKey, selectedTripDayIndex, supabaseActiveTripDays],
+      activeSupabaseTripDays.find((day) => day.date === selectedDateKey) ??
+      activeSupabaseTripDays.find((day) => day.day_index === selectedTripDayIndex + 1),
+    [activeSupabaseTripDays, selectedDateKey, selectedTripDayIndex],
   );
   const selectedRouteDayId = selectedSupabaseTripDay?.id ?? selectedDateKey;
   const selectedRouteTripDayId = selectedSupabaseTripDay?.id;
   const selectedRouteDayIndex = selectedSupabaseTripDay?.day_index ?? selectedTripDayIndex + 1;
+  const {
+    data: selectedSupabaseTripDayPlaces,
+    refetch: refetchSelectedSupabaseTripDayPlaces,
+  } = useTripDayPlaces(selectedRouteTripDayId);
+  const {
+    data: selectedSupabaseTripDayRecords,
+    refetch: refetchSelectedSupabaseTripDayRecords,
+  } = useTripDayRecords(selectedRouteTripDayId);
   const todayDateKey = getTodayDateKey();
+  const manualEntryTripDay = React.useMemo(
+    () =>
+      activeSupabaseTripDays.find((day) => day.date === selectedTripDayAtIndex?.dateKey) ??
+      activeSupabaseTripDays.find((day) => day.date === todayDateKey),
+    [activeSupabaseTripDays, selectedTripDayAtIndex?.dateKey, todayDateKey],
+  );
+  const manualEntryDayOptions = React.useMemo(
+    () => activeSupabaseTripDays.map(toPlaceEntryDayOption),
+    [activeSupabaseTripDays],
+  );
   const tripDayLabels = React.useMemo(
     () =>
       tripDays.map((day) =>
@@ -1413,15 +1516,41 @@ export default function HomeScreen() {
       ),
     [todayDateKey, tripDays],
   );
-  const visibleTimelineItems = React.useMemo(
+  const supabaseTimelineItems = React.useMemo(
     () =>
-      generateHomeTimelineItemsForDay({
-        selectedDateKey,
-        // TODO: Pass the selected day's real photo metadata once EXIF/GPS import is connected.
-        photos: [],
-        fallbackItems: timelineItems.filter((item) => !item.hidden),
+      mapSupabasePlacesToHomeTimelineItems({
+        fallbackCityLabel: activeTrip.destination.displayName,
+        fallbackImageSource: currentTrip.heroImage,
+        places: selectedSupabaseTripDayPlaces ?? [],
+        records: selectedSupabaseTripDayRecords ?? [],
+        tripDayDates: new Map(
+          activeSupabaseTripDays.map((day) => [day.id, day.date]),
+        ),
       }),
-    [selectedDateKey, timelineItems],
+    [
+      activeSupabaseTripDays,
+      activeTrip.destination.displayName,
+      currentTrip.heroImage,
+      selectedSupabaseTripDayPlaces,
+      selectedSupabaseTripDayRecords,
+    ],
+  );
+  const visibleTimelineItems = React.useMemo(
+    () => canUseSupabaseUserData && selectedRouteTripDayId
+      ? supabaseTimelineItems.filter((item) => item.dayDateKey === selectedDateKey)
+      : generateHomeTimelineItemsForDay({
+          selectedDateKey,
+          // TODO: Pass the selected day's real photo metadata once EXIF/GPS import is connected.
+          photos: [],
+          fallbackItems: timelineItems.filter((item) => !item.hidden),
+        }),
+    [
+      canUseSupabaseUserData,
+      selectedDateKey,
+      selectedRouteTripDayId,
+      supabaseTimelineItems,
+      timelineItems,
+    ],
   );
   const recordedPhotoCount = visibleTimelineItems.reduce(
     (sum, item) => sum + item.photoCount,
@@ -1490,12 +1619,25 @@ export default function HomeScreen() {
     setSelectedTripDayIndex((prev) => Math.min(Math.max(0, tripDays.length - 1), prev + 1));
   }, [tripDays.length]);
 
-  const handleRefreshTravelHome = React.useCallback(() => {
+  const handleRefreshTravelHome = React.useCallback(async () => {
     setTravelHomeRefreshing(true);
-    requestAnimationFrame(() => {
+
+    try {
+      if (canUseSupabaseUserData && selectedRouteTripDayId) {
+        await Promise.all([
+          refetchSelectedSupabaseTripDayPlaces(),
+          refetchSelectedSupabaseTripDayRecords(),
+        ]);
+      }
+    } finally {
       setTravelHomeRefreshing(false);
-    });
-  }, []);
+    }
+  }, [
+    canUseSupabaseUserData,
+    refetchSelectedSupabaseTripDayPlaces,
+    refetchSelectedSupabaseTripDayRecords,
+    selectedRouteTripDayId,
+  ]);
 
   const scrollScheduleToSelectedDay = React.useCallback(() => {
     const targetY = Math.max(
@@ -1539,48 +1681,111 @@ export default function HomeScreen() {
   }, [scheduleSheetTranslateY]);
 
   const handleOpenManualPlaceCreate = React.useCallback(() => {
+    if (canUseSupabaseUserData && activeTripId) {
+      if (isSupabaseTripDaysLoading) {
+        return;
+      }
+
+      if (!manualEntryTripDay) {
+        Alert.alert(
+          '기록할 여행 날짜를 찾을 수 없어요',
+          '여행 기간을 확인한 뒤 다시 시도해주세요.',
+          [{ text: '확인' }],
+        );
+        return;
+      }
+    }
+
     setPlaceCreateModalVisible(true);
-  }, []);
+  }, [
+    activeTripId,
+    canUseSupabaseUserData,
+    isSupabaseTripDaysLoading,
+    manualEntryTripDay,
+  ]);
 
   const handleCloseManualPlaceCreate = React.useCallback(() => {
     setPlaceCreateModalVisible(false);
   }, []);
 
-  const handleSubmitManualPlace = React.useCallback((input: PlaceCreateInput) => {
+  const handleSubmitManualPlace = React.useCallback(async (input: PlaceCreateInput) => {
     const createdAt = Date.now();
     const photoCount = (input.photoUris?.length ?? 0) + (input.photoSources?.length ?? 0);
     const firstPhotoUri = input.photoUris?.[0];
     const firstPhotoSource = input.photoSources?.[0];
     const placeName = input.placeName ?? input.place;
-    const placeId = createPlaceId('manual', selectedDateKey, placeName, createdAt);
+    const submittedSupabaseTripDay = input.dayId
+      ? activeSupabaseTripDays.find((day) => day.id === input.dayId)
+      : undefined;
+
+    if (canUseSupabaseUserData && activeTripId && !submittedSupabaseTripDay) {
+      Alert.alert(
+        '기록할 여행 날짜를 찾을 수 없어요',
+        '여행 기간을 확인한 뒤 다시 시도해주세요.',
+        [{ text: '확인' }],
+      );
+      throw new Error('Unable to find the active trip day for manual place creation.');
+    }
+
+    const canPersistToSupabase =
+      canUseSupabaseUserData &&
+      Boolean(activeTripId) &&
+      Boolean(submittedSupabaseTripDay);
+    const submittedDateKey = submittedSupabaseTripDay?.date ?? input.dateKey ?? selectedDateKey;
+    const submittedDayId = submittedSupabaseTripDay?.id ?? input.dayId ?? selectedRouteDayId;
+    let placeId = createPlaceId('manual', submittedDateKey, placeName, createdAt);
+    let recordId = `manual-record-${createdAt}`;
+    let recordCreatedAt = new Date().toISOString();
+    let recordText = input.text?.trim() || undefined;
+
+    if (canPersistToSupabase && activeTripId && submittedSupabaseTripDay) {
+      try {
+        const result = await createPlaceRecordMutation.mutateAsync({
+          ...input,
+          tripDayId: submittedSupabaseTripDay.id,
+          tripId: activeTripId,
+        });
+
+        placeId = result.place.id;
+        recordId = result.record?.id ?? recordId;
+        recordCreatedAt = result.record?.created_at ?? recordCreatedAt;
+        recordText = result.record?.text?.trim() || recordText;
+      } catch (error) {
+        console.warn('[home] create manual place failed', error);
+        Alert.alert(
+          '\uC7A5\uC18C\uB97C \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+        );
+        throw error;
+      }
+    }
 
     // TODO: Use selected photos' metadata to derive timeLabel and location group.
-    // TODO: Persist manually added places and linked photos to Supabase.
     // TODO: Use placeId as the source of truth for timeline-to-place-detail navigation.
     const newTimelineItem: EditableTimelineItem = {
       id: placeId,
-      dayDateKey: selectedDateKey,
+      dayDateKey: submittedDateKey,
       timeLabel: input.time ?? formatTimelineFallbackTimeLabel(),
       placeName,
       categoryLabel: input.category ?? '직접 추가',
       cityLabel: input.cityName ?? input.city ?? activeTrip.destination.displayName,
-      memoCount: input.text ? 1 : 0,
+      memoCount: recordText ? 1 : 0,
       photoCount,
       imageSource: firstPhotoSource ?? (firstPhotoUri ? { uri: firstPhotoUri } : currentTrip.heroImage),
-      records: input.text
+      records: recordText
         ? [
             {
-              id: `manual-record-${createdAt}`,
+              id: recordId,
               tripId: activeTripId ?? activeTrip.destination.id,
-              dayId: selectedDateKey,
+              dayId: submittedDayId,
               placeId,
-              text: input.text,
+              text: recordText,
               photoIds: input.photoUris,
-              createdAt: new Date().toISOString(),
+              createdAt: recordCreatedAt,
             },
           ]
         : undefined,
-      memoEntries: input.text ? [input.text] : undefined,
+      memoEntries: recordText ? [recordText] : undefined,
       addedPhotoUris: input.photoUris,
     };
 
@@ -1593,7 +1798,17 @@ export default function HomeScreen() {
       }),
     );
     setPlaceCreateModalVisible(false);
-  }, [activeTrip.destination.displayName, activeTrip.destination.id, activeTripId, currentTrip.heroImage, selectedDateKey]);
+  }, [
+    activeTrip.destination.displayName,
+    activeTrip.destination.id,
+    activeTripId,
+    activeSupabaseTripDays,
+    canUseSupabaseUserData,
+    createPlaceRecordMutation,
+    currentTrip.heroImage,
+    selectedDateKey,
+    selectedRouteDayId,
+  ]);
 
   const handleConfirmEndTrip = React.useCallback(async () => {
     if (isCompletingTripRef.current) {
@@ -2114,7 +2329,10 @@ export default function HomeScreen() {
         visible={isPlaceCreateModalVisible}
         mode="create"
         tripId={activeTripId ?? activeTrip.destination.id}
-        dayId={selectedRouteDayId}
+        dayId={manualEntryTripDay?.id ?? selectedRouteDayId}
+        dayOptions={manualEntryDayOptions}
+        selectedDayId={manualEntryTripDay?.id}
+        requireTripDay={canUseSupabaseUserData && Boolean(activeTripId)}
         tripDestinationName={activeTrip.destination.displayName}
         tripDestinationCountry={activeTrip.destination.countryName}
         tripLatitude={activeTrip.latitude}

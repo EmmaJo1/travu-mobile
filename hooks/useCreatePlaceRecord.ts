@@ -3,8 +3,12 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { PlaceCreateInput } from '@/components/record/PlaceCreateModal';
 import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
 import { useAuth } from '@/providers/AuthProvider';
-import { createPlaceForTripDay } from '@/services/supabase/places';
-import { createRecordForPlace } from '@/services/supabase/records';
+import {
+  createPlaceForTripDay,
+  softDeletePlace,
+  type PlaceRow,
+} from '@/services/supabase/places';
+import { createRecordForPlace, type RecordRow } from '@/services/supabase/records';
 
 export interface CreatePlaceRecordInput extends PlaceCreateInput {
   tripDayId: string;
@@ -62,6 +66,7 @@ export function useCreatePlaceRecord() {
 
       const placeName = (input.placeName ?? input.place).trim();
       const recordText = input.text?.trim() || null;
+      const shouldCreateRecord = Boolean(recordText);
       const dateKey = input.dateKey ?? parseDateKeyFromDateLabel(input.dateLabel);
       const visitedAt = buildVisitedAt(dateKey, input.time);
       const place = await createPlaceForTripDay({
@@ -71,32 +76,65 @@ export function useCreatePlaceRecord() {
         googlePlaceId: input.googlePlaceId ?? null,
         latitude: input.latitude ?? null,
         longitude: input.longitude ?? null,
-        memo: recordText,
+        memo: null,
         name: placeName,
         source: input.googlePlaceId ? 'google' : 'manual',
         tripDayId: input.tripDayId,
         tripId: input.tripId,
         visitedAt,
       });
-      const record = await createRecordForPlace({
-        placeId: place.id,
-        text: recordText,
-        tripDayId: input.tripDayId,
-        tripId: input.tripId,
-        visitedAt,
-      });
 
-      return { place, record };
+      if (!shouldCreateRecord) {
+        return { place, record: null };
+      }
+
+      try {
+        const record = await createRecordForPlace({
+          placeId: place.id,
+          text: recordText,
+          tripDayId: input.tripDayId,
+          tripId: input.tripId,
+          visitedAt,
+        });
+
+        return { place, record };
+      } catch (error) {
+        try {
+          await softDeletePlace(place.id);
+        } catch (rollbackError) {
+          console.error('[useCreatePlaceRecord] rollback failed after record create error', {
+            placeId: place.id,
+            rollbackMessage: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+          });
+        }
+
+        throw error;
+      }
     },
-    onSuccess: (_data, input) => {
+    onSuccess: (data, input) => {
       const userId = user?.id;
+      const placesQueryKey = supabaseQueryKeys.tripDayPlaces(userId, input.tripDayId);
+      const recordsQueryKey = supabaseQueryKeys.tripDayRecords(userId, input.tripDayId);
+
+      queryClient.setQueryData<PlaceRow[]>(placesQueryKey, (currentPlaces) => [
+        ...(currentPlaces ?? []).filter((place) => place.id !== data.place.id),
+        data.place,
+      ]);
+
+      const createdRecord = data.record;
+      if (createdRecord) {
+        queryClient.setQueryData<RecordRow[]>(recordsQueryKey, (currentRecords) => [
+          ...(currentRecords ?? []).filter((record) => record.id !== createdRecord.id),
+          createdRecord,
+        ]);
+      }
 
       void Promise.all([
         queryClient.invalidateQueries({
-          queryKey: supabaseQueryKeys.tripDayPlaces(userId, input.tripDayId),
+          queryKey: placesQueryKey,
         }),
         queryClient.invalidateQueries({
-          queryKey: supabaseQueryKeys.tripDayRecords(userId, input.tripDayId),
+          queryKey: recordsQueryKey,
         }),
         queryClient.invalidateQueries({
           queryKey: supabaseQueryKeys.tripDays(userId, input.tripId),

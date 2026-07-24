@@ -59,6 +59,7 @@ export function useUpdatePlaceRecord() {
 
       const placeName = (input.placeName ?? input.place).trim();
       const recordText = input.text?.trim() || null;
+      const shouldCreateRecord = Boolean(recordText);
       const dateKey = input.dateKey ?? parseDateKeyFromDateLabel(input.dateLabel);
       const visitedAt = buildVisitedAt(dateKey, input.time);
       const place = await updatePlace(input.placeId, {
@@ -67,7 +68,6 @@ export function useUpdatePlaceRecord() {
         country: input.countryName ?? null,
         latitude: input.latitude ?? null,
         longitude: input.longitude ?? null,
-        memo: recordText,
         name: placeName,
         visited_at: visitedAt,
       });
@@ -76,13 +76,15 @@ export function useUpdatePlaceRecord() {
           text: recordText,
           visited_at: visitedAt,
         })
-        : await createRecordForPlace({
+        : shouldCreateRecord
+          ? await createRecordForPlace({
           placeId: input.placeId,
           text: recordText,
           tripDayId: input.tripDayId,
           tripId: input.tripId,
           visitedAt,
-        });
+        })
+          : null;
 
       return { place, record };
     },

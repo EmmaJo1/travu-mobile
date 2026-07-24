@@ -58,7 +58,7 @@ import { useTripDays } from '@/hooks/useTripDays';
 import { useAuth } from '@/providers/AuthProvider';
 import { updatePlace, type PlaceRow, type UpdatePlacePatch } from '@/services/supabase/places';
 import type { TripDayRow } from '@/services/supabase/tripDays';
-import type { RecordRow } from '@/services/supabase/records';
+import { createRecordForPlace, type RecordRow } from '@/services/supabase/records';
 
 type PlaceDetailRouteParams = {
   tripId?: string;
@@ -453,7 +453,7 @@ function createSupabasePlaceDetail(
       photoIds: [],
       placeId: record.place_id,
       text: record.text ?? undefined,
-      time: formatSupabaseVisitedTime(place.visited_at ?? record.visited_at),
+      time: formatSupabaseVisitedTime(record.visited_at),
       tripId: record.trip_id,
       updatedAt: record.updated_at,
     })),
@@ -874,6 +874,7 @@ export default function PlaceDetailScreen() {
   const [recordDraft, setRecordDraft] = React.useState('');
   const [recordTimeLabel, setRecordTimeLabel] = React.useState(initialDetail?.timeLabel ?? '');
   const [hasRecordTimeBeenEdited, setRecordTimeEdited] = React.useState(false);
+  const [isRecordSaving, setRecordSaving] = React.useState(false);
   const [isDeleteConfirmOpen, setDeleteConfirmOpen] = React.useState(false);
   const [isPhotoDeleteConfirmOpen, setPhotoDeleteConfirmOpen] = React.useState(false);
   const [pendingDeleteRecordId, setPendingDeleteRecordId] = React.useState<string | null>(null);
@@ -989,6 +990,13 @@ export default function PlaceDetailScreen() {
 
         if (aTime == null && bTime != null) {
           return 1;
+        }
+
+        const createdAtDifference =
+          getRecordSortValue(a.record) - getRecordSortValue(b.record);
+
+        if (Number.isFinite(createdAtDifference) && createdAtDifference !== 0) {
+          return createdAtDifference;
         }
 
         return a.index - b.index;
@@ -1224,9 +1232,97 @@ export default function PlaceDetailScreen() {
     setPhotos((currentPhotos) => [...currentPhotos, ...addedPhotos]);
   };
 
-  const handleSaveRecord = () => {
+  const handleSaveRecord = async () => {
+    if (isRecordSaving) {
+      return;
+    }
+
     const trimmedText = recordDraft.trim();
     if (!trimmedText) {
+      return;
+    }
+
+    if (shouldUseSupabasePlaceDetail) {
+      const tripDayId = initialDetail.dayId || routeDayId || '';
+      const tripId = initialDetail.tripId || routeTripId || '';
+
+      if (!tripDayId || !tripId) {
+        Alert.alert(
+          '\uAE30\uB85D\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC5EC\uD589 \uB0A0\uC9DC\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC5B4\uC694. \uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+        );
+        return;
+      }
+
+      setRecordSaving(true);
+
+      try {
+        const tripDayDate = placeTripDays?.find(
+          (day) => day.id === tripDayId && day.deleted_at == null,
+        )?.date;
+        const visitedAt = buildVisitedAtForPlaceUpdate(
+          {
+            dateKey: tripDayDate,
+            place: placeInfo.placeName,
+            time: recordTimeLabel,
+          },
+          placeInfo.dateLabel,
+        ) ?? null;
+        const record = await createRecordForPlace({
+          placeId: initialDetail.placeId,
+          text: trimmedText,
+          tripDayId,
+          tripId,
+          visitedAt,
+        });
+
+        setRecords((currentRecords) => [
+          ...currentRecords,
+          {
+            id: record.id,
+            tripId: record.trip_id,
+            dayId: record.trip_day_id ?? tripDayId,
+            placeId: record.place_id,
+            time: formatSupabaseVisitedTime(record.visited_at) || recordTimeLabel,
+            text: record.text ?? trimmedText,
+            photoIds: selectedRecordPhotoIds,
+            createdAt: record.created_at,
+            updatedAt: record.updated_at,
+          },
+        ]);
+        setRecordDraft('');
+        setSelectedRecordPhotoIds([]);
+        setRecordTimeLabel(createCurrentTimeLabel());
+        setRecordTimeEdited(false);
+        setRecordModalOpen(false);
+        void refetchPlaceDetailData();
+
+        void Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.placeDetail(user?.id, initialDetail.placeId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, tripDayId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDayRecords(user?.id, tripDayId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDays(user?.id, tripId),
+          }),
+        ]).catch((error: unknown) => {
+          console.warn('[place-detail] invalidate after record create failed', error);
+        });
+      } catch (error) {
+        console.warn('[place-detail] create record failed', error);
+        Alert.alert(
+          '\uAE30\uB85D\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+        );
+      } finally {
+        setRecordSaving(false);
+      }
+
       return;
     }
 
@@ -1684,15 +1780,17 @@ export default function PlaceDetailScreen() {
             </Pressable>
           </View>
 
-          <View style={styles.recordList}>
+          <View>
             {sortedRecords.map((record, index) => {
               const recordPhoto = record.photoIds?.[0]
                 ? photos.find((photo) => photo.id === record.photoIds?.[0])
                 : undefined;
               const extraPhotoCount = Math.max((record.photoIds?.length ?? 0) - 1, 0);
+              const hasPhotos = Boolean(recordPhoto);
 
               return (
                 <SwipeableRecordItem
+                  hasPhotos={hasPhotos}
                   key={record.id}
                   recordId={record.id}
                   isLast={index === sortedRecords.length - 1}
@@ -1702,7 +1800,7 @@ export default function PlaceDetailScreen() {
                   onRequestDelete={requestDeleteRecord}
                   onSwipeEnd={() => setRecordSwipeActive(false)}
                   onSwipeStart={() => setRecordSwipeActive(true)}
-                  timeLabel={record.time ?? placeInfo.timeLabel ?? ''}
+                  timeLabel={record.time ?? ''}
                 >
                   {record.text ? <Text style={styles.recordText}>{record.text}</Text> : null}
                   {recordPhoto ? (
@@ -1932,6 +2030,7 @@ export default function PlaceDetailScreen() {
         onOpenPhotoPicker={handleOpenRecordPhotoPicker}
         onRemovePhoto={handleUnlinkRecordPhoto}
         onSave={handleSaveRecord}
+        isSaving={isRecordSaving}
         photos={selectedRecordPhotos}
         timeLabel={recordTimeLabel}
         visible={isRecordModalOpen}
@@ -1980,6 +2079,7 @@ function MenuRow({ icon, label, destructive = false, onPress }: MenuRowProps) {
 
 interface SwipeableRecordItemProps {
   children: React.ReactNode;
+  hasPhotos: boolean;
   isLast: boolean;
   isSwipeOpen: boolean;
   onCloseSwipe: () => void;
@@ -1993,6 +2093,7 @@ interface SwipeableRecordItemProps {
 
 const SwipeableRecordItem = React.memo(function SwipeableRecordItem({
   children,
+  hasPhotos,
   isLast,
   isSwipeOpen,
   onCloseSwipe,
@@ -2133,7 +2234,14 @@ const SwipeableRecordItem = React.memo(function SwipeableRecordItem({
   return (
     <View
       onLayout={(event) => setRowWidth(event.nativeEvent.layout.width)}
-      style={styles.recordSwipeContainer}
+      style={[
+        styles.recordSwipeContainer,
+        !isLast && (
+          hasPhotos
+            ? styles.recordSpacingWithPhotos
+            : styles.recordSpacingTextOnly
+        ),
+      ]}
     >
       <Animated.View
         style={[
@@ -2169,7 +2277,13 @@ const SwipeableRecordItem = React.memo(function SwipeableRecordItem({
         >
           <View style={styles.recordTimeColumn}>
             <Text style={styles.recordTime}>{timeLabel}</Text>
-            <View style={[styles.recordLine, isLast && styles.recordLineLast]} />
+            <View
+              style={[
+                styles.recordLine,
+                isLast && styles.recordLineLast,
+                !hasPhotos && styles.recordLineTextOnly,
+              ]}
+            />
           </View>
 
           <View style={styles.recordBody}>{children}</View>
@@ -2469,7 +2583,8 @@ interface RecordCreateModalProps {
   onClose: () => void;
   onOpenPhotoPicker: () => void;
   onRemovePhoto: (photoId: string) => void;
-  onSave: () => void;
+  onSave: () => Promise<void> | void;
+  isSaving?: boolean;
 }
 
 function RecordCreateModal({
@@ -2486,6 +2601,7 @@ function RecordCreateModal({
   onOpenPhotoPicker,
   onRemovePhoto,
   onSave,
+  isSaving = false,
 }: RecordCreateModalProps) {
   const insets = useSafeAreaInsets();
   const [isTimePickerOpen, setTimePickerOpen] = React.useState(false);
@@ -2494,7 +2610,7 @@ function RecordCreateModal({
   const sheetTranslateY = React.useRef(new Animated.Value(320)).current;
   const isScreenMode = mode === 'screen';
   const isInlinePresentation = presentation === 'inline';
-  const saveDisabled = !draft.trim();
+  const saveDisabled = isSaving || !draft.trim();
   const showMemoPlaceholder = draft.length === 0;
 
   React.useEffect(() => {
@@ -2961,13 +3077,16 @@ const styles = StyleSheet.create({
     ...Typography.captionEmphasized,
     color: Colors.foundation.black,
   },
-  recordList: {
-    gap: Spacing.xl,
-  },
   recordSwipeContainer: {
     position: 'relative',
     overflow: 'hidden',
     borderRadius: Radius.xs,
+  },
+  recordSpacingWithPhotos: {
+    marginBottom: Spacing.xl,
+  },
+  recordSpacingTextOnly: {
+    marginBottom: Spacing.md,
   },
   recordDeleteBackground: {
     position: 'absolute',
@@ -3016,6 +3135,9 @@ const styles = StyleSheet.create({
   },
   recordLineLast: {
     minHeight: 36,
+  },
+  recordLineTextOnly: {
+    minHeight: Spacing.md,
   },
   recordBody: {
     flex: 1,
