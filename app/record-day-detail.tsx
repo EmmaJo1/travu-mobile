@@ -42,7 +42,6 @@ import {
 import { MOCK_PHOTO_IMPORT_CANDIDATES } from '@/services/photoImport/mockPhotoImportProvider';
 import {
   getLocalDetectedTripDraft,
-  hydrateLocalDetectedTripDraftPhotos,
   markLocalDetectedTripDraftSaveFailed,
   markLocalDetectedTripDraftSaved,
   markLocalDetectedTripDraftSaving,
@@ -51,7 +50,9 @@ import {
 } from '@/services/photoImport/localDetectedTripDraftStore';
 import {
   DetectedTripSaveError,
+  getDetectedTripSaveUserMessage,
   saveDetectedTripDraftToSupabase,
+  type DetectedTripPhotoSaveProgress,
 } from '@/services/photoImport/saveDetectedTripDraft';
 import type { PhotoImportTripCandidate } from '@/services/photoImport/types';
 import {
@@ -415,7 +416,7 @@ function createLocalDetectedTripEntries(
       countryName: hasGroupCoordinates ? draft.debugMetadata.rawPlacemarkCountry : undefined,
       photoCount: group.photos.length,
       photoUris: group.photos
-        .map((photo) => photo.displayUri)
+        .map((photo) => photo.previewUri ?? photo.displayUri)
         .filter((uri): uri is string => Boolean(uri)),
       place: group.label,
       placeId: group.id,
@@ -1114,32 +1115,7 @@ export default function RecordDayDetailScreen() {
 
   useEffect(() => {
     setLocalDetectedTripDraft(routeLocalDetectedTripDraft);
-
-    if (!routeLocalDetectedTripDraft) {
-      return;
-    }
-
-    let active = true;
-
-    hydrateLocalDetectedTripDraftPhotos(routeTripId).then((hydratedDraft) => {
-      if (!active || !hydratedDraft) {
-        return;
-      }
-
-      setLocalDetectedTripDraft({
-        ...hydratedDraft,
-        days: [...hydratedDraft.days],
-      });
-    }).catch((error) => {
-      if (__DEV__) {
-        console.warn('[record-day-detail] detected draft photo hydration failed', error);
-      }
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [routeLocalDetectedTripDraft, routeTripId]);
+  }, [routeLocalDetectedTripDraft]);
 
   useEffect(() => {
     setDetectedTripSaveStatus(localDetectedTripDraft?.saveStatus ?? 'idle');
@@ -1285,6 +1261,8 @@ export default function RecordDayDetailScreen() {
   const [photoViewerIndex, setPhotoViewerIndex] = useState<number | null>(null);
   const [detectedTripSaveStatus, setDetectedTripSaveStatus] =
     useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const [detectedTripPhotoSaveProgress, setDetectedTripPhotoSaveProgress] =
+    useState<DetectedTripPhotoSaveProgress>();
   const [, setPendingDeletePhoto] = useState<{
     entry: PlaceEntry;
     photoIndex: number;
@@ -2317,6 +2295,7 @@ export default function RecordDayDetailScreen() {
 
       const startedAt = Date.now();
       setDetectedTripSaveStatus('saving');
+      setDetectedTripPhotoSaveProgress(undefined);
       markLocalDetectedTripDraftSaving(localDetectedTripDraft.id);
 
       try {
@@ -2368,6 +2347,7 @@ export default function RecordDayDetailScreen() {
         }
 
         const result = await saveDetectedTripDraftToSupabase(localDetectedTripDraft, {
+          onPhotoProgress: setDetectedTripPhotoSaveProgress,
           saveAttemptId,
         });
         if (__DEV__) {
@@ -2381,11 +2361,7 @@ export default function RecordDayDetailScreen() {
             tripId: result.trip.id,
           });
         }
-        await recordSavedDetectedTripDraft(user.id, localDetectedTripDraft.id, result.trip.id);
-        markLocalDetectedTripDraftSaved(localDetectedTripDraft.id, result.trip.id);
-        setDetectedTripSaveStatus('saved');
-
-        void Promise.all([
+        await Promise.all([
           queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.myTrips(user.id) }),
           queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.recentTripsRoot(user.id) }),
           queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.tripDetail(user.id, result.trip.id) }),
@@ -2398,6 +2374,10 @@ export default function RecordDayDetailScreen() {
         ]).catch((error: unknown) => {
           console.warn('[record-day-detail] detected save invalidate failed', error);
         });
+
+        await recordSavedDetectedTripDraft(user.id, localDetectedTripDraft.id, result.trip.id);
+        markLocalDetectedTripDraftSaved(localDetectedTripDraft.id, result.trip.id);
+        setDetectedTripSaveStatus('saved');
 
         if (__DEV__) {
           console.info('[detected trip save] navigation', {
@@ -2432,10 +2412,8 @@ export default function RecordDayDetailScreen() {
             saveAttemptId,
           });
         }
-        Alert.alert(
-          '\uC5EC\uD589\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
-          '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
-        );
+        const userMessage = getDetectedTripSaveUserMessage(error);
+        Alert.alert(userMessage.title, userMessage.message);
       }
       return;
     }
@@ -2617,7 +2595,9 @@ export default function RecordDayDetailScreen() {
           >
             <Text style={styles.detectedSaveButtonText}>
               {detectedTripSaveStatus === 'saving'
-                ? LABEL_SAVING_DETECTED_TRIP
+                ? detectedTripPhotoSaveProgress
+                  ? `${detectedTripPhotoSaveProgress.phase === 'preparing' ? '원본 사진 준비 중' : '사진 저장 중'} · ${detectedTripPhotoSaveProgress.completedCount.toLocaleString()} / ${detectedTripPhotoSaveProgress.totalCount.toLocaleString()}`
+                  : LABEL_SAVING_DETECTED_TRIP
                 : LABEL_SAVE_DETECTED_TRIP}
             </Text>
           </Pressable>

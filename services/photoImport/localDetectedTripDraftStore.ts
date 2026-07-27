@@ -74,9 +74,10 @@ const COVER_HYDRATION_DELAY_MS = 400;
 const COVER_HYDRATION_TIMEOUT_MS = 4000;
 const DETAIL_HYDRATION_MAX_PHOTOS_PER_GROUP = 3;
 const DETAIL_HYDRATION_MAX_TOTAL_PHOTOS = 15;
-const TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT = 50;
 const REVERSE_GEOCODE_DELAY_MS = 400;
-const PENDING_TITLE_MAX_AGE_MS = 20000;
+const CANDIDATE_METADATA_LOOKUP_CONCURRENCY = 6;
+const CANDIDATE_METADATA_MAX_ASSETS = 3;
+const PHOTO_PREPARATION_TIMEOUT_MS = 20000;
 const AFTER_MAY_2024_CUTOFF_TIME = Date.UTC(2024, 5, 1);
 const WEEKDAY_LABELS = ['\uC77C', '\uC6D4', '\uD654', '\uC218', '\uBAA9', '\uAE08', '\uD1A0'] as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -88,8 +89,23 @@ export interface LocalDetectedPhoto {
   assetId?: string;
   assetUri?: string;
   displayUri: string | null;
+  exif?: Record<string, unknown> | null;
+  fileSize?: number | null;
   hasLocation: boolean;
   localUri?: string | null;
+  mimeType?: string | null;
+  modifiedAt?: string | null;
+  orientation?: number | null;
+  previewUri?: string | null;
+  preparationFailureCategory?:
+    | 'file_unavailable'
+    | 'metadata_incomplete'
+    | 'prepare_timeout'
+    | 'unsupported_format';
+  preparationFailureStage?: 'asset_info' | 'file_read' | 'metadata';
+  preparationStatus: 'notPrepared' | 'preparing' | 'ready' | 'failed';
+  draftDateKey?: string;
+  draftGroupId?: string;
   uri: string | null;
   width: number;
   height: number;
@@ -100,6 +116,7 @@ export interface LocalDetectedPhoto {
   isScreenshot: boolean;
   isLikelyCameraPhoto: boolean;
   isLikelySavedImage: boolean;
+  isNetworkAsset?: boolean;
   mediaType?: string;
   mediaSubtypes?: string[];
   latitude?: number;
@@ -162,6 +179,24 @@ export interface LocalDetectedTripDraft {
   saveError?: string;
   savedTripId?: string;
   saveStatus?: 'idle' | 'saving' | 'saved' | 'failed';
+  photoSaveState?: {
+    failedPhotoIdentifiers: string[];
+    placeIdsByGroupId: Record<string, string>;
+    saveAttemptCount?: number;
+    savedPhotoResultsByIdentifier: Record<string, {
+      photoId: string;
+      storagePath: string;
+    }>;
+    totalPhotoCount: number;
+    tripDayIdsByDate: Record<string, string>;
+    tripId: string;
+  };
+  failedPhotos?: Array<{
+    assetId?: string;
+    failureCategory: NonNullable<LocalDetectedPhoto['preparationFailureCategory']>;
+    failureStage: NonNullable<LocalDetectedPhoto['preparationFailureStage']>;
+    id: string;
+  }>;
   candidateFingerprint?: string;
   candidatePhotoIdentifiers?: string[];
   days: LocalDetectedTripDraftDay[];
@@ -173,6 +208,10 @@ export interface PhotoLibraryScanProgress {
   currentPage: number;
   hasNextPage: boolean;
   detectedCandidateCount: number;
+  failedPreparationCount?: number;
+  phase?: 'collecting' | 'preparing_files' | 'resolving_locations' | 'building_candidates';
+  phaseCompletedCount?: number;
+  phaseTotalCount?: number;
   scanAttemptId?: string;
 }
 
@@ -212,6 +251,7 @@ export interface PhotoLibraryScanResult {
   detectedCandidateHiddenByPhotoOverlapCount: number;
   detectedCandidateVisibleAfterSavedFilterCount: number;
   skippedScreenshotCount: number;
+  failedPhotoPreparationCount: number;
 }
 
 interface PhotoLibraryScanOptions {
@@ -230,10 +270,69 @@ type ScannedAsset = MediaLibrary.AssetInfo | MediaLibrary.Asset;
 type DateBucket = ReturnType<typeof createDateBuckets>[number];
 type ReverseGeocodeResult = {
   address?: Location.LocationGeocodedAddress | null;
+  failureReason?: ReverseGeocodeFailureReason;
   failed: boolean;
   label: string | null;
   rateLimited: boolean;
 };
+
+type ReverseGeocodeFailureReason =
+  | 'api_error'
+  | 'empty_label'
+  | 'empty_placemark'
+  | 'invalid_coordinate'
+  | 'rate_limited'
+  | 'timeout';
+
+type FastAssetFilterReason =
+  | 'duplicate_asset_id'
+  | 'invalid_creation_time'
+  | 'invalid_dimensions'
+  | 'outside_scan_range'
+  | 'screenshot'
+  | 'unsupported_extension'
+  | 'unsupported_media_type';
+
+interface PhotoScanPerformanceMetrics {
+  assetInfoCacheHitCount: number;
+  assetInfoRequestCount: number;
+  candidateAssetCount: number;
+  candidateGenerationDurationMs: number;
+  duplicateAssetInfoCallPreventedCount: number;
+  fastFilterInputCount: number;
+  fastFilterPassedCount: number;
+  fastFilteredByReason: Record<FastAssetFilterReason, number>;
+  filePreparationCacheHitCount: number;
+  filePreparationDurationMs: number;
+  geocodingCacheHitCount: number;
+  geocodingDurationMs: number;
+  geocodingRequestCount: number;
+  hydrationTargetCount: number;
+  iCloudDownloadRequestCount: number;
+  localAssetReadyWithoutDownloadCount: number;
+  mediaAssetMappingDurationMs: number;
+  mediaCollectionDurationMs: number;
+  mediaFastFilterDurationMs: number;
+  mediaMetadataLookupDurationMs: number;
+  mediaPageFetchDurationMs: number;
+  photoPreparationMaxDurationMs: number;
+  photoPreparationTimeoutCount: number;
+  scanDurationMs: number;
+}
+
+interface ReverseGeocodeScanStats {
+  cacheHitCount: number;
+  eligibleCandidateCount: number;
+  failureReasonCounts: Record<ReverseGeocodeFailureReason, number>;
+  fallbackFinalizedCount: number;
+  labelEmptyCount: number;
+  labelExtractedCount: number;
+  placemarkReturnedCount: number;
+  queuedCandidateCount: number;
+  requestFailureCount: number;
+  requestStartedCount: number;
+  requestSuccessCount: number;
+}
 
 type DetectedTripDisplayTitleResult = {
   displayTitle: string;
@@ -269,6 +368,7 @@ const coverHydrationInFlightDraftIds = new Set<string>();
 const coverHydrationCompletedDraftIds = new Set<string>();
 const reverseGeocodeCache = new Map<string, Promise<ReverseGeocodeResult>>();
 const REVERSE_GEOCODE_TIMEOUT_MS = 2500;
+let lastReverseGeocodeRequestStartedAt = 0;
 const SAVED_DETECTED_CANDIDATE_REGISTRY_VERSION = 1;
 const SAVED_DETECTED_CANDIDATE_REGISTRY_PREFIX = 'travu:saved-detected-candidates:v1';
 const SAVED_DETECTED_CANDIDATE_REGISTRY_MAX_ENTRIES = 300;
@@ -312,6 +412,8 @@ function isRenderableImageUri(uri?: string | null): uri is string {
 
   return (
     uri.startsWith('file://') ||
+    uri.startsWith('content://') ||
+    uri.startsWith('assets-library://') ||
     uri.startsWith('http://') ||
     uri.startsWith('https://') ||
     uri.startsWith('data:')
@@ -362,6 +464,10 @@ function getPhotoStableIdentifier(photo: LocalDetectedPhoto) {
   ].join('|');
 
   return `meta:${metadata}`;
+}
+
+export function getLocalDetectedPhotoStableIdentifier(photo: LocalDetectedPhoto) {
+  return getPhotoStableIdentifier(photo);
 }
 
 function normalizeStorageText(value?: string | null) {
@@ -1058,6 +1164,51 @@ function readExif(asset: ScannedAsset | PickedPhotoAsset) {
   return object && readObject(object.exif);
 }
 
+function readFiniteNumber(source: unknown, key: string) {
+  const object = readObject(source);
+  const value = object?.[key];
+
+  if (value == null || value === '') {
+    return null;
+  }
+
+  const parsed = typeof value === 'number' ? value : Number(value);
+
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readOptionalString(source: unknown, key: string) {
+  const value = readObject(source)?.[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function readOptionalBoolean(source: unknown, key: string) {
+  const value = readObject(source)?.[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function readAssetModifiedAt(asset: ScannedAsset | PickedPhotoAsset) {
+  const value = readObject(asset)?.modificationTime;
+  const date = parseExifDate(value);
+  return date?.toISOString() ?? null;
+}
+
+function readAssetOrientation(asset: ScannedAsset | PickedPhotoAsset) {
+  return readFiniteNumber(asset, 'orientation') ?? readFiniteNumber(readExif(asset), 'Orientation');
+}
+
+function readAssetMimeType(asset: ScannedAsset | PickedPhotoAsset) {
+  return readOptionalString(asset, 'mimeType');
+}
+
+function readAssetFileSize(asset: ScannedAsset | PickedPhotoAsset) {
+  return readFiniteNumber(asset, 'fileSize');
+}
+
+function isUploadableLocalPhotoUri(uri?: string | null): uri is string {
+  return Boolean(uri && /^(blob:|content:\/\/|file:\/\/)/i.test(uri.trim()));
+}
+
 function hasCameraExif(asset: ScannedAsset | PickedPhotoAsset) {
   const exif = readExif(asset);
 
@@ -1606,7 +1757,7 @@ function buildDetectedTripDisplayTitle(
 }
 
 function getReverseGeocodeCacheKey(latitude: number, longitude: number) {
-  return `${latitude.toFixed(3)},${longitude.toFixed(3)}`;
+  return `${latitude.toFixed(2)},${longitude.toFixed(2)}`;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
@@ -1631,50 +1782,135 @@ function isRateLimitError(error: unknown) {
   return /rate limit|too many requests/i.test(message);
 }
 
-async function reverseGeocodeLocationLabel(latitude?: number, longitude?: number): Promise<ReverseGeocodeResult> {
+async function reverseGeocodeLocationLabel(
+  latitude?: number,
+  longitude?: number,
+  scanStats?: ReverseGeocodeScanStats,
+): Promise<ReverseGeocodeResult> {
   if (!isFiniteCoordinateValue(latitude) || !isFiniteCoordinateValue(longitude)) {
-    return { failed: true, label: null, rateLimited: false };
+    if (scanStats) {
+      scanStats.failureReasonCounts.invalid_coordinate += 1;
+    }
+    return {
+      failed: true,
+      failureReason: 'invalid_coordinate',
+      label: null,
+      rateLimited: false,
+    };
   }
 
   const cacheKey = getReverseGeocodeCacheKey(latitude, longitude);
   const cached = reverseGeocodeCache.get(cacheKey);
 
   if (cached) {
+    if (scanStats) {
+      scanStats.cacheHitCount += 1;
+    }
     return cached;
   }
 
-  const request = Location.reverseGeocodeAsync({ latitude, longitude })
-    .then((addresses) => {
-      const address = addresses[0] ?? null;
-      const label = createLocationLabel(address);
+  const request = (async () => {
+    const delayMs = Math.max(
+      0,
+      REVERSE_GEOCODE_DELAY_MS - (Date.now() - lastReverseGeocodeRequestStartedAt),
+    );
 
-      if (__DEV__) {
-        console.info('[photo-import reverse geocode] success', {
-          cacheKey,
-          locationLabel: label,
-        });
-      }
+    if (delayMs > 0) {
+      await wait(delayMs);
+    }
 
-      return { address, failed: !label, label, rateLimited: false };
-    })
-    .catch((error) => {
-      const rateLimited = isRateLimitError(error);
+    lastReverseGeocodeRequestStartedAt = Date.now();
+    if (scanStats) {
+      scanStats.requestStartedCount += 1;
+    }
 
-      if (__DEV__) {
-        console.info('[photo-import reverse geocode] fail', {
-          cacheKey,
-          message: error instanceof Error ? error.message : String(error),
+    const rawRequest = Location.reverseGeocodeAsync({ latitude, longitude })
+      .then((addresses): ReverseGeocodeResult => {
+        const address = addresses[0] ?? null;
+
+        if (!address) {
+          return {
+            address: null,
+            failed: true,
+            failureReason: 'empty_placemark',
+            label: null,
+            rateLimited: false,
+          };
+        }
+
+        const label = createLocationLabel(address);
+        return {
+          address,
+          failed: !label,
+          failureReason: label ? undefined : 'empty_label',
+          label,
+          rateLimited: false,
+        };
+      })
+      .catch((error): ReverseGeocodeResult => {
+        const rateLimited = isRateLimitError(error);
+        return {
+          address: null,
+          failed: true,
+          failureReason: rateLimited ? 'rate_limited' : 'api_error',
+          label: null,
           rateLimited,
-        });
+        };
+      });
+    const result = await withTimeout(
+      rawRequest,
+      REVERSE_GEOCODE_TIMEOUT_MS,
+      {
+        address: null,
+        failed: true,
+        failureReason: 'timeout',
+        label: null,
+        rateLimited: false,
+      } satisfies ReverseGeocodeResult,
+    );
+
+    if (scanStats) {
+      if (result.address) {
+        scanStats.placemarkReturnedCount += 1;
+      }
+      if (result.label) {
+        scanStats.labelExtractedCount += 1;
+      } else if (result.failureReason === 'empty_label') {
+        scanStats.labelEmptyCount += 1;
       }
 
-      return { address: null, failed: true, label: null, rateLimited };
-    });
+      const didRequestFail =
+        result.failureReason === 'api_error' ||
+        result.failureReason === 'rate_limited' ||
+        result.failureReason === 'timeout';
+
+      if (didRequestFail) {
+        scanStats.requestFailureCount += 1;
+      } else {
+        scanStats.requestSuccessCount += 1;
+      }
+
+      if (result.failureReason) {
+        scanStats.failureReasonCounts[result.failureReason] += 1;
+      }
+    }
+
+    if (__DEV__) {
+      console.info('[photo-import reverse geocode] completed', {
+        failureReason: result.failureReason,
+        labelExtracted: Boolean(result.label),
+        placemarkReturned: Boolean(result.address),
+        rateLimited: result.rateLimited,
+      });
+    }
+
+    return result;
+  })();
 
   reverseGeocodeCache.set(cacheKey, request);
 
   if (__DEV__) {
-    console.info('[photo-import reverse geocode] start', { cacheKey });
+    console.info('[photo-import reverse geocode] start');
   }
 
   return request;
@@ -1960,6 +2196,241 @@ async function hydratePhotoDisplayUri(photo: LocalDetectedPhoto) {
   photo.uri = displayUri;
 
   return displayUri;
+}
+
+const PHOTO_MIME_TYPE_BY_EXTENSION: Record<string, string> = {
+  heic: 'image/heic',
+  heif: 'image/heif',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
+
+function createPhotoScanPerformanceMetrics(): PhotoScanPerformanceMetrics {
+  return {
+    assetInfoCacheHitCount: 0,
+    assetInfoRequestCount: 0,
+    candidateAssetCount: 0,
+    candidateGenerationDurationMs: 0,
+    duplicateAssetInfoCallPreventedCount: 0,
+    fastFilterInputCount: 0,
+    fastFilterPassedCount: 0,
+    fastFilteredByReason: {
+      duplicate_asset_id: 0,
+      invalid_creation_time: 0,
+      invalid_dimensions: 0,
+      outside_scan_range: 0,
+      screenshot: 0,
+      unsupported_extension: 0,
+      unsupported_media_type: 0,
+    },
+    filePreparationCacheHitCount: 0,
+    filePreparationDurationMs: 0,
+    geocodingCacheHitCount: 0,
+    geocodingDurationMs: 0,
+    geocodingRequestCount: 0,
+    hydrationTargetCount: 0,
+    iCloudDownloadRequestCount: 0,
+    localAssetReadyWithoutDownloadCount: 0,
+    mediaAssetMappingDurationMs: 0,
+    mediaCollectionDurationMs: 0,
+    mediaFastFilterDurationMs: 0,
+    mediaMetadataLookupDurationMs: 0,
+    mediaPageFetchDurationMs: 0,
+    photoPreparationMaxDurationMs: 0,
+    photoPreparationTimeoutCount: 0,
+    scanDurationMs: 0,
+  };
+}
+
+function getCreatedAfterTimestamp(createdAfter?: Date | number) {
+  if (createdAfter instanceof Date) {
+    return Number.isNaN(createdAfter.getTime()) ? null : createdAfter.getTime();
+  }
+
+  return typeof createdAfter === 'number' && Number.isFinite(createdAfter)
+    ? createdAfter
+    : null;
+}
+
+function getFastAssetFilterReason(
+  asset: MediaLibrary.Asset,
+  createdAfterTimestamp: number | null,
+  seenAssetIds: Set<string>,
+): FastAssetFilterReason | null {
+  if (seenAssetIds.has(asset.id)) {
+    return 'duplicate_asset_id';
+  }
+  seenAssetIds.add(asset.id);
+
+  if (asset.mediaType !== MediaLibrary.MediaType.photo) {
+    return 'unsupported_media_type';
+  }
+
+  if (!Number.isFinite(asset.creationTime) || asset.creationTime <= 0) {
+    return 'invalid_creation_time';
+  }
+
+  if (createdAfterTimestamp !== null && asset.creationTime < createdAfterTimestamp) {
+    return 'outside_scan_range';
+  }
+
+  if (asset.width <= 0 || asset.height <= 0) {
+    return 'invalid_dimensions';
+  }
+
+  if (isScreenshotAsset(asset)) {
+    return 'screenshot';
+  }
+
+  const extension = getFileExtension(asset.filename);
+
+  if (extension && !PHOTO_MIME_TYPE_BY_EXTENSION[extension]) {
+    return 'unsupported_extension';
+  }
+
+  return null;
+}
+
+function markPhotoPreparationFailed(
+  photo: LocalDetectedPhoto,
+  failureStage: NonNullable<LocalDetectedPhoto['preparationFailureStage']>,
+  failureCategory: NonNullable<LocalDetectedPhoto['preparationFailureCategory']>,
+) {
+  photo.preparationStatus = 'failed';
+  photo.preparationFailureStage = failureStage;
+  photo.preparationFailureCategory = failureCategory;
+  return photo;
+}
+
+function resolveDraftPhotoMimeType(photo: LocalDetectedPhoto) {
+  if (photo.mimeType && Object.values(PHOTO_MIME_TYPE_BY_EXTENSION).includes(photo.mimeType)) {
+    return photo.mimeType;
+  }
+
+  return PHOTO_MIME_TYPE_BY_EXTENSION[photo.fileExtension ?? ''] ?? null;
+}
+
+async function prepareLocalDetectedPhotoForDraft(
+  photo: LocalDetectedPhoto,
+  loadDownloadedAssetInfo: (assetId: string) => Promise<MediaLibrary.AssetInfo | null>,
+): Promise<LocalDetectedPhoto | null> {
+  if (photo.isScreenshot) {
+    return markPhotoPreparationFailed(photo, 'metadata', 'unsupported_format');
+  }
+
+  photo.preparationStatus = 'preparing';
+
+  try {
+    if (!isUploadableLocalPhotoUri(photo.localUri)) {
+      if (isUploadableLocalPhotoUri(photo.displayUri)) {
+        photo.localUri = photo.displayUri;
+      } else if (photo.assetId) {
+        const assetInfo = await loadDownloadedAssetInfo(photo.assetId);
+
+        if (!assetInfo) {
+          return markPhotoPreparationFailed(photo, 'asset_info', 'file_unavailable');
+        }
+        const localUri = 'localUri' in assetInfo ? assetInfo.localUri ?? null : null;
+
+        if (!isUploadableLocalPhotoUri(localUri)) {
+          return markPhotoPreparationFailed(photo, 'asset_info', 'file_unavailable');
+        }
+
+        const coordinates = getScannedAssetCoordinates(assetInfo);
+        const filename = readAssetFilename(assetInfo);
+        photo.assetUri = assetInfo.uri;
+        photo.displayUri = localUri;
+        photo.exif = readExif(assetInfo);
+        photo.fileExtension = getFileExtension(filename) ?? photo.fileExtension;
+        photo.fileSize = readAssetFileSize(assetInfo) ?? photo.fileSize;
+        photo.filename = filename ?? photo.filename;
+        photo.height = assetInfo.height || photo.height;
+        photo.latitude = coordinates?.latitude ?? photo.latitude;
+        photo.localUri = localUri;
+        photo.longitude = coordinates?.longitude ?? photo.longitude;
+        photo.mimeType = readAssetMimeType(assetInfo) ?? photo.mimeType;
+        photo.modifiedAt = readAssetModifiedAt(assetInfo) ?? photo.modifiedAt;
+        photo.orientation = readAssetOrientation(assetInfo) ?? photo.orientation;
+        photo.isNetworkAsset = readOptionalBoolean(assetInfo, 'isNetworkAsset') ??
+          photo.isNetworkAsset;
+        photo.uri = localUri;
+        photo.width = assetInfo.width || photo.width;
+      } else {
+        return markPhotoPreparationFailed(photo, 'asset_info', 'file_unavailable');
+      }
+    }
+
+    const mimeType = resolveDraftPhotoMimeType(photo);
+
+    if (!mimeType) {
+      return markPhotoPreparationFailed(photo, 'metadata', 'unsupported_format');
+    }
+
+    if (
+      !photo.assetId ||
+      !photo.filename ||
+      !photo.draftDateKey ||
+      !photo.draftGroupId ||
+      !photo.localUri ||
+      photo.width <= 0 ||
+      photo.height <= 0
+    ) {
+      return markPhotoPreparationFailed(photo, 'metadata', 'metadata_incomplete');
+    }
+
+    if (!photo.fileSize || photo.fileSize <= 0) {
+      try {
+        const response = await fetch(photo.localUri);
+        const fileData = await response.arrayBuffer();
+        photo.fileSize = fileData.byteLength;
+      } catch {
+        return markPhotoPreparationFailed(photo, 'file_read', 'file_unavailable');
+      }
+    }
+
+    if (!photo.fileSize || photo.fileSize <= 0) {
+      return markPhotoPreparationFailed(photo, 'file_read', 'file_unavailable');
+    }
+
+    photo.mimeType = mimeType;
+    photo.preparationFailureCategory = undefined;
+    photo.preparationFailureStage = undefined;
+    photo.preparationStatus = 'ready';
+    return photo;
+  } catch {
+    return markPhotoPreparationFailed(photo, 'asset_info', 'file_unavailable');
+  }
+}
+
+export async function prepareLocalDetectedPhotoForUpload(
+  photo: LocalDetectedPhoto,
+): Promise<LocalDetectedPhoto | null> {
+  const workingPhoto = { ...photo };
+  const preparedPhoto = await withTimeout<LocalDetectedPhoto | null | 'timeout'>(
+    prepareLocalDetectedPhotoForDraft(
+      workingPhoto,
+      (assetId) => MediaLibrary.getAssetInfoAsync(assetId, {
+        shouldDownloadFromNetwork: true,
+      }).catch(() => null),
+    ),
+    PHOTO_PREPARATION_TIMEOUT_MS,
+    'timeout',
+  );
+
+  if (preparedPhoto === 'timeout') {
+    markPhotoPreparationFailed(photo, 'asset_info', 'prepare_timeout');
+    return null;
+  }
+
+  if (!preparedPhoto) {
+    markPhotoPreparationFailed(photo, 'asset_info', 'file_unavailable');
+    return null;
+  }
+
+  Object.assign(photo, preparedPhoto);
+  return photo.preparationStatus === 'ready' ? photo : null;
 }
 
 function getDateGapDays(previousDateKey: string, nextDateKey: string) {
@@ -2302,8 +2773,17 @@ function calculateCandidateDebugMetadata({
 
 function createPhotoFromScannedAsset(asset: ScannedAsset, takenDate: Date): LocalDetectedPhoto {
   const coordinates = getScannedAssetCoordinates(asset);
-  const localUri = 'localUri' in asset ? asset.localUri ?? null : null;
-  const displayUri = isRenderableImageUri(localUri) ? localUri : null;
+  const assetLocalUri = 'localUri' in asset ? asset.localUri ?? null : null;
+  const localUri = isUploadableLocalPhotoUri(assetLocalUri)
+    ? assetLocalUri
+    : isUploadableLocalPhotoUri(asset.uri)
+      ? asset.uri
+      : null;
+  const displayUri = isRenderableImageUri(localUri)
+    ? localUri
+    : isRenderableImageUri(asset.uri)
+      ? asset.uri
+      : null;
   const mediaSubtypes = readMediaSubtypes(asset);
   const isScreenshot = isScreenshotAsset(asset);
   const filename = readAssetFilename(asset);
@@ -2313,7 +2793,9 @@ function createPhotoFromScannedAsset(asset: ScannedAsset, takenDate: Date): Loca
     assetId: asset.id,
     assetUri: asset.uri,
     displayUri,
+    exif: readExif(asset),
     fileExtension: getFileExtension(filename),
+    fileSize: readAssetFileSize(asset),
     filename,
     hasCameraExif: hasCameraExif(asset),
     hasLocation: Boolean(coordinates),
@@ -2322,11 +2804,17 @@ function createPhotoFromScannedAsset(asset: ScannedAsset, takenDate: Date): Loca
     isScreenshot,
     isLikelyCameraPhoto: isLikelyCameraPhotoAsset(asset, { coordinates, isLikelySavedImage, isScreenshot }),
     isLikelySavedImage,
+    isNetworkAsset: readOptionalBoolean(asset, 'isNetworkAsset'),
     latitude: coordinates?.latitude,
     longitude: coordinates?.longitude,
     localUri,
     mediaType: asset.mediaType,
     mediaSubtypes,
+    mimeType: readAssetMimeType(asset),
+    modifiedAt: readAssetModifiedAt(asset),
+    orientation: readAssetOrientation(asset),
+    preparationStatus: 'notPrepared',
+    previewUri: displayUri,
     takenAt: takenDate.toISOString(),
     uri: displayUri,
     width: asset.width,
@@ -2340,12 +2828,15 @@ function createPhotoFromPickedAsset(asset: PickedPhotoAsset, takenDate: Date): L
   const isScreenshot = isScreenshotAsset(asset);
   const filename = readAssetFilename(asset);
   const isLikelySavedImage = isLikelySavedImageAsset(asset, { coordinates, isScreenshot });
+  const localUri = isUploadableLocalPhotoUri(asset.uri) ? asset.uri : null;
 
   return {
     assetId: asset.assetId ?? undefined,
     assetUri: asset.uri,
     displayUri,
+    exif: readExif(asset),
     fileExtension: getFileExtension(filename),
+    fileSize: readAssetFileSize(asset),
     filename,
     hasCameraExif: hasCameraExif(asset),
     hasLocation: Boolean(coordinates),
@@ -2356,8 +2847,14 @@ function createPhotoFromPickedAsset(asset: PickedPhotoAsset, takenDate: Date): L
     isLikelySavedImage,
     latitude: coordinates?.latitude,
     longitude: coordinates?.longitude,
+    localUri,
     mediaType: asset.type ?? 'image',
     mediaSubtypes,
+    mimeType: readAssetMimeType(asset),
+    modifiedAt: readAssetModifiedAt(asset),
+    orientation: readAssetOrientation(asset),
+    preparationStatus: 'notPrepared',
+    previewUri: displayUri,
     takenAt: takenDate.toISOString(),
     uri: displayUri,
     width: asset.width,
@@ -2445,6 +2942,12 @@ function buildDraftFromPhotos(
         new Date(left.photos[0]?.takenAt ?? firstDate).getTime() -
         new Date(right.photos[0]?.takenAt ?? firstDate).getTime()
       ));
+      for (const group of groups) {
+        for (const photo of group.photos) {
+          photo.draftDateKey = dateKey;
+          photo.draftGroupId = group.id;
+        }
+      }
 
       return {
         dateKey,
@@ -3002,7 +3505,10 @@ async function hydrateDraftCoverPhoto(draft: LocalDetectedTripDraft) {
   return 'failed' as const;
 }
 
-async function hydrateDraftTitle(draft: LocalDetectedTripDraft) {
+async function hydrateDraftTitle(
+  draft: LocalDetectedTripDraft,
+  reverseGeocodeStats?: ReverseGeocodeScanStats,
+) {
   const titleBefore = draft.title;
   const startedAt = draft.debugMetadata.titleEnrichmentStartedAt ?? new Date().toISOString();
   draft.debugMetadata.titleEnrichmentStartedAt = startedAt;
@@ -3033,92 +3539,93 @@ async function hydrateDraftTitle(draft: LocalDetectedTripDraft) {
     let didHitRateLimit = false;
 
     for (const titleCoordinate of titleCoordinates) {
-    const result = await withTimeout(
-      reverseGeocodeLocationLabel(titleCoordinate.latitude, titleCoordinate.longitude),
-      REVERSE_GEOCODE_TIMEOUT_MS,
-      { address: null, failed: true, label: null, rateLimited: false },
-    );
-    draft.locationLabel = result.label ?? undefined;
-    draft.regionLabel = result.label ?? undefined;
-
-    if (result.label) {
-      const titleBeforeNormalization = draft.title;
-      const wasShowingGenericFallback =
-        isGenericLocationFallbackTitle(draft.displayTitle) ||
-        isUnresolvedRegionFallbackTitle(draft.displayTitle);
-      draft.debugMetadata.rawLocationLabel = result.label ?? undefined;
-      draft.debugMetadata.rawPlacemarkCity = result.address?.city ?? undefined;
-      draft.debugMetadata.rawPlacemarkCountry = result.address?.country ?? undefined;
-      draft.debugMetadata.rawPlacemarkDistrict = result.address?.district ?? undefined;
-      draft.debugMetadata.rawPlacemarkRegion = result.address?.region ?? undefined;
-      draft.debugMetadata.rawPlacemarkSubregion = result.address?.subregion ?? undefined;
-
-      const { displayTitle, overseasTitleSource, reason } = buildDetectedTripDisplayTitle(
-        result.address,
-        result.label,
+      const result = await reverseGeocodeLocationLabel(
         titleCoordinate.latitude,
         titleCoordinate.longitude,
+        reverseGeocodeStats,
       );
-      draft.enrichmentStatus = 'success';
-      draft.displayTitle = displayTitle;
-      draft.title = displayTitle;
-      draft.debugMetadata.candidateTitleLocationSource = getReverseGeocodeLocationSource(titleCoordinate.source);
-      draft.debugMetadata.normalizedCityName = displayTitle.replace(/\s+\S+$/, '');
-      draft.debugMetadata.overseasTitleSource = overseasTitleSource;
-      draft.debugMetadata.genericFallbackSuppressed = undefined;
-      draft.debugMetadata.unresolvedRegionFallbackTitle = undefined;
-      draft.debugMetadata.unresolvedTitleFallbackSource = undefined;
-      draft.debugMetadata.titleEnrichmentElapsedMs =
-        Date.now() - new Date(startedAt).getTime();
-      draft.debugMetadata.titleEnrichmentFinalizedAt = new Date().toISOString();
-      draft.debugMetadata.titleFinalizeReason =
-        wasShowingGenericFallback
-          ? 'late_success'
-          : 'success';
-      draft.debugMetadata.titleGeocodingInFlight = false;
-      draft.debugMetadata.titleGeocodingRetryable = false;
-      draft.debugMetadata.titleResolveState = 'success';
-      didResolveTitle = true;
+      draft.locationLabel = result.label ?? undefined;
+      draft.regionLabel = result.label ?? undefined;
 
-      if (__DEV__) {
-        console.info('[photo-import title normalization]', {
-          candidateTitleCoordinateSource: titleCoordinate.source,
-          candidateTitleLocationSource: draft.debugMetadata.candidateTitleLocationSource,
-          normalizedDisplayTitle: displayTitle,
-          overseasTitleSource,
-          rawPlacemarkCity: result.address?.city,
-          rawPlacemarkCountry: result.address?.country,
-          rawPlacemarkDistrict: result.address?.district,
-          rawPlacemarkRegion: result.address?.region,
-          rawPlacemarkSubregion: result.address?.subregion,
-          rawLocationLabel: result.label,
-          titleAfter: draft.title,
-          titleBefore: titleBeforeNormalization,
-          titleNormalizationReason: reason,
-        });
+      if (result.label) {
+        const titleBeforeNormalization = draft.title;
+        const wasShowingGenericFallback =
+          isGenericLocationFallbackTitle(draft.displayTitle) ||
+          isUnresolvedRegionFallbackTitle(draft.displayTitle);
+        draft.debugMetadata.rawLocationLabel = result.label ?? undefined;
+        draft.debugMetadata.rawPlacemarkCity = result.address?.city ?? undefined;
+        draft.debugMetadata.rawPlacemarkCountry = result.address?.country ?? undefined;
+        draft.debugMetadata.rawPlacemarkDistrict = result.address?.district ?? undefined;
+        draft.debugMetadata.rawPlacemarkRegion = result.address?.region ?? undefined;
+        draft.debugMetadata.rawPlacemarkSubregion = result.address?.subregion ?? undefined;
+
+        const { displayTitle, overseasTitleSource, reason } = buildDetectedTripDisplayTitle(
+          result.address,
+          result.label,
+          titleCoordinate.latitude,
+          titleCoordinate.longitude,
+        );
+        draft.enrichmentStatus = 'success';
+        draft.displayTitle = displayTitle;
+        draft.title = displayTitle;
+        draft.debugMetadata.candidateTitleLocationSource = getReverseGeocodeLocationSource(titleCoordinate.source);
+        draft.debugMetadata.normalizedCityName = displayTitle.replace(/\s+\S+$/, '');
+        draft.debugMetadata.overseasTitleSource = overseasTitleSource;
+        draft.debugMetadata.genericFallbackSuppressed = undefined;
+        draft.debugMetadata.unresolvedRegionFallbackTitle = undefined;
+        draft.debugMetadata.unresolvedTitleFallbackSource = undefined;
+        draft.debugMetadata.titleEnrichmentElapsedMs =
+          Date.now() - new Date(startedAt).getTime();
+        draft.debugMetadata.titleEnrichmentFinalizedAt = new Date().toISOString();
+        draft.debugMetadata.titleFinalizeReason =
+          wasShowingGenericFallback
+            ? 'late_success'
+            : 'success';
+        draft.debugMetadata.titleGeocodingInFlight = false;
+        draft.debugMetadata.titleGeocodingRetryable = false;
+        draft.debugMetadata.titleResolveState = 'success';
+        didResolveTitle = true;
+
+        if (__DEV__) {
+          console.info('[photo-import title normalization]', {
+            candidateTitleCoordinateSource: titleCoordinate.source,
+            candidateTitleLocationSource: draft.debugMetadata.candidateTitleLocationSource,
+            normalizedDisplayTitle: displayTitle,
+            overseasTitleSource,
+            titleAfter: draft.title,
+            titleBefore: titleBeforeNormalization,
+            titleNormalizationReason: reason,
+          });
+        }
+        break;
+      } else if (result.rateLimited) {
+        draft.enrichmentStatus = 'rate_limited';
+        const fallbackTitle = getLocationFallbackTitle(
+          titleCoordinate.latitude,
+          titleCoordinate.longitude,
+        );
+        draft.displayTitle = fallbackTitle;
+        draft.title = fallbackTitle;
+        draft.debugMetadata.candidateTitleLocationSource = 'unresolved_region_fallback';
+        draft.debugMetadata.genericFallbackSuppressed = true;
+        draft.debugMetadata.unresolvedRegionFallbackTitle = fallbackTitle;
+        draft.debugMetadata.unresolvedTitleFallbackSource = 'rate_limited';
+        draft.debugMetadata.titleEnrichmentElapsedMs =
+          Date.now() - new Date(startedAt).getTime();
+        draft.debugMetadata.titleEnrichmentFinalizedAt = new Date().toISOString();
+        draft.debugMetadata.titleFinalizeReason = 'rate_limited';
+        draft.debugMetadata.titleGeocodingInFlight = false;
+        draft.debugMetadata.titleGeocodingRetryable = false;
+        draft.debugMetadata.titleResolveState = 'unresolved';
+        addWarningReason(draft, 'reverse_geocode_rate_limited');
+        didHitRateLimit = true;
+        if (reverseGeocodeStats) {
+          reverseGeocodeStats.fallbackFinalizedCount += 1;
+        }
+        break;
+      } else {
+        addWarningReason(draft, 'reverse_geocode_failed');
       }
-      break;
-    } else if (result.rateLimited) {
-      draft.enrichmentStatus = 'rate_limited';
-      draft.displayTitle = PENDING_LOCATION_TITLE;
-      draft.title = PENDING_LOCATION_TITLE;
-      draft.debugMetadata.candidateTitleLocationSource = 'pending';
-      draft.debugMetadata.genericFallbackSuppressed = undefined;
-      draft.debugMetadata.unresolvedRegionFallbackTitle = undefined;
-      draft.debugMetadata.unresolvedTitleFallbackSource = 'rate_limited';
-      draft.debugMetadata.titleEnrichmentElapsedMs =
-        Date.now() - new Date(startedAt).getTime();
-      draft.debugMetadata.titleEnrichmentFinalizedAt = new Date().toISOString();
-      draft.debugMetadata.titleFinalizeReason = 'rate_limited';
-      draft.debugMetadata.titleGeocodingInFlight = false;
-      draft.debugMetadata.titleGeocodingRetryable = true;
-      draft.debugMetadata.titleResolveState = 'pending';
-      addWarningReason(draft, 'reverse_geocode_rate_limited');
-      didHitRateLimit = true;
-      break;
-    } else {
-      addWarningReason(draft, 'reverse_geocode_failed');
-    }
     }
 
     if (!didResolveTitle && !didHitRateLimit) {
@@ -3138,6 +3645,9 @@ async function hydrateDraftTitle(draft: LocalDetectedTripDraft) {
       draft.debugMetadata.titleGeocodingRetryable = false;
       draft.debugMetadata.titleResolveState = 'unresolved';
       addWarningReason(draft, 'no_location_label');
+      if (reverseGeocodeStats) {
+        reverseGeocodeStats.fallbackFinalizedCount += 1;
+      }
     }
   } else {
     draft.enrichmentStatus = 'failed';
@@ -3158,6 +3668,9 @@ async function hydrateDraftTitle(draft: LocalDetectedTripDraft) {
     draft.debugMetadata.titleGeocodingRetryable = false;
     draft.debugMetadata.titleResolveState = hasGpsPhotos ? 'unresolved' : 'failed';
     addWarningReason(draft, hasGpsPhotos ? 'invalid_centroid' : 'no_gps_for_title');
+    if (hasGpsPhotos && reverseGeocodeStats) {
+      reverseGeocodeStats.fallbackFinalizedCount += 1;
+    }
   }
 
   if (__DEV__) {
@@ -3192,17 +3705,28 @@ function finalizePendingTitleForUi(
     ? new Date(draft.debugMetadata.titleEnrichmentStartedAt)
     : now;
 
-  draft.enrichmentStatus = reason === 'ui_timeout' ? 'pending_background' : 'pending';
-  draft.displayTitle = PENDING_LOCATION_TITLE;
-  draft.title = PENDING_LOCATION_TITLE;
-  draft.debugMetadata.candidateTitleLocationSource = 'pending';
-  draft.debugMetadata.genericFallbackSuppressed = undefined;
-  draft.debugMetadata.unresolvedRegionFallbackTitle = undefined;
+  const shouldRemainPending = reason === 'ui_timeout';
+  const fallbackTitle = getLocationFallbackTitle(
+    titleCoordinate.latitude,
+    titleCoordinate.longitude,
+  );
+  draft.enrichmentStatus = shouldRemainPending
+    ? 'pending_background'
+    : 'finalized_without_label';
+  draft.displayTitle = shouldRemainPending ? PENDING_LOCATION_TITLE : fallbackTitle;
+  draft.title = shouldRemainPending ? PENDING_LOCATION_TITLE : fallbackTitle;
+  draft.debugMetadata.candidateTitleLocationSource = shouldRemainPending
+    ? 'pending'
+    : 'unresolved_region_fallback';
+  draft.debugMetadata.genericFallbackSuppressed = shouldRemainPending ? undefined : true;
+  draft.debugMetadata.unresolvedRegionFallbackTitle = shouldRemainPending
+    ? undefined
+    : fallbackTitle;
   draft.debugMetadata.unresolvedTitleFallbackSource = reason;
   draft.debugMetadata.titleEnrichmentElapsedMs = now.getTime() - startedAt.getTime();
   draft.debugMetadata.titleFinalizeReason = reason;
-  draft.debugMetadata.titleGeocodingRetryable = true;
-  draft.debugMetadata.titleResolveState = 'pending';
+  draft.debugMetadata.titleGeocodingRetryable = shouldRemainPending;
+  draft.debugMetadata.titleResolveState = shouldRemainPending ? 'pending' : 'unresolved';
 
   if (reason === 'skipped') {
     draft.debugMetadata.titleGeocodingSkippedReason = 'visible_queue_limit';
@@ -3286,6 +3810,13 @@ function evaluateCandidateQuality(draft: LocalDetectedTripDraft): {
   const isSavedImageHeavy =
     metadata.savedImageRatio >= SAVED_IMAGE_HEAVY_RATIO &&
     metadata.realPhotoCount < MIN_SINGLE_DAY_VISIBLE_PHOTOS;
+  const isMetadataLimitedTemporalCandidate =
+    metadata.candidateMetadataLookupCompleted === true &&
+    metadata.dayCount >= 2 &&
+    metadata.dayCount <= LONG_STAY_MAX_DAYS &&
+    metadata.realPhotoCount >= MIN_SHORT_TRIP_REAL_PHOTOS &&
+    !isSavedImageHeavy &&
+    !metadata.warningReasons.includes('screenshot_only_or_mostly_screenshot');
   const isHiddenHomeRegionCandidate = metadata.excludedBecauseHomeRegion === true;
   const isLongTripPostMerged = metadata.splitReason === 'long_trip_post_merged';
   const isProtectedLongStayCandidate =
@@ -3388,10 +3919,11 @@ function evaluateCandidateQuality(draft: LocalDetectedTripDraft): {
     isGeneralTripCandidate ||
     isHighMobilityCandidate ||
     isOverseasTripCandidate ||
-    isLongTripCandidate;
+    isLongTripCandidate ||
+    isMetadataLimitedTemporalCandidate;
   let candidateQualityScore = metadata.confidenceScore;
 
-  if (metadata.confidenceLevel === 'low') {
+  if (metadata.confidenceLevel === 'low' && !isMetadataLimitedTemporalCandidate) {
     reasons.push('confidence_low');
     candidateQualityScore -= 20;
   }
@@ -3400,17 +3932,21 @@ function evaluateCandidateQuality(draft: LocalDetectedTripDraft): {
     reasons.push('hidden_home_region');
   }
 
-  if (metadata.gpsPhotoCount <= 0) {
+  if (metadata.gpsPhotoCount <= 0 && !isMetadataLimitedTemporalCandidate) {
     reasons.push('no_gps_for_title');
     reviewNeededReasons.push('weak_location_evidence');
     candidateQualityScore -= 20;
-  } else if (metadata.gpsPhotoCount < MIN_VISIBLE_GPS_PHOTOS) {
+  } else if (
+    metadata.gpsPhotoCount > 0 &&
+    metadata.gpsPhotoCount < MIN_VISIBLE_GPS_PHOTOS &&
+    !isMetadataLimitedTemporalCandidate
+  ) {
     reasons.push('low_gps_photo_count');
     reviewNeededReasons.push('weak_location_evidence');
     candidateQualityScore -= 12;
   }
 
-  if (!hasValidCentroid) {
+  if (!hasValidCentroid && !isMetadataLimitedTemporalCandidate) {
     reasons.push('invalid_centroid');
     reviewNeededReasons.push('weak_location_evidence');
     candidateQualityScore -= 15;
@@ -3507,6 +4043,7 @@ function evaluateCandidateQuality(draft: LocalDetectedTripDraft): {
     }
   } else if (
     !isProtectedLongStayCandidate &&
+    !isMetadataLimitedTemporalCandidate &&
     (
       metadata.realPhotoCount < MIN_LONG_TRIP_REAL_PHOTOS ||
       metadata.gpsPhotoCount < MIN_ONE_DAY_STRICT_GPS_PHOTOS ||
@@ -3607,103 +4144,310 @@ function wait(ms: number) {
   });
 }
 
-function enrichDraftTitlesInBackground(
-  draftsToEnrich: LocalDetectedTripDraft[],
-  onCandidatesUpdated?: (candidates: PhotoImportTripCandidate[]) => void,
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
 ) {
-  const visiblePendingDrafts = draftsToEnrich
-    .filter((draft) => canShowDraftAsCandidate(draft) || canQueueDraftTitleEnrichment(draft))
-    .filter((draft) => draft.enrichmentStatus === 'pending')
-    .sort((left, right) => {
-      const leftNeedsLocation = !left.locationLabel ? 1 : 0;
-      const rightNeedsLocation = !right.locationLabel ? 1 : 0;
+  let nextIndex = 0;
 
-      if (leftNeedsLocation !== rightNeedsLocation) {
-        return rightNeedsLocation - leftNeedsLocation;
-      }
-
-      return right.debugMetadata.gpsPhotoCount - left.debugMetadata.gpsPhotoCount;
-    });
-  const queue = visiblePendingDrafts.slice(0, TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT);
-  const skippedDrafts = visiblePendingDrafts.slice(TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT);
-
-  for (const draft of visiblePendingDrafts) {
-    draft.debugMetadata.titleEnrichmentStartedAt =
-      draft.debugMetadata.titleEnrichmentStartedAt ?? new Date().toISOString();
+  async function runWorker() {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex];
+      nextIndex += 1;
+      await worker(item);
+    }
   }
 
-  for (const draft of skippedDrafts) {
-    draft.debugMetadata.titleGeocodingQueued = false;
-    finalizePendingTitleForUi(draft, 'skipped');
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, items.length) },
+      () => runWorker(),
+    ),
+  );
+}
+
+interface CandidateMetadataLookupStats {
+  candidateMetadataAssetInfoRequestCount: number;
+  candidateMetadataDisplayUriFoundCount: number;
+  candidateMetadataLocationFoundCount: number;
+  candidateMetadataLookupSuccessCount: number;
+  candidatesNeedingMetadataLookup: number;
+}
+
+function getCandidateMetadataRepresentativePhotos(draft: LocalDetectedTripDraft) {
+  const photos = getDraftPhotos(draft)
+    .filter((photo) => Boolean(photo.assetId))
+    .sort((left, right) => (
+      new Date(left.takenAt).getTime() - new Date(right.takenAt).getTime()
+    ));
+
+  if (photos.length === 0) {
+    return [];
   }
 
-  if (__DEV__) {
-    console.info('[photo-import enrichment] geocoding queue started', {
-      pendingTitleMaxAgeMs: PENDING_TITLE_MAX_AGE_MS,
-      titleGeocodingQueueLimit: TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT,
-      titleGeocodingQueuedVisibleCandidateCount: queue.length,
-      titleGeocodingSkippedVisibleCandidateCount: Math.max(0, visiblePendingDrafts.length - queue.length),
-      titleGeocodingVisibleCandidateCount: visiblePendingDrafts.length,
-      locationTitleEnrichmentQueuedCount: queue.length,
-      locationTitleEnrichmentSkippedCount: Math.max(0, visiblePendingDrafts.length - queue.length),
-      geocodingQueueSize: queue.length,
-    });
+  const middlePhoto = photos[Math.floor((photos.length - 1) / 2)];
+  const representativePhotos = [
+    middlePhoto,
+    photos[0],
+    photos[photos.length - 1],
+  ];
+  const seenAssetIds = new Set<string>();
+
+  return representativePhotos.filter((photo): photo is LocalDetectedPhoto => {
+    if (!photo?.assetId || seenAssetIds.has(photo.assetId)) {
+      return false;
+    }
+
+    seenAssetIds.add(photo.assetId);
+    return true;
+  }).slice(0, CANDIDATE_METADATA_MAX_ASSETS);
+}
+
+function applyCandidateMetadataToPhoto(
+  photo: LocalDetectedPhoto,
+  assetInfo: MediaLibrary.AssetInfo,
+) {
+  const coordinates = getScannedAssetCoordinates(assetInfo);
+  const assetLocalUri = 'localUri' in assetInfo ? assetInfo.localUri ?? null : null;
+  const displayUri = isRenderableImageUri(assetLocalUri)
+    ? assetLocalUri
+    : isRenderableImageUri(assetInfo.uri)
+      ? assetInfo.uri
+      : null;
+  const filename = readAssetFilename(assetInfo);
+
+  if (coordinates) {
+    photo.hasLocation = true;
+    photo.latitude = coordinates.latitude;
+    photo.longitude = coordinates.longitude;
+    photo.isLikelyCameraPhoto = true;
+    photo.isLikelySavedImage = false;
   }
 
-  if (skippedDrafts.length > 0) {
-    onCandidatesUpdated?.(getVisibleCandidateDrafts(draftsToEnrich).map(createCandidateFromDraft));
+  if (displayUri) {
+    photo.displayUri = displayUri;
+    photo.previewUri = displayUri;
+    photo.uri = displayUri;
   }
 
-  void (async () => {
-    let geocodingFailCount = 0;
-    let geocodingRateLimitedCount = 0;
-    let geocodingStartedCount = 0;
-    let geocodingSuccessCount = 0;
-    let titleEnrichmentPendingUiTimedOutCount = 0;
+  photo.filename = filename ?? photo.filename;
+  photo.fileExtension = getFileExtension(filename) ?? photo.fileExtension;
 
-    const timeoutId = setTimeout(() => {
-      for (const draft of queue) {
-        if (finalizePendingTitleForUi(draft, 'ui_timeout')) {
-          titleEnrichmentPendingUiTimedOutCount += 1;
+  return {
+    displayUriFound: Boolean(displayUri),
+    locationFound: Boolean(coordinates),
+  };
+}
+
+function rebuildDraftAfterCandidateMetadata(
+  draft: LocalDetectedTripDraft,
+  lookupResult: {
+    displayUriFound: boolean;
+    locationFound: boolean;
+  },
+) {
+  const rebuiltDraft = buildDraftFromPhotos(
+    getDraftPhotos(draft),
+    draft.id,
+    draft.debugMetadata.splitReason,
+    draft.debugMetadata.dateGapSplitCount,
+    draft.debugMetadata.oversizedSplitCount,
+  );
+
+  if (!rebuiltDraft) {
+    return draft;
+  }
+
+  rebuiltDraft.createdAt = draft.createdAt;
+  rebuiltDraft.debugMetadata.candidateMetadataDisplayUriFound = lookupResult.displayUriFound;
+  rebuiltDraft.debugMetadata.candidateMetadataLocationFound = lookupResult.locationFound;
+  rebuiltDraft.debugMetadata.candidateMetadataLookupCompleted = true;
+  rebuiltDraft.debugMetadata.mergedFromCandidateCount = draft.debugMetadata.mergedFromCandidateCount;
+  const hasStrongTemporalEvidence =
+    rebuiltDraft.debugMetadata.dayCount >= 2 &&
+    rebuiltDraft.debugMetadata.dayCount <= LONG_STAY_MAX_DAYS &&
+    rebuiltDraft.debugMetadata.realPhotoCount >= MIN_SHORT_TRIP_REAL_PHOTOS &&
+    rebuiltDraft.debugMetadata.savedImageRatio < SAVED_IMAGE_HEAVY_RATIO &&
+    !rebuiltDraft.debugMetadata.warningReasons.includes('screenshot_only_or_mostly_screenshot');
+
+  if (hasStrongTemporalEvidence && rebuiltDraft.debugMetadata.confidenceLevel === 'low') {
+    rebuiltDraft.debugMetadata.confidenceLevel = 'medium';
+    rebuiltDraft.debugMetadata.confidenceScore = Math.max(
+      CONFIDENCE_MEDIUM_THRESHOLD,
+      rebuiltDraft.debugMetadata.confidenceScore,
+    );
+    rebuiltDraft.debugMetadata.warningReasons =
+      rebuiltDraft.debugMetadata.warningReasons.filter((reason) => reason !== 'confidence_low');
+  }
+
+  if (lookupResult.locationFound) {
+    rebuiltDraft.displayTitle = PENDING_LOCATION_TITLE;
+    rebuiltDraft.enrichmentStatus = 'pending';
+    rebuiltDraft.title = PENDING_LOCATION_TITLE;
+  } else {
+    rebuiltDraft.displayTitle = UNRESOLVED_REGION_TITLE;
+    rebuiltDraft.enrichmentStatus = 'finalized_without_label';
+    rebuiltDraft.title = UNRESOLVED_REGION_TITLE;
+    rebuiltDraft.debugMetadata.candidateTitleLocationSource = 'unresolved_region_fallback';
+    rebuiltDraft.debugMetadata.titleFinalizeReason = 'candidate_metadata_location_not_found';
+    rebuiltDraft.debugMetadata.titleResolveState = 'unresolved';
+    rebuiltDraft.debugMetadata.unresolvedRegionFallbackTitle = UNRESOLVED_REGION_TITLE;
+    rebuiltDraft.debugMetadata.unresolvedTitleFallbackSource = 'candidate_metadata_location_not_found';
+  }
+
+  if (draft.debugMetadata.splitReason === 'long_trip_post_merged') {
+    rebuiltDraft.debugMetadata.isLongTripCandidate = true;
+    addWarningReason(rebuiltDraft, 'long_trip_post_merged');
+  }
+
+  return rebuiltDraft;
+}
+
+async function enrichTimeCandidatesWithRepresentativeMetadata(
+  draftsToEnrich: LocalDetectedTripDraft[],
+): Promise<{
+  drafts: LocalDetectedTripDraft[];
+  stats: CandidateMetadataLookupStats;
+}> {
+  const candidatesNeedingMetadata = draftsToEnrich.filter(
+    (draft) => draft.debugMetadata.gpsPhotoCount === 0,
+  );
+  const assetInfoCache = new Map<string, Promise<MediaLibrary.AssetInfo | null>>();
+  const lookupResultsByDraftId = new Map<string, {
+    displayUriFound: boolean;
+    locationFound: boolean;
+  }>();
+  const stats: CandidateMetadataLookupStats = {
+    candidateMetadataAssetInfoRequestCount: 0,
+    candidateMetadataDisplayUriFoundCount: 0,
+    candidateMetadataLocationFoundCount: 0,
+    candidateMetadataLookupSuccessCount: 0,
+    candidatesNeedingMetadataLookup: candidatesNeedingMetadata.length,
+  };
+
+  const loadAssetInfo = (assetId: string) => {
+    const cached = assetInfoCache.get(assetId);
+
+    if (cached) {
+      return cached;
+    }
+
+    stats.candidateMetadataAssetInfoRequestCount += 1;
+    const request = MediaLibrary.getAssetInfoAsync(assetId, {
+      shouldDownloadFromNetwork: false,
+    })
+      .then((assetInfo) => {
+        stats.candidateMetadataLookupSuccessCount += 1;
+        return assetInfo;
+      })
+      .catch(() => null);
+    assetInfoCache.set(assetId, request);
+    return request;
+  };
+
+  await runWithConcurrency(
+    candidatesNeedingMetadata,
+    CANDIDATE_METADATA_LOOKUP_CONCURRENCY,
+    async (draft) => {
+      let displayUriFound = false;
+      let locationFound = false;
+
+      for (const photo of getCandidateMetadataRepresentativePhotos(draft)) {
+        if (!photo.assetId) {
+          continue;
+        }
+
+        const assetInfo = await loadAssetInfo(photo.assetId);
+
+        if (!assetInfo) {
+          continue;
+        }
+
+        const applied = applyCandidateMetadataToPhoto(photo, assetInfo);
+        displayUriFound ||= applied.displayUriFound;
+        locationFound ||= applied.locationFound;
+
+        if (applied.locationFound) {
+          break;
         }
       }
 
-      if (titleEnrichmentPendingUiTimedOutCount > 0) {
-        onCandidatesUpdated?.(getVisibleCandidateDrafts(draftsToEnrich).map(createCandidateFromDraft));
+      if (displayUriFound) {
+        stats.candidateMetadataDisplayUriFoundCount += 1;
       }
-    }, PENDING_TITLE_MAX_AGE_MS);
-
-    for (const draft of queue) {
-      geocodingStartedCount += 1;
-      await hydrateDraftTitle(draft);
-
-      if (draft.enrichmentStatus === 'success') {
-        geocodingSuccessCount += 1;
-      } else if (draft.enrichmentStatus === 'rate_limited') {
-        geocodingRateLimitedCount += 1;
-        break;
-      } else if (draft.enrichmentStatus === 'failed') {
-        geocodingFailCount += 1;
+      if (locationFound) {
+        stats.candidateMetadataLocationFoundCount += 1;
       }
+      lookupResultsByDraftId.set(draft.id, { displayUriFound, locationFound });
+    },
+  );
 
-      onCandidatesUpdated?.(getVisibleCandidateDrafts(draftsToEnrich).map(createCandidateFromDraft));
-      await wait(REVERSE_GEOCODE_DELAY_MS);
+  return {
+    drafts: draftsToEnrich.map((draft) => {
+      const lookupResult = lookupResultsByDraftId.get(draft.id);
+      return lookupResult
+        ? rebuildDraftAfterCandidateMetadata(draft, lookupResult)
+        : draft;
+    }),
+    stats,
+  };
+}
+
+async function enrichDraftTitlesBeforeResults(
+  draftsToEnrich: LocalDetectedTripDraft[],
+  onProgress: PhotoLibraryScanOptions['onProgress'],
+  progressContext: {
+    currentPage: number;
+    failedPreparationCount: number;
+    scanAttemptId: string;
+  },
+  reverseGeocodeStats?: ReverseGeocodeScanStats,
+) {
+  const eligibleDrafts = draftsToEnrich.filter((draft) => (
+    draft.debugMetadata.gpsPhotoCount > 0 &&
+    getCandidateTitleCoordinateAttempts(draft).length > 0
+  ));
+  const queue = eligibleDrafts.filter((draft) => (
+    !draft.locationLabel &&
+    draft.enrichmentStatus !== 'success'
+  ));
+
+  if (reverseGeocodeStats) {
+    reverseGeocodeStats.eligibleCandidateCount = eligibleDrafts.length;
+    reverseGeocodeStats.queuedCandidateCount = queue.length;
+  }
+
+  for (let index = 0; index < queue.length; index += 1) {
+    const draft = queue[index];
+    await hydrateDraftTitle(draft, reverseGeocodeStats);
+    onProgress?.({
+      currentPage: progressContext.currentPage,
+      detectedCandidateCount: 0,
+      failedPreparationCount: progressContext.failedPreparationCount,
+      hasNextPage: false,
+      phase: 'resolving_locations',
+      phaseCompletedCount: index + 1,
+      phaseTotalCount: queue.length,
+      scanAttemptId: progressContext.scanAttemptId,
+      scannedAssetCount: index + 1,
+      totalAssetCount: queue.length,
+    });
+  }
+
+  for (const draft of draftsToEnrich) {
+    if (
+      draft.enrichmentStatus === 'pending' ||
+      draft.enrichmentStatus === 'pending_background' ||
+      draft.displayTitle === PENDING_LOCATION_TITLE
+    ) {
+      const didFinalize = finalizePendingTitleForUi(draft, 'finalized_without_label');
+
+      if (didFinalize && reverseGeocodeStats) {
+        reverseGeocodeStats.fallbackFinalizedCount += 1;
+      }
     }
-
-    clearTimeout(timeoutId);
-    onCandidatesUpdated?.(getVisibleCandidateDrafts(draftsToEnrich).map(createCandidateFromDraft));
-
-    if (__DEV__) {
-      console.info('[photo-import enrichment] geocoding queue completed', {
-        geocodingFailCount,
-        geocodingQueueSize: queue.length,
-        geocodingRateLimitedCount,
-        geocodingStartedCount,
-        geocodingSuccessCount,
-        titleEnrichmentPendingUiTimedOutCount,
-      });
-    }
-  })();
+  }
 }
 
 function createCandidateFromDraft(draft: LocalDetectedTripDraft): PhotoImportTripCandidate {
@@ -4106,12 +4850,36 @@ export async function hydrateLocalDetectedTripDraftPhotos(
 async function scanPhotoLibraryForTripDrafts(
   options: PhotoLibraryScanOptions = {},
 ): Promise<PhotoLibraryScanResult> {
+  const scanStartedAt = Date.now();
+  const metrics = createPhotoScanPerformanceMetrics();
+  const reverseGeocodeStats: ReverseGeocodeScanStats = {
+    cacheHitCount: 0,
+    eligibleCandidateCount: 0,
+    failureReasonCounts: {
+      api_error: 0,
+      empty_label: 0,
+      empty_placemark: 0,
+      invalid_coordinate: 0,
+      rate_limited: 0,
+      timeout: 0,
+    },
+    fallbackFinalizedCount: 0,
+    labelEmptyCount: 0,
+    labelExtractedCount: 0,
+    placemarkReturnedCount: 0,
+    queuedCandidateCount: 0,
+    requestFailureCount: 0,
+    requestStartedCount: 0,
+    requestSuccessCount: 0,
+  };
   const scanAttemptId = createPhotoScanAttemptId();
   drafts.clear();
   processedCandidateFingerprints.clear();
   coverHydrationFailedDraftIds.clear();
   coverHydrationInFlightDraftIds.clear();
   coverHydrationCompletedDraftIds.clear();
+  reverseGeocodeCache.clear();
+  lastReverseGeocodeRequestStartedAt = 0;
 
   if (__DEV__) {
     console.info('[photo-import scan] transient state reset', {
@@ -4175,6 +4943,7 @@ async function scanPhotoLibraryForTripDrafts(
       detectedCandidateHiddenByPhotoOverlapCount: 0,
       detectedCandidateVisibleAfterSavedFilterCount: 0,
       skippedScreenshotCount: 0,
+      failedPhotoPreparationCount: 0,
       skippedPhUriCount: 0,
       totalAssetCount: 0,
       visibleDetectedTripCandidateCount: 0,
@@ -4184,12 +4953,17 @@ async function scanPhotoLibraryForTripDrafts(
   const photos: LocalDetectedPhoto[] = [];
   const savedDetectedCandidateRegistryLoadedCount =
     await hydrateSavedDetectedCandidateRegistry(options.savedRegistryUserId);
+  const seenAssetIds = new Set<string>();
+  const createdAfterTimestamp = getCreatedAfterTimestamp(options.createdAfter);
+  const mediaCollectionStartedAt = Date.now();
+  let fetchedAssetCount = 0;
   let after: string | undefined;
   let hasNextPage = true;
   let pageCount = 0;
   let totalAssetCount = 0;
 
   while (hasNextPage) {
+    const pageFetchStartedAt = Date.now();
     const page = await MediaLibrary.getAssetsAsync({
       after,
       createdAfter: options.createdAfter,
@@ -4197,6 +4971,7 @@ async function scanPhotoLibraryForTripDrafts(
       mediaType: MediaLibrary.MediaType.photo,
       sortBy: [[MediaLibrary.SortBy.creationTime, false]],
     });
+    metrics.mediaPageFetchDurationMs += Date.now() - pageFetchStartedAt;
     pageCount += 1;
     totalAssetCount = page.totalCount;
 
@@ -4217,26 +4992,45 @@ async function scanPhotoLibraryForTripDrafts(
       );
     }
 
-    const assetInfos = await Promise.all(
-      page.assets.map((asset) =>
-        MediaLibrary.getAssetInfoAsync(asset, { shouldDownloadFromNetwork: false }).catch(() => asset),
-      ),
-    );
+    fetchedAssetCount += page.assets.length;
+    metrics.fastFilterInputCount += page.assets.length;
+    const fastFilterStartedAt = Date.now();
+    const fastFilteredAssets = page.assets.filter((asset) => {
+      const reason = getFastAssetFilterReason(
+        asset,
+        createdAfterTimestamp,
+        seenAssetIds,
+      );
+
+      if (reason) {
+        metrics.fastFilteredByReason[reason] += 1;
+        return false;
+      }
+
+      metrics.fastFilterPassedCount += 1;
+      return true;
+    });
+    metrics.mediaFastFilterDurationMs += Date.now() - fastFilterStartedAt;
     const fallbackDate = new Date();
+    const assetMappingStartedAt = Date.now();
 
     photos.push(
-      ...assetInfos
+      ...fastFilteredAssets
         .map((asset) => createPhotoFromScannedAsset(asset, getScannedAssetDate(asset, fallbackDate)))
         .filter((photo) => photo.assetId),
     );
+    metrics.mediaAssetMappingDurationMs += Date.now() - assetMappingStartedAt;
     after = page.endCursor;
     hasNextPage = page.hasNextPage;
     options.onProgress?.({
       currentPage: pageCount,
       detectedCandidateCount: 0,
       hasNextPage,
+      phase: 'collecting',
+      phaseCompletedCount: fetchedAssetCount,
+      phaseTotalCount: totalAssetCount,
       scanAttemptId,
-      scannedAssetCount: photos.length,
+      scannedAssetCount: fetchedAssetCount,
       totalAssetCount,
     });
 
@@ -4245,13 +5039,14 @@ async function scanPhotoLibraryForTripDrafts(
         currentPage: pageCount,
         hasNextPage,
         scanAttemptId,
-        scannedAssetCount: photos.length,
+        scannedAssetCount: fetchedAssetCount,
         totalAssetCount,
       });
     }
 
     await yieldToEventLoop();
   }
+  metrics.mediaCollectionDurationMs = Date.now() - mediaCollectionStartedAt;
 
   logPhotoScanDateRangeSummary(
     'photoScanMediaLibraryPaginationSummary',
@@ -4270,7 +5065,9 @@ async function scanPhotoLibraryForTripDrafts(
     { scanAttemptId },
   );
 
-  const skippedScreenshotCount = photos.filter((photo) => photo.isScreenshot).length;
+  const skippedScreenshotCount =
+    metrics.fastFilteredByReason.screenshot +
+    photos.filter((photo) => photo.isScreenshot).length;
   const screenshotFilteredPhotos = photos.filter((photo) => !photo.isScreenshot);
   const candidatePhotos = screenshotFilteredPhotos;
   const photosAfterScreenshotFilterCount = candidatePhotos.length;
@@ -4314,14 +5111,15 @@ async function scanPhotoLibraryForTripDrafts(
       skippedScreenshotCount,
     },
   );
-  const assetsWithLocationCount = photos.filter((photo) => photo.hasLocation).length;
-  const photosWithCoordinatesCount = photos.filter((photo) => getPhotoCoordinates(photo)).length;
-  const assetsWithoutLocationCount = photos.length - assetsWithLocationCount;
-  const assetsWithDisplayUriCount = photos.filter((photo) => isRenderableImageUri(photo.displayUri)).length;
-  const assetsWithoutDisplayUriCount = photos.length - assetsWithDisplayUriCount;
+  let assetsWithLocationCount = photos.filter((photo) => photo.hasLocation).length;
+  let photosWithCoordinatesCount = photos.filter((photo) => getPhotoCoordinates(photo)).length;
+  let assetsWithoutLocationCount = photos.length - assetsWithLocationCount;
+  let assetsWithDisplayUriCount = photos.filter((photo) => isRenderableImageUri(photo.displayUri)).length;
+  let assetsWithoutDisplayUriCount = photos.length - assetsWithDisplayUriCount;
   const skippedPhUriCount = photos.filter((photo) => (
     photo.assetUri?.startsWith('ph://') && !isRenderableImageUri(photo.displayUri)
   )).length;
+  const candidateGenerationStartedAt = Date.now();
   const {
     drafts: generatedDrafts,
     oversizedCandidateSplitCount,
@@ -4329,8 +5127,18 @@ async function scanPhotoLibraryForTripDrafts(
   } = splitPhotosIntoTripDrafts(candidatePhotos);
   const {
     duplicateCandidateCount,
-    drafts: nextDrafts,
+    drafts: deduplicatedDrafts,
   } = filterDuplicateCandidateDrafts(generatedDrafts);
+  metrics.candidateGenerationDurationMs = Date.now() - candidateGenerationStartedAt;
+  const {
+    drafts: nextDrafts,
+    stats: candidateMetadataLookupStats,
+  } = await enrichTimeCandidatesWithRepresentativeMetadata(deduplicatedDrafts);
+  assetsWithLocationCount = photos.filter((photo) => photo.hasLocation).length;
+  photosWithCoordinatesCount = photos.filter((photo) => getPhotoCoordinates(photo)).length;
+  assetsWithoutLocationCount = photos.length - assetsWithLocationCount;
+  assetsWithDisplayUriCount = photos.filter((photo) => isRenderableImageUri(photo.displayUri)).length;
+  assetsWithoutDisplayUriCount = photos.length - assetsWithDisplayUriCount;
   for (const draft of nextDrafts) {
     draft.debugMetadata.scanAttemptId = scanAttemptId;
   }
@@ -4351,6 +5159,24 @@ async function scanPhotoLibraryForTripDrafts(
       visibleCandidateInputCount: sortedNextDrafts.length,
     },
   );
+  if (__DEV__) {
+    console.info('[photo-import candidate metadata] lookup completed', {
+      candidateMetadataAssetInfoRequestCount:
+        candidateMetadataLookupStats.candidateMetadataAssetInfoRequestCount,
+      candidateMetadataDisplayUriFoundCount:
+        candidateMetadataLookupStats.candidateMetadataDisplayUriFoundCount,
+      candidateMetadataLocationFoundCount:
+        candidateMetadataLookupStats.candidateMetadataLocationFoundCount,
+      candidateMetadataLookupConcurrency: CANDIDATE_METADATA_LOOKUP_CONCURRENCY,
+      candidateMetadataLookupSuccessCount:
+        candidateMetadataLookupStats.candidateMetadataLookupSuccessCount,
+      candidateMetadataMaxAssetsPerCandidate: CANDIDATE_METADATA_MAX_ASSETS,
+      candidatesNeedingMetadataLookup:
+        candidateMetadataLookupStats.candidatesNeedingMetadataLookup,
+      generatedCandidateCount: generatedDrafts.length,
+      scanAttemptId,
+    });
+  }
 
   applyRepeatedLocalClusterMetadata(nextDrafts);
   logRecentCandidateLifecycle('after_repeated_local', sortedNextDrafts, scanAttemptId);
@@ -4424,6 +5250,56 @@ async function scanPhotoLibraryForTripDrafts(
       scanAttemptId,
     },
   );
+  const preparationCandidateDrafts = sortedNextDrafts.filter(
+    (draft) => canShowDraftAsCandidate(draft) || canQueueDraftTitleEnrichment(draft),
+  );
+  metrics.candidateAssetCount = new Set(
+    preparationCandidateDrafts
+      .flatMap(getDraftPhotos)
+      .map(getPhotoStableIdentifier),
+  ).size;
+  const geocodingStartedAt = Date.now();
+  await enrichDraftTitlesBeforeResults(
+    sortedNextDrafts,
+    options.onProgress,
+    {
+      currentPage: pageCount,
+      failedPreparationCount: 0,
+      scanAttemptId,
+    },
+    reverseGeocodeStats,
+  );
+  metrics.geocodingDurationMs = Date.now() - geocodingStartedAt;
+  metrics.geocodingCacheHitCount = reverseGeocodeStats.cacheHitCount;
+  metrics.geocodingRequestCount = reverseGeocodeStats.requestStartedCount;
+  if (__DEV__) {
+    console.info('[photo-import geocoding] pipeline summary', {
+      cacheHitCount: reverseGeocodeStats.cacheHitCount,
+      eligibleCandidateCount: reverseGeocodeStats.eligibleCandidateCount,
+      failureReasonCounts: reverseGeocodeStats.failureReasonCounts,
+      fallbackFinalizedCount: reverseGeocodeStats.fallbackFinalizedCount,
+      labelEmptyCount: reverseGeocodeStats.labelEmptyCount,
+      labelExtractedCount: reverseGeocodeStats.labelExtractedCount,
+      placemarkReturnedCount: reverseGeocodeStats.placemarkReturnedCount,
+      queuedCandidateCount: reverseGeocodeStats.queuedCandidateCount,
+      requestFailureCount: reverseGeocodeStats.requestFailureCount,
+      requestStartedCount: reverseGeocodeStats.requestStartedCount,
+      requestSuccessCount: reverseGeocodeStats.requestSuccessCount,
+      scanAttemptId,
+    });
+  }
+  options.onProgress?.({
+    currentPage: pageCount,
+    detectedCandidateCount: preparationCandidateDrafts.length,
+    failedPreparationCount: 0,
+    hasNextPage: false,
+    phase: 'building_candidates',
+    phaseCompletedCount: 0,
+    phaseTotalCount: preparationCandidateDrafts.length,
+    scanAttemptId,
+    scannedAssetCount: 0,
+    totalAssetCount: preparationCandidateDrafts.length,
+  });
   storeDrafts(sortedNextDrafts);
   logRecentCandidateLifecycle('store_persisted', sortedNextDrafts, scanAttemptId);
   const savedCandidateMatchReasons = nextDrafts.map((draft) => getSavedCandidateMatchReason(draft));
@@ -4452,15 +5328,6 @@ async function scanPhotoLibraryForTripDrafts(
       savedDetectedCandidateRegistryLoadedCount,
     },
   );
-  options.onProgress?.({
-    currentPage: pageCount,
-    detectedCandidateCount: 0,
-    hasNextPage: false,
-    scanAttemptId,
-    scannedAssetCount: photos.length,
-    totalAssetCount,
-  });
-
   if (__DEV__) {
     console.info('[photo-import scan] scan phase completed', {
       detectedTripCandidateCount: nextDrafts.length,
@@ -4481,11 +5348,14 @@ async function scanPhotoLibraryForTripDrafts(
       livingAreaRadiusKm: HOME_REGION_EXCLUSION_RADIUS_KM,
       livingAreaUnclassifiedPhotoCount,
       scanSource: options.source ?? 'home',
-      scannedAssetCount: photos.length,
+      scannedAssetCount: fetchedAssetCount,
       totalAssetCount,
     });
-    console.info('[photo-import enrichment] title phase scheduled', {
+    console.info('[photo-import enrichment] title phase completed', {
       candidateCount: nextDrafts.length,
+      pendingCandidateCount: nextDrafts.filter(
+        (draft) => draft.enrichmentStatus === 'pending',
+      ).length,
     });
   }
 
@@ -4695,7 +5565,6 @@ async function scanPhotoLibraryForTripDrafts(
       draft.displayTitle === OVERSEAS_TRIP_TITLE
     )
   )).length;
-  const visiblePendingDraftCount = visibleDrafts.filter((draft) => draft.enrichmentStatus === 'pending').length;
   const visiblePendingLocationTitleCandidateCount = visibleDrafts.filter((draft) => (
     syncCandidateQualityMetadata(draft).isLocationTitlePending
   )).length;
@@ -4756,14 +5625,17 @@ async function scanPhotoLibraryForTripDrafts(
   )).length;
   const overseasSuburbSuppressedCount = overseasMajorCityNormalizedCount;
 
-  enrichDraftTitlesInBackground(nextDrafts, options.onCandidatesUpdated);
   options.onProgress?.({
     currentPage: pageCount,
     detectedCandidateCount: candidates.length,
+    failedPreparationCount: 0,
     hasNextPage: false,
+    phase: 'building_candidates',
+    phaseCompletedCount: candidates.length,
+    phaseTotalCount: candidates.length,
     scanAttemptId,
-    scannedAssetCount: totalAssetCount || photos.length,
-    totalAssetCount: totalAssetCount || photos.length,
+    scannedAssetCount: candidates.length,
+    totalAssetCount: candidates.length,
   });
 
   if (__DEV__) {
@@ -4966,7 +5838,6 @@ async function scanPhotoLibraryForTripDrafts(
         draft.title === PENDING_LOCATION_TITLE
       )).length,
       pendingTitleCandidateCountBeforeFinalize: pendingLocationTitleCandidateCount,
-      pendingTitleMaxAgeMs: PENDING_TITLE_MAX_AGE_MS,
       unresolvedRegionTitleAppliedCount,
       photosAfterScreenshotFilterCount,
       gpsPhotoCountAfter2024May,
@@ -4974,7 +5845,7 @@ async function scanPhotoLibraryForTripDrafts(
       nonGpsPhotoCountAfter2024May,
       photosWithCoordinatesCount,
       rawDateBucketCount: candidateGenerationStats.rawDateBucketCount,
-      scannedAssetCount: photos.length,
+      scannedAssetCount: fetchedAssetCount,
       savedDetectedCandidateRegistryLoadedCount,
       shortTripCandidateCount: candidateGenerationStats.shortTripCandidateCount,
       shortTripVisibleCandidateCount,
@@ -5044,26 +5915,14 @@ async function scanPhotoLibraryForTripDrafts(
       ).length,
       weakCandidateCount,
     });
-    console.info('[photo-import enrichment] title phase scheduled', {
+    console.info('[photo-import enrichment] title phase completed', {
       candidateCountAfterLongTripMerge: candidateGenerationStats.candidateCountAfterLongTripMerge,
       scanAttemptId,
-      titleGeocodingQueueLimit: TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT,
-      titleGeocodingVisibleCandidateCount: visiblePendingDraftCount,
-      titleGeocodingQueuedVisibleCandidateCount: Math.min(
-        TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT,
-        visiblePendingDraftCount,
-      ),
-      titleGeocodingSkippedVisibleCandidateCount: Math.max(
-        0,
-        visiblePendingDraftCount - TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT,
-      ),
-      locationTitleEnrichmentQueuedCount: Math.min(
-        TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT,
-        visiblePendingDraftCount,
-      ),
+      titleGeocodingVisibleCandidateCount: reverseGeocodeStats.eligibleCandidateCount,
+      locationTitleEnrichmentQueuedCount: reverseGeocodeStats.queuedCandidateCount,
       locationTitleEnrichmentSkippedCount: Math.max(
         0,
-        visiblePendingDraftCount - TITLE_REVERSE_GEOCODE_VISIBLE_LIMIT,
+        reverseGeocodeStats.eligibleCandidateCount - reverseGeocodeStats.queuedCandidateCount,
       ),
       hiddenNoLocationTitleCandidateCount,
       hiddenLowConfidenceCandidateCount,
@@ -5087,6 +5946,71 @@ async function scanPhotoLibraryForTripDrafts(
       scanAttemptId,
     },
   );
+  metrics.scanDurationMs = Date.now() - scanStartedAt;
+
+  if (__DEV__) {
+    console.info('[photo-import performance] first scan summary', {
+      assetInfoCacheHitCount: metrics.assetInfoCacheHitCount,
+      assetInfoRequestCount: metrics.assetInfoRequestCount,
+      candidateAssetCount: metrics.candidateAssetCount,
+      candidateGenerationDurationMs: metrics.candidateGenerationDurationMs,
+      candidateMetadataAssetInfoRequestCount:
+        candidateMetadataLookupStats.candidateMetadataAssetInfoRequestCount,
+      candidateMetadataDisplayUriFoundCount:
+        candidateMetadataLookupStats.candidateMetadataDisplayUriFoundCount,
+      candidateMetadataLocationFoundCount:
+        candidateMetadataLookupStats.candidateMetadataLocationFoundCount,
+      candidateMetadataLookupSuccessCount:
+        candidateMetadataLookupStats.candidateMetadataLookupSuccessCount,
+      candidatesNeedingMetadataLookup:
+        candidateMetadataLookupStats.candidatesNeedingMetadataLookup,
+      downloadedAssetInfoRequestCount: 0,
+      duplicateAssetInfoCallPreventedCount: metrics.duplicateAssetInfoCallPreventedCount,
+      fastFilterInputCount: metrics.fastFilterInputCount,
+      fastFilterPassedCount: metrics.fastFilterPassedCount,
+      fastFilteredByReason: metrics.fastFilteredByReason,
+      filePreparationCacheHitCount: metrics.filePreparationCacheHitCount,
+      filePreparationConcurrency: 0,
+      filePreparationDurationMs: metrics.filePreparationDurationMs,
+      geocodingCacheHitCount: metrics.geocodingCacheHitCount,
+      geocodingDurationMs: metrics.geocodingDurationMs,
+      geocodingRequestCount: metrics.geocodingRequestCount,
+      hydrationTargetCount: metrics.hydrationTargetCount,
+      iCloudDownloadRequestCount: metrics.iCloudDownloadRequestCount,
+      localAssetReadyWithoutDownloadCount: metrics.localAssetReadyWithoutDownloadCount,
+      mediaAssetMappingDurationMs: metrics.mediaAssetMappingDurationMs,
+      mediaCollectionDurationMs: metrics.mediaCollectionDurationMs,
+      mediaFastFilterDurationMs: metrics.mediaFastFilterDurationMs,
+      mediaMetadataLookupDurationMs: metrics.mediaMetadataLookupDurationMs,
+      mediaPageFetchDurationMs: metrics.mediaPageFetchDurationMs,
+      metadataAssetInfoPurposeCounts: {
+        candidateGrouping: 0,
+        displayUri: 0,
+        filenameExtension: 0,
+        location: 0,
+        other: 0,
+        screenshotSubtype: 0,
+      },
+      metadataAssetInfoPurposeDurationMs: {
+        candidateGrouping: 0,
+        displayUri: 0,
+        filenameExtension: 0,
+        location: 0,
+        other: 0,
+        screenshotSubtype: 0,
+      },
+      metadataAssetInfoRequestCount: metrics.assetInfoRequestCount,
+      photoPreparationMaxDurationMs: metrics.photoPreparationMaxDurationMs,
+      photoPreparationTimeoutCount: metrics.photoPreparationTimeoutCount,
+      scanAttemptId,
+      scanDurationMs: metrics.scanDurationMs,
+      scanPreviewReadyAssetCount: photos.filter(
+        (photo) => isRenderableImageUri(photo.previewUri ?? photo.displayUri),
+      ).length,
+      scanUploadPreparationRequestCount: 0,
+      totalFetchedAssetCount: fetchedAssetCount,
+    });
+  }
 
   return {
     assetsWithDisplayUriCount,
@@ -5097,6 +6021,7 @@ async function scanPhotoLibraryForTripDrafts(
     detectedTripCandidateCount: nextDrafts.length,
     duplicateCandidateCount,
     drafts: sortedNextDrafts,
+    failedPhotoPreparationCount: 0,
     hiddenNoLocationTitleCandidateCount,
     hiddenLowConfidenceCandidateCount,
     hiddenScreenshotCandidateCount,
@@ -5115,7 +6040,7 @@ async function scanPhotoLibraryForTripDrafts(
     photosAfterScreenshotFilterCount,
     savedDetectedCandidateRegistryLoadedCount,
     scanAttemptId,
-    scannedAssetCount: photos.length,
+    scannedAssetCount: fetchedAssetCount,
     detectedCandidateFingerprintComputedCount,
     detectedCandidateHiddenByExactFingerprintCount,
     detectedCandidateHiddenByPhotoOverlapCount,

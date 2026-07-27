@@ -132,6 +132,9 @@ export default function FindTripsLoading() {
             </Text>
             <View style={styles.analysisProgressSection}>
               <PhotoAnalysisProgressSection
+                phase={scanProgress?.phase}
+                phaseCompletedCount={scanProgress?.phaseCompletedCount}
+                phaseTotalCount={scanProgress?.phaseTotalCount}
                 progress={progress}
                 scannedAssetCount={scanProgress?.scannedAssetCount}
                 totalAssetCount={scanProgress?.totalAssetCount}

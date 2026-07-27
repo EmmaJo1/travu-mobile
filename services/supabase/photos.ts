@@ -14,11 +14,25 @@ export interface UploadPhotoAssetInput {
   localUri: string;
   longitude?: number | null;
   mimeType?: string | null;
+  onLifecycleEvent?: (
+    event: 'photo_row_created' | 'storage_object_deleted' | 'storage_object_uploaded',
+  ) => void;
   placeId?: string | null;
   takenAt?: Date | number | string | null;
   tripDayId: string;
   tripId: string;
   width?: number | null;
+}
+
+function notifyPhotoUploadLifecycle(
+  input: UploadPhotoAssetInput,
+  event: 'photo_row_created' | 'storage_object_deleted' | 'storage_object_uploaded',
+) {
+  try {
+    input.onLifecycleEvent?.(event);
+  } catch {
+    // Observability must not change the upload transaction outcome.
+  }
 }
 
 export interface UploadPhotoAssetResult {
@@ -409,6 +423,7 @@ export async function uploadPhotoAsset(
     });
 
   throwIfError(uploadError);
+  notifyPhotoUploadLifecycle(input, 'storage_object_uploaded');
 
   const payload: TablesInsert<'photos'> = {
     exif_data: metadata.exifData,
@@ -438,6 +453,7 @@ export async function uploadPhotoAsset(
     if (!photo) {
       throw new Error('The uploaded photo metadata could not be saved.');
     }
+    notifyPhotoUploadLifecycle(input, 'photo_row_created');
 
     return {
       bucket: PHOTO_STORAGE_BUCKET,
@@ -447,10 +463,10 @@ export async function uploadPhotoAsset(
   } catch (insertError) {
     try {
       await removePhotoStorageObjectForUser(storagePath, userId);
-    } catch (cleanupError) {
+      notifyPhotoUploadLifecycle(input, 'storage_object_deleted');
+    } catch {
       console.warn('[photo upload] storage rollback failed', {
-        error: cleanupError,
-        photoId,
+        storageRollbackFailed: true,
       });
     }
 

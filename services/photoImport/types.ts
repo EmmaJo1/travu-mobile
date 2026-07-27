@@ -69,6 +69,9 @@ export interface PhotoImportCandidateDebugMetadata {
   scanAttemptId?: string;
   candidateQualityScore?: number;
   candidateQualityType?: PhotoImportCandidateQualityType;
+  candidateMetadataLookupCompleted?: boolean;
+  candidateMetadataLocationFound?: boolean;
+  candidateMetadataDisplayUriFound?: boolean;
   startDate: string;
   endDate: string;
   dayCount: number;
