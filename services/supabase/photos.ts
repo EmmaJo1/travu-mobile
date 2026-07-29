@@ -5,6 +5,13 @@ export const PHOTO_STORAGE_BUCKET = 'photos';
 
 export type PhotoRow = Tables<'photos'>;
 
+export type PhotoQueryScreen = 'saved_day_archive_detail' | 'saved_place_detail';
+
+export type ResolvedPhotoRow = PhotoRow & {
+  displayUrl: string | null;
+  displayUrlStatus: 'failed' | 'missing' | 'ready';
+};
+
 export interface UploadPhotoAssetInput {
   exif?: Record<string, unknown> | null;
   fileName?: string | null;
@@ -41,6 +48,33 @@ export interface UploadPhotoAssetResult {
   storagePath: string;
 }
 
+export interface UploadPlacePhotoItem {
+  input: UploadPhotoAssetInput;
+  sourceIdentifier: string;
+}
+
+export interface UploadPlacePhotosResult {
+  failedItems: UploadPlacePhotoItem[];
+  failureCounts: Record<PhotoUploadFailureStage, number>;
+  skippedCount: number;
+  uploadedPhotoCount: number;
+}
+
+export type PhotoUploadFailureStage =
+  | 'original_preparation'
+  | 'photo_row_insert'
+  | 'storage_upload';
+
+export class PhotoUploadError extends Error {
+  stage: PhotoUploadFailureStage;
+
+  constructor(message: string, stage: PhotoUploadFailureStage) {
+    super(message);
+    this.name = 'PhotoUploadError';
+    this.stage = stage;
+  }
+}
+
 type SupportedPhotoMimeType =
   | 'image/heic'
   | 'image/heif'
@@ -54,6 +88,8 @@ type NormalizedPhotoFileType = {
 };
 
 const MAX_PHOTO_FILE_SIZE = 50 * 1024 * 1024;
+const PHOTO_SIGNED_URL_TTL_SECONDS = 60 * 60;
+const PHOTO_SIGNED_URL_CACHE_BUFFER_MS = 60 * 1000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MIME_TYPE_BY_EXTENSION: Record<string, SupportedPhotoMimeType> = {
   heic: 'image/heic',
@@ -70,6 +106,14 @@ const FILE_TYPE_BY_MIME_TYPE: Record<SupportedPhotoMimeType, NormalizedPhotoFile
   'image/png': { extension: 'png', mimeType: 'image/png' },
   'image/webp': { extension: 'webp', mimeType: 'image/webp' },
 };
+const signedPhotoUrlCache = new Map<string, {
+  expiresAt: number;
+  promise: Promise<string | null>;
+}>();
+const activePlacePhotoUploadOperations =
+  new Map<string, Promise<UploadPlacePhotosResult>>();
+const savedPlacePhotoResultsByIdentifier =
+  new Map<string, UploadPhotoAssetResult>();
 
 function throwIfError(error: Error | null) {
   if (error) {
@@ -90,6 +134,129 @@ function getFileExtension(value?: string | null) {
   const withoutQuery = value?.split(/[?#]/)[0] ?? '';
   const match = withoutQuery.match(/\.([a-z0-9]+)$/i);
   return match?.[1]?.toLowerCase() ?? '';
+}
+
+function getUsablePhotoUrl(value?: string | null) {
+  const trimmedValue = value?.trim();
+
+  return trimmedValue && /^(https?:|content:|file:)/i.test(trimmedValue)
+    ? trimmedValue
+    : null;
+}
+
+function getCachedSignedPhotoUrl(storagePath: string) {
+  const cached = signedPhotoUrlCache.get(storagePath);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.promise;
+  }
+
+  const promise = supabase.storage
+    .from(PHOTO_STORAGE_BUCKET)
+    .createSignedUrl(storagePath, PHOTO_SIGNED_URL_TTL_SECONDS)
+    .then(({ data, error }) => {
+      if (error || !data?.signedUrl) {
+        signedPhotoUrlCache.delete(storagePath);
+        return null;
+      }
+
+      return data.signedUrl;
+    })
+    .catch(() => {
+      signedPhotoUrlCache.delete(storagePath);
+      return null;
+    });
+
+  signedPhotoUrlCache.set(storagePath, {
+    expiresAt:
+      Date.now() +
+      PHOTO_SIGNED_URL_TTL_SECONDS * 1000 -
+      PHOTO_SIGNED_URL_CACHE_BUFFER_MS,
+    promise,
+  });
+
+  return promise;
+}
+
+async function resolvePhotoRows(
+  rows: PhotoRow[],
+  screen: PhotoQueryScreen,
+): Promise<ResolvedPhotoRow[]> {
+  const storagePaths = [
+    ...new Set(
+      rows
+        .filter((row) => (
+          !getUsablePhotoUrl(row.thumbnail_url) &&
+          !getUsablePhotoUrl(row.image_url)
+        ))
+        .map((row) => row.storage_path?.trim())
+        .filter((path): path is string => Boolean(path)),
+    ),
+  ];
+  const signedUrlEntries = await Promise.all(
+    storagePaths.map(async (storagePath) => (
+      [storagePath, await getCachedSignedPhotoUrl(storagePath)] as const
+    )),
+  );
+  const signedUrlsByStoragePath = new Map(signedUrlEntries);
+  const resolvedRows = rows.map((row): ResolvedPhotoRow => {
+    const directUrl =
+      getUsablePhotoUrl(row.thumbnail_url) ??
+      getUsablePhotoUrl(row.image_url);
+    const signedUrl = row.storage_path
+      ? signedUrlsByStoragePath.get(row.storage_path.trim()) ?? null
+      : null;
+    const displayUrl = directUrl ?? signedUrl;
+
+    return {
+      ...row,
+      displayUrl,
+      displayUrlStatus: displayUrl
+        ? 'ready'
+        : row.storage_path
+          ? 'failed'
+          : 'missing',
+    };
+  });
+
+  if (__DEV__) {
+    console.info('[photo query] completed', {
+      photoQueryStarted: true,
+      photoRowCount: rows.length,
+      renderedPhotoCount: resolvedRows.filter((row) => row.displayUrl).length,
+      screen,
+      signedUrlFailureCount: signedUrlEntries.filter(([, url]) => !url).length,
+      signedUrlRequestedCount: storagePaths.length,
+      signedUrlSuccessCount: signedUrlEntries.filter(([, url]) => Boolean(url)).length,
+    });
+  }
+
+  return resolvedRows;
+}
+
+async function fetchResolvedPhotos(
+  column: 'place_id' | 'trip_day_id',
+  id: string,
+  screen: PhotoQueryScreen,
+) {
+  if (__DEV__) {
+    console.info('[photo query] started', {
+      photoQueryStarted: true,
+      screen,
+    });
+  }
+
+  const { data, error } = await supabase
+    .from('photos')
+    .select(
+      'id, user_id, trip_id, trip_day_id, place_id, storage_path, image_url, thumbnail_url, local_uri, taken_at, width, height, mime_type, file_name, file_size, latitude, longitude, city, country, city_ko, country_ko, exif_data, created_at, updated_at, deleted_at',
+    )
+    .eq(column, id)
+    .is('deleted_at', null)
+    .order('taken_at', { ascending: true, nullsFirst: false });
+
+  throwIfError(error);
+  return resolvePhotoRows(data ?? [], screen);
 }
 
 export function resolvePhotoUploadFileType(
@@ -404,8 +571,17 @@ export async function uploadPhotoAsset(
     photoId,
     fileType.extension,
   );
-  const response = await fetch(input.localUri);
-  const fileData = await response.arrayBuffer();
+  let fileData: ArrayBuffer;
+
+  try {
+    const response = await fetch(input.localUri);
+    fileData = await response.arrayBuffer();
+  } catch {
+    throw new PhotoUploadError(
+      'The selected image could not be prepared for upload.',
+      'original_preparation',
+    );
+  }
 
   if (fileData.byteLength === 0) {
     throw new Error('The selected image file is empty.');
@@ -422,7 +598,12 @@ export async function uploadPhotoAsset(
       upsert: false,
     });
 
-  throwIfError(uploadError);
+  if (uploadError) {
+    throw new PhotoUploadError(
+      'The selected image could not be uploaded.',
+      'storage_upload',
+    );
+  }
   notifyPhotoUploadLifecycle(input, 'storage_object_uploaded');
 
   const payload: TablesInsert<'photos'> = {
@@ -470,8 +651,145 @@ export async function uploadPhotoAsset(
       });
     }
 
-    throw insertError;
+    throw insertError instanceof PhotoUploadError
+      ? insertError
+      : new PhotoUploadError(
+        'The uploaded photo metadata could not be saved.',
+        'photo_row_insert',
+      );
   }
+}
+
+export function uploadPlacePhotos(items: UploadPlacePhotoItem[]) {
+  const firstItem = items[0];
+
+  if (!firstItem) {
+    return Promise.resolve<UploadPlacePhotosResult>({
+      failedItems: [],
+      failureCounts: {
+        original_preparation: 0,
+        photo_row_insert: 0,
+        storage_upload: 0,
+      },
+      skippedCount: 0,
+      uploadedPhotoCount: 0,
+    });
+  }
+
+  const operationKey = [
+    firstItem.input.tripId,
+    firstItem.input.tripDayId,
+    firstItem.input.placeId ?? 'no-place',
+  ].join(':');
+  const activeOperation = activePlacePhotoUploadOperations.get(operationKey);
+
+  if (activeOperation) {
+    if (__DEV__) {
+      console.info('[photo upload] duplicate blocked', {
+        photoUploadDuplicateBlocked: true,
+      });
+    }
+    return activeOperation;
+  }
+
+  const operation = (async (): Promise<UploadPlacePhotosResult> => {
+    const uniqueItems = [
+      ...new Map(
+        items.map((item) => [
+          `${operationKey}:${item.sourceIdentifier}`,
+          item,
+        ]),
+      ).values(),
+    ];
+    const pendingItems = uniqueItems.filter((item) => (
+      !savedPlacePhotoResultsByIdentifier.has(
+        `${operationKey}:${item.sourceIdentifier}`,
+      )
+    ));
+    const skippedCount = items.length - pendingItems.length;
+    const uploadedRows: PhotoRow[] = [];
+    const failedItems: UploadPlacePhotoItem[] = [];
+    const failureCounts: Record<PhotoUploadFailureStage, number> = {
+      original_preparation: 0,
+      photo_row_insert: 0,
+      storage_upload: 0,
+    };
+    let nextIndex = 0;
+    let rollbackDeleteCount = 0;
+
+    if (__DEV__) {
+      console.info('[photo upload] started', {
+        photoUploadStarted: true,
+        selectedPhotoCount: items.length,
+        skippedPhotoCount: skippedCount,
+      });
+    }
+
+    async function uploadNext() {
+      while (nextIndex < pendingItems.length) {
+        const item = pendingItems[nextIndex];
+        nextIndex += 1;
+
+        try {
+          const result = await uploadPhotoAsset({
+            ...item.input,
+            onLifecycleEvent: (event) => {
+              item.input.onLifecycleEvent?.(event);
+
+              if (event === 'storage_object_deleted') {
+                rollbackDeleteCount += 1;
+              }
+            },
+          });
+
+          savedPlacePhotoResultsByIdentifier.set(
+            `${operationKey}:${item.sourceIdentifier}`,
+            result,
+          );
+          uploadedRows.push(result.photo);
+        } catch (error) {
+          const failureStage = error instanceof PhotoUploadError
+            ? error.stage
+            : 'original_preparation';
+          failureCounts[failureStage] += 1;
+          failedItems.push(item);
+        }
+      }
+    }
+
+    await Promise.all(
+      Array.from(
+        { length: Math.min(3, pendingItems.length) },
+        () => uploadNext(),
+      ),
+    );
+
+    if (__DEV__) {
+      console.info('[photo upload] completed', {
+        photoUploadFailureCount: failedItems.length,
+        photoUploadSuccessCount: uploadedRows.length,
+        photoUploadFailureCounts: failureCounts,
+        rollbackDeleteCount,
+      });
+    }
+
+    return {
+      failedItems,
+      failureCounts,
+      skippedCount,
+      uploadedPhotoCount: uploadedRows.length,
+    };
+  })();
+
+  activePlacePhotoUploadOperations.set(operationKey, operation);
+  const clearActiveOperation = () => {
+    if (activePlacePhotoUploadOperations.get(operationKey) === operation) {
+      activePlacePhotoUploadOperations.delete(operationKey);
+    }
+  };
+  void operation.then(clearActiveOperation, clearActiveOperation);
+
+  return operation;
 }
 
 export function listPhotosByPlace(placeId: string) {
@@ -481,6 +799,20 @@ export function listPhotosByPlace(placeId: string) {
     .eq('place_id', placeId)
     .is('deleted_at', null)
     .order('taken_at', { ascending: true, nullsFirst: false });
+}
+
+export function fetchPhotosByPlaceId(
+  placeId: string,
+  screen: PhotoQueryScreen = 'saved_place_detail',
+) {
+  return fetchResolvedPhotos('place_id', placeId, screen);
+}
+
+export function fetchPhotosByTripDayId(
+  tripDayId: string,
+  screen: PhotoQueryScreen = 'saved_day_archive_detail',
+) {
+  return fetchResolvedPhotos('trip_day_id', tripDayId, screen);
 }
 
 export function listPhotosByTrip(tripId: string) {

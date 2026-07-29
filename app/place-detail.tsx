@@ -58,6 +58,7 @@ import { isSupabaseUuid, usePlaceDetailData } from '@/hooks/usePlaceDetailData';
 import { useDeletePlaceRecord } from '@/hooks/useDeletePlaceRecord';
 import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
 import { useTripDays } from '@/hooks/useTripDays';
+import { usePlacePhotos } from '@/hooks/useSupabasePhotos';
 import { useAuth } from '@/providers/AuthProvider';
 import { updatePlace, type PlaceRow, type UpdatePlacePatch } from '@/services/supabase/places';
 import type { TripDayRow } from '@/services/supabase/tripDays';
@@ -67,6 +68,10 @@ import {
   updateRecord,
   type RecordRow,
 } from '@/services/supabase/records';
+import {
+  uploadPlacePhotos,
+  type UploadPlacePhotoItem,
+} from '@/services/supabase/photos';
 
 type PlaceDetailRouteParams = {
   tripId?: string;
@@ -812,6 +817,13 @@ export default function PlaceDetailScreen() {
     refetch: refetchPlaceDetailData,
   } =
     usePlaceDetailData(routePlaceId);
+  const {
+    data: supabasePlacePhotos,
+    isError: isPlacePhotosError,
+    isFetched: hasFetchedPlacePhotos,
+    isPending: isPlacePhotosPending,
+    refetch: refetchPlacePhotos,
+  } = usePlacePhotos(routePlaceId);
   const deletePlaceRecordMutation = useDeletePlaceRecord();
 
   const initialDetail = React.useMemo(
@@ -894,6 +906,11 @@ export default function PlaceDetailScreen() {
   const [gridSelectionResetSignal, setGridSelectionResetSignal] = React.useState(0);
   const isRecordSavingRef = React.useRef(false);
   const isRecordDeletingRef = React.useRef(false);
+  const isPhotoUploadingRef = React.useRef(false);
+  const isPhotoScreenMountedRef = React.useRef(true);
+  const [isPhotoUploading, setPhotoUploading] = React.useState(false);
+  const [failedPhotoUploadItems, setFailedPhotoUploadItems] =
+    React.useState<UploadPlacePhotoItem[]>([]);
   const recordPhotoPickerOpenTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordSheetRestoreTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const supabaseTripIdForPlace = shouldUseSupabasePlaceDetail && isSupabaseUuid(initialDetail?.tripId)
@@ -921,6 +938,30 @@ export default function PlaceDetailScreen() {
       current === snapshot.recordTimeLabel ? current : snapshot.recordTimeLabel
     ));
   }, [detailSyncKey]);
+
+  React.useEffect(() => {
+    if (!shouldUseSupabasePlaceDetail || !hasFetchedPlacePhotos) {
+      return;
+    }
+
+    const nextPhotos = (supabasePlacePhotos ?? [])
+      .filter((photo) => Boolean(photo.displayUrl))
+      .map((photo): PlaceDetailPhoto => ({
+        createdAt: photo.created_at,
+        id: photo.id,
+        source: { uri: photo.displayUrl as string },
+        takenAt: photo.taken_at ?? undefined,
+      }));
+
+    setPhotos((current) => (
+      arePhotoListsEqual(current, nextPhotos) ? current : nextPhotos
+    ));
+  }, [
+    detailSyncKey,
+    hasFetchedPlacePhotos,
+    shouldUseSupabasePlaceDetail,
+    supabasePlacePhotos,
+  ]);
 
   const prepareRecordComposer = React.useCallback((photoIds: string[]) => {
     setEditingRecordId(null);
@@ -971,6 +1012,14 @@ export default function PlaceDetailScreen() {
     }
   }, []);
 
+  React.useEffect(() => {
+    isPhotoScreenMountedRef.current = true;
+
+    return () => {
+      isPhotoScreenMountedRef.current = false;
+    };
+  }, []);
+
   const initialDetailPlaceId = initialDetail?.placeId;
 
   React.useEffect(() => {
@@ -996,6 +1045,18 @@ export default function PlaceDetailScreen() {
   const viewerImages = React.useMemo<ImageSourcePropType[]>(
     () => viewerPhotos.map((photo) => photo.source),
     [viewerPhotos],
+  );
+  const failedPlacePhotoCount = React.useMemo(
+    () => (supabasePlacePhotos ?? []).filter(
+      (photo) => photo.displayUrlStatus === 'failed',
+    ).length,
+    [supabasePlacePhotos],
+  );
+  const missingPlacePhotoCount = React.useMemo(
+    () => (supabasePlacePhotos ?? []).filter(
+      (photo) => photo.displayUrlStatus === 'missing',
+    ).length,
+    [supabasePlacePhotos],
   );
   const selectedRecordPhotos = React.useMemo(
     () => selectedRecordPhotoIds
@@ -1300,6 +1361,7 @@ export default function PlaceDetailScreen() {
       router.replace({
         pathname: '/day-archive-detail',
         params: {
+          tripId: params.tripId ?? initialDetail.tripId,
           dayId: params.dayId ?? initialDetail.dayId,
         },
       });
@@ -1313,8 +1375,70 @@ export default function PlaceDetailScreen() {
     setHeroIndex(Math.round(event.nativeEvent.contentOffset.x / screenWidth));
   };
 
+  const uploadSelectedPlacePhotos = async (items: UploadPlacePhotoItem[]) => {
+    if (isPhotoUploadingRef.current || items.length === 0) {
+      return;
+    }
+
+    isPhotoUploadingRef.current = true;
+    setPhotoUploading(true);
+
+    try {
+      const uploadResult = await uploadPlacePhotos(items);
+      if (isPhotoScreenMountedRef.current) {
+        setFailedPhotoUploadItems(uploadResult.failedItems);
+      }
+
+      const uploadContext = items[0]?.input;
+      if (uploadContext) {
+        await queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripDayPhotos(user?.id, uploadContext.tripDayId),
+        });
+      }
+
+      const refreshResult = await refetchPlacePhotos();
+      if (!isPhotoScreenMountedRef.current) {
+        return;
+      }
+
+      if (refreshResult.isError) {
+        Alert.alert(
+          '\uC0AC\uC9C4\uC740 \uC800\uC7A5\uB410\uC9C0\uB9CC \uBAA9\uB85D\uC744 \uC0C8\uB85C\uACE0\uCE58\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uD655\uC778\uD574 \uC8FC\uC138\uC694.',
+        );
+        return;
+      }
+
+      if (uploadResult.failedItems.length > 0) {
+        Alert.alert(
+          '\uC77C\uBD80 \uC0AC\uC9C4\uC744 \uCD94\uAC00\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC2E4\uD328\uD55C \uC0AC\uC9C4\uB9CC \uB2E4\uC2DC \uC2DC\uB3C4\uD560 \uC218 \uC788\uC5B4\uC694.',
+          [
+            { text: '\uB098\uC911\uC5D0' },
+            {
+              text: '\uB2E4\uC2DC \uC2DC\uB3C4',
+              onPress: () => {
+                void uploadSelectedPlacePhotos(uploadResult.failedItems);
+              },
+            },
+          ],
+        );
+      }
+    } finally {
+      isPhotoUploadingRef.current = false;
+      if (isPhotoScreenMountedRef.current) {
+        setPhotoUploading(false);
+      }
+    }
+  };
+
   const handleAddPhoto = async () => {
     setMoreOpen(false);
+
+    if (isPhotoUploadingRef.current) {
+      return;
+    }
+
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsMultipleSelection: true,
@@ -1326,17 +1450,61 @@ export default function PlaceDetailScreen() {
       return;
     }
 
-    const addedPhotos = result.assets.map((asset) => {
+    if (!shouldUseSupabasePlaceDetail) {
+      const addedPhotos = result.assets.map((asset) => {
+        const takenAt = extractPhotoTakenAt(asset);
+
+        return {
+          id: makePhotoId(),
+          source: { uri: asset.uri },
+          takenAt: takenAt?.toISOString(),
+        };
+      });
+
+      setPhotos((currentPhotos) => [...currentPhotos, ...addedPhotos]);
+      return;
+    }
+
+    const tripId = initialDetail.tripId || routeTripId || '';
+    const tripDayId = initialDetail.dayId || routeDayId || '';
+    const placeId = initialDetail.placeId || routePlaceId || '';
+
+    if (!user?.id || !tripId || !tripDayId || !placeId) {
+      Alert.alert(
+        '\uC0AC\uC9C4\uC744 \uCD94\uAC00\uD560 \uC218 \uC5C6\uC5B4\uC694',
+        '\uC5EC\uD589\uACFC \uC7A5\uC18C \uC815\uBCF4\uB97C \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.',
+      );
+      return;
+    }
+
+    const items = result.assets.map((asset): UploadPlacePhotoItem => {
       const takenAt = extractPhotoTakenAt(asset);
+      const sourceIdentifier = asset.assetId?.trim() || [
+        asset.uri,
+        asset.fileSize ?? '',
+        asset.width,
+        asset.height,
+      ].join(':');
 
       return {
-        id: makePhotoId(),
-        source: { uri: asset.uri },
-        takenAt: takenAt?.toISOString(),
+        input: {
+          exif: asset.exif,
+          fileName: asset.fileName,
+          fileSize: asset.fileSize,
+          height: asset.height,
+          localUri: asset.uri,
+          mimeType: asset.mimeType,
+          placeId,
+          takenAt: takenAt?.toISOString(),
+          tripDayId,
+          tripId,
+          width: asset.width,
+        },
+        sourceIdentifier,
       };
     });
 
-    setPhotos((currentPhotos) => [...currentPhotos, ...addedPhotos]);
+    await uploadSelectedPlacePhotos(items);
   };
 
   const handleSaveRecord = async () => {
@@ -1906,7 +2074,11 @@ export default function PlaceDetailScreen() {
           <View style={styles.sectionHeader}>
             <View style={styles.sectionTitleRow}>
               <Text style={styles.sectionTitle}>{'\uC0AC\uC9C4'}</Text>
-              <Text style={styles.sectionCount}>{photos.length}{'\uC7A5'}</Text>
+              <Text style={styles.sectionCount}>
+                {isPhotoUploading
+                  ? '\uCD94\uAC00 \uC911'
+                  : `${photos.length}\uC7A5`}
+              </Text>
             </View>
             <Pressable accessibilityRole="button" onPress={() => openPhotoGrid(false)} style={styles.viewAllButton}>
               <Text style={styles.viewAllText}>{'\uC804\uCCB4\uBCF4\uAE30'}</Text>
@@ -1914,10 +2086,56 @@ export default function PlaceDetailScreen() {
             </Pressable>
           </View>
 
+          {shouldUseSupabasePlaceDetail && isPlacePhotosPending ? (
+            <View style={styles.photoStatus}>
+              <Text style={styles.photoStatusText}>
+                {'\uC800\uC7A5\uB41C \uC0AC\uC9C4\uC744 \uBD88\uB7EC\uC624\uB294 \uC911\uC774\uC5D0\uC694.'}
+              </Text>
+            </View>
+          ) : isPlacePhotosError || failedPlacePhotoCount > 0 ? (
+            <View style={styles.photoStatus}>
+              <Text style={styles.photoStatusText}>
+                {'\uC77C\uBD80 \uC0AC\uC9C4\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694.'}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  void refetchPlacePhotos();
+                }}
+                style={styles.photoStatusAction}
+              >
+                <Text style={styles.photoStatusActionText}>{'\uB2E4\uC2DC \uC2DC\uB3C4'}</Text>
+              </Pressable>
+            </View>
+          ) : missingPlacePhotoCount > 0 ? (
+            <View style={styles.photoStatus}>
+              <Text style={styles.photoStatusText}>
+                {'\uD45C\uC2DC\uD560 \uC218 \uC5C6\uB294 \uC0AC\uC9C4\uC774 \uC788\uC5B4\uC694.'}
+              </Text>
+            </View>
+          ) : failedPhotoUploadItems.length > 0 ? (
+            <View style={styles.photoStatus}>
+              <Text style={styles.photoStatusText}>
+                {'\uC77C\uBD80 \uC0AC\uC9C4\uC744 \uCD94\uAC00\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694.'}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                disabled={isPhotoUploading}
+                onPress={() => {
+                  void uploadSelectedPlacePhotos(failedPhotoUploadItems);
+                }}
+                style={styles.photoStatusAction}
+              >
+                <Text style={styles.photoStatusActionText}>{'\uC2E4\uD328 \uC0AC\uC9C4 \uB2E4\uC2DC \uC2DC\uB3C4'}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.thumbnailScroll}>
             <View style={styles.thumbnailRow}>
               <Pressable
                 accessibilityRole="button"
+                disabled={isPhotoUploading}
                 onPress={handleAddPhoto}
                 style={[styles.photoThumb, styles.photoAddThumb]}
               >
@@ -3321,6 +3539,22 @@ const styles = StyleSheet.create({
   },
   viewAllText: {
     ...Typography.body2Regular,
+    color: Colors.foundation.black,
+  },
+  photoStatus: {
+    alignItems: 'flex-start',
+    gap: Spacing.xs,
+  },
+  photoStatusText: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+  },
+  photoStatusAction: {
+    minHeight: Spacing['3xl'],
+    justifyContent: 'center',
+  },
+  photoStatusActionText: {
+    ...Typography.body2Emphasized,
     color: Colors.foundation.black,
   },
   thumbnailScroll: {

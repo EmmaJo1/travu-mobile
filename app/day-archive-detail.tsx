@@ -65,6 +65,7 @@ import { useCreatePlaceRecord } from '@/hooks/useCreatePlaceRecord';
 import { useDeletePlaceRecord } from '@/hooks/useDeletePlaceRecord';
 import { useTripDayPlaces } from '@/hooks/useTripDayPlaces';
 import { useTripDayRecords } from '@/hooks/useTripDayRecords';
+import { useTripDayPhotos } from '@/hooks/useSupabasePhotos';
 import { useUpdatePlaceRecord } from '@/hooks/useUpdatePlaceRecord';
 import { isSupabaseUuid } from '@/hooks/usePlaceDetailData';
 import type { TripDayRow } from '@/services/supabase/tripDays';
@@ -939,6 +940,12 @@ export default function DayArchiveDetailScreen() {
     isSuccess: isSupabasePlacesSuccess,
   } = useTripDayPlaces(selectedSupabaseTripDayId);
   const { data: supabaseRecords } = useTripDayRecords(selectedSupabaseTripDayId);
+  const {
+    data: supabasePhotos,
+    isError: isSupabasePhotosError,
+    isPending: isSupabasePhotosPending,
+    refetch: refetchSupabasePhotos,
+  } = useTripDayPhotos(selectedSupabaseTripDayId);
   const visibleArchivePlaces = useMemo(
     () =>
       [...detail.places, ...(addedPlacesByDay[selectedDay.id] ?? [])].filter(
@@ -956,8 +963,9 @@ export default function DayArchiveDetailScreen() {
         supabasePlaces ?? [],
         supabaseRecords ?? [],
         detail.country,
+        supabasePhotos ?? [],
       ),
-    [detail.country, supabasePlaces, supabaseRecords],
+    [detail.country, supabasePhotos, supabasePlaces, supabaseRecords],
   );
   const entries = (
     isSupabaseArchiveTrip
@@ -966,6 +974,12 @@ export default function DayArchiveDetailScreen() {
         ? supabaseEntries
         : fallbackEntries
   ).filter((entry) => !deletedArchivePlaceIds.has(getEntryPlaceId(entry)));
+  const failedSupabasePhotoCount = (supabasePhotos ?? []).filter(
+    (photo) => photo.displayUrlStatus === 'failed',
+  ).length;
+  const missingSupabasePhotoCount = (supabasePhotos ?? []).filter(
+    (photo) => photo.displayUrlStatus === 'missing',
+  ).length;
   const isSupabaseDayEmpty =
     isSupabaseArchiveTrip &&
     Boolean(selectedSupabaseTripDayId) &&
@@ -1565,7 +1579,56 @@ export default function DayArchiveDetailScreen() {
           <MapPlaceholderCard align="top" style={styles.archiveMapCard} />
 
           <View style={styles.entries}>
-            {isSupabasePlacesError ? (
+            {failedSupabasePhotoCount > 0 ? (
+              <View style={styles.dayEmptyState}>
+                <Text style={styles.dayEmptyTitle}>{'\uC77C\uBD80 \uC0AC\uC9C4\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694'}</Text>
+                <Text style={styles.dayEmptyDescription}>
+                  {'\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uD655\uC778\uD574 \uC8FC\uC138\uC694.'}
+                </Text>
+                <View style={styles.emptyStateButtonWrapper}>
+                  <PrimaryButton
+                    label={'\uB2E4\uC2DC \uC2DC\uB3C4'}
+                    onPress={() => {
+                      void refetchSupabasePhotos();
+                    }}
+                    style={styles.emptyStateAddButton}
+                    textStyle={styles.emptyStateAddButtonText}
+                  />
+                </View>
+              </View>
+            ) : missingSupabasePhotoCount > 0 ? (
+              <View style={styles.dayEmptyState}>
+                <Text style={styles.dayEmptyTitle}>{'\uD45C\uC2DC\uD560 \uC218 \uC5C6\uB294 \uC0AC\uC9C4\uC774 \uC788\uC5B4\uC694'}</Text>
+                <Text style={styles.dayEmptyDescription}>
+                  {'\uC0AC\uC9C4 \uC800\uC7A5 \uC815\uBCF4\uB97C \uD655\uC778\uD574 \uC8FC\uC138\uC694.'}
+                </Text>
+              </View>
+            ) : null}
+            {isSupabaseArchiveTrip && Boolean(selectedSupabaseTripDayId) && isSupabasePhotosPending ? (
+              <View style={styles.dayEmptyState}>
+                <Text style={styles.dayEmptyTitle}>{'\uC0AC\uC9C4\uC744 \uBD88\uB7EC\uC624\uB294 \uC911\uC774\uC5D0\uC694'}</Text>
+                <Text style={styles.dayEmptyDescription}>
+                  {'\uC800\uC7A5\uB41C \uC0AC\uC9C4\uC744 \uD655\uC778\uD558\uACE0 \uC788\uC5B4\uC694.'}
+                </Text>
+              </View>
+            ) : isSupabasePhotosError ? (
+              <View style={styles.dayEmptyState}>
+                <Text style={styles.dayEmptyTitle}>{'\uC0AC\uC9C4\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694'}</Text>
+                <Text style={styles.dayEmptyDescription}>
+                  {'\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uD655\uC778\uD574 \uC8FC\uC138\uC694.'}
+                </Text>
+                <View style={styles.emptyStateButtonWrapper}>
+                  <PrimaryButton
+                    label={'\uB2E4\uC2DC \uC2DC\uB3C4'}
+                    onPress={() => {
+                      void refetchSupabasePhotos();
+                    }}
+                    style={styles.emptyStateAddButton}
+                    textStyle={styles.emptyStateAddButtonText}
+                  />
+                </View>
+              </View>
+            ) : isSupabasePlacesError ? (
               <View style={styles.dayEmptyState}>
                 <Text style={styles.dayEmptyTitle}>{'\uC7A5\uC18C\uB97C \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694'}</Text>
                 <Text style={styles.dayEmptyDescription}>

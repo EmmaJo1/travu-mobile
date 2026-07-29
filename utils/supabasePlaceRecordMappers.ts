@@ -1,4 +1,5 @@
 import type { PlaceEntry } from '@/components/trip/PlaceEntryCard';
+import type { ResolvedPhotoRow } from '@/services/supabase/photos';
 import type { PlaceRow } from '@/services/supabase/places';
 import type { RecordRow } from '@/services/supabase/records';
 
@@ -26,6 +27,7 @@ export function mapSupabasePlacesToPlaceEntries(
   places: PlaceRow[],
   records: RecordRow[],
   _fallbackCountryName?: string,
+  photos: ResolvedPhotoRow[] = [],
 ): PlaceEntry[] {
   const recordsByPlaceId = records.reduce((map, record) => {
     const nextRecords = map.get(record.place_id) ?? [];
@@ -33,9 +35,20 @@ export function mapSupabasePlacesToPlaceEntries(
     map.set(record.place_id, nextRecords);
     return map;
   }, new Map<string, RecordRow[]>());
+  const photosByPlaceId = photos.reduce((map, photo) => {
+    if (!photo.place_id || !photo.displayUrl) {
+      return map;
+    }
+
+    const nextPhotos = map.get(photo.place_id) ?? [];
+    nextPhotos.push(photo.displayUrl);
+    map.set(photo.place_id, nextPhotos);
+    return map;
+  }, new Map<string, string[]>());
 
   return places.map((place) => {
     const placeRecords = recordsByPlaceId.get(place.id) ?? [];
+    const placePhotoUris = photosByPlaceId.get(place.id) ?? [];
     const firstRecord = placeRecords[0];
     const time = formatTimeLabel(place.visited_at ?? firstRecord?.visited_at);
     const text = firstRecord?.text ?? place.memo ?? undefined;
@@ -51,7 +64,8 @@ export function mapSupabasePlacesToPlaceEntries(
       id: place.id,
       latitude: place.latitude ?? undefined,
       longitude: place.longitude ?? undefined,
-      photoCount: 0,
+      photoCount: placePhotoUris.length,
+      photoUris: placePhotoUris,
       place: place.custom_name ?? place.name,
       placeId: place.id,
       placeName: place.custom_name ?? place.name,
