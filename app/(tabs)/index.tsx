@@ -79,8 +79,16 @@ import type {
   TripDestinationInput,
   TripDestinationRow,
 } from '@/services/supabase/tripDestinations';
-import { ActiveTripExistsError, type TripRow } from '@/services/supabase/trips';
+import {
+  ActiveTripExistsError,
+  TripCreationStageError,
+  type TripRow,
+} from '@/services/supabase/trips';
 import { mapSupabasePlacesToPlaceEntries } from '@/utils/supabasePlaceRecordMappers';
+import {
+  getCurrentLocalDateKey,
+  isTripActiveForHome,
+} from '@/utils/tripActivity';
 import {
   mapSupabaseTripsToHomeSummaryTrips,
   mapSupabaseTripsToIdleRecentTrips,
@@ -98,6 +106,8 @@ const HERO_MASK_HEIGHT = HERO_HEIGHT - HERO_MASK_TOP;
 const SUMMARY_HEIGHT = 136;
 const SUMMARY_OVERLAP = 104;
 const WARM_WHITE = Colors.warm.white;
+const UUID_DIAGNOSTIC_PATTERN =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 const FIGMA_POINT_EN = 'Sansita Swashed';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SCHEDULE_SHEET_OPEN_DURATION = 240;
@@ -425,12 +435,11 @@ type ReverseGeocodeResponse = {
 };
 
 function getTodayDateKey(): string {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = `${today.getMonth() + 1}`.padStart(2, '0');
-  const day = `${today.getDate()}`.padStart(2, '0');
+  return getCurrentLocalDateKey();
+}
 
-  return `${year}-${month}-${day}`;
+function redactTripCreationDiagnostic(value?: string): string | undefined {
+  return value?.replace(UUID_DIAGNOSTIC_PATTERN, '[redacted]');
 }
 
 function createDestinationId(prefix: string, displayName: string): string {
@@ -986,7 +995,11 @@ export default function HomeScreen() {
   const completeTripMutation = useCompleteTrip();
   const updateDateRangeMutation = useUpdateActiveTripDateRange();
   const syncDestinationsMutation = useSyncActiveTripDestinations();
-  const { data: supabaseActiveTrip } = useActiveTrip();
+  const {
+    data: supabaseActiveTrip,
+    isFetched: isActiveTripFetched,
+    refetch: refetchActiveTrip,
+  } = useActiveTrip();
   const { data: supabaseTrips } = useMyTrips();
   const { data: supabaseRecentTrips } = useRecentTrips(3);
   const { currentTrip, todaySummary } = HOME_MOCK_DATA;
@@ -1005,6 +1018,9 @@ export default function HomeScreen() {
   } = usePhotoImportFlow();
 
   const [deviceHeaderLocationLabel, setDeviceHeaderLocationLabel] = React.useState('');
+  const [currentLocalDateKey, setCurrentLocalDateKey] = React.useState(
+    getCurrentLocalDateKey,
+  );
   const [isTraveling, setIsTraveling] = React.useState(false);
   const [activeTrip, setActiveTrip] = React.useState(INITIAL_ACTIVE_TRIP);
   const [isTravelStatusSheetVisible, setTravelStatusSheetVisible] = React.useState(false);
@@ -1044,7 +1060,17 @@ export default function HomeScreen() {
   const headerLocationRequestIdRef = React.useRef(0);
   const headerLocationRequestInFlightRef = React.useRef(false);
   const lastHeaderLocationRequestAtRef = React.useRef(0);
-  const activeTripId = activeTrip.tripId ?? supabaseActiveTrip?.id;
+  const homeActiveTrip = React.useMemo(
+    () =>
+      supabaseActiveTrip &&
+      isTripActiveForHome(supabaseActiveTrip, currentLocalDateKey)
+        ? supabaseActiveTrip
+        : null,
+    [currentLocalDateKey, supabaseActiveTrip],
+  );
+  const activeTripId = isTraveling
+    ? (activeTrip.tripId ?? homeActiveTrip?.id)
+    : undefined;
   const {
     data: supabaseActiveTripDays,
     isLoading: isSupabaseTripDaysLoading,
@@ -1124,12 +1150,18 @@ export default function HomeScreen() {
     }
   }, []);
 
+  const refreshHomeTripActivity = React.useCallback(() => {
+    setCurrentLocalDateKey(getCurrentLocalDateKey());
+    void refetchActiveTrip();
+  }, [refetchActiveTrip]);
+
   React.useEffect(() => {
     updateDeviceHeaderLocation({ force: true, reason: 'initial' });
 
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
         updateDeviceHeaderLocation({ force: true, reason: 'foreground' });
+        refreshHomeTripActivity();
       }
     });
 
@@ -1138,14 +1170,15 @@ export default function HomeScreen() {
       headerLocationRequestInFlightRef.current = false;
       subscription.remove();
     };
-  }, [updateDeviceHeaderLocation]);
+  }, [refreshHomeTripActivity, updateDeviceHeaderLocation]);
 
   useFocusEffect(
     React.useCallback(() => {
       updateDeviceHeaderLocation({ force: true, reason: 'focus' });
+      refreshHomeTripActivity();
 
       return undefined;
-    }, [updateDeviceHeaderLocation]),
+    }, [refreshHomeTripActivity, updateDeviceHeaderLocation]),
   );
 
   React.useEffect(() => {
@@ -1186,13 +1219,50 @@ export default function HomeScreen() {
   }, [isTraveling]);
 
   React.useEffect(() => {
-    if (isTraveling || !supabaseActiveTrip) {
+    if (!canUseSupabaseUserData || !isActiveTripFetched) {
       return;
     }
 
-    setActiveTrip(createActiveTripStateFromSupabaseTrip(supabaseActiveTrip));
+    if (!homeActiveTrip) {
+      if (
+        isCompletingTripRef.current
+        || isEndTripCompleteVisible
+        || isPlaceCreateModalVisible
+      ) {
+        return;
+      }
+
+      setTravelStatusSheetVisible(false);
+      setEndTripConfirmVisible(false);
+      setPendingTravelStatusAction(null);
+      setIsTraveling(false);
+      return;
+    }
+
+    setActiveTrip((current) => {
+      const restored = createActiveTripStateFromSupabaseTrip(homeActiveTrip);
+      if (current.tripId !== homeActiveTrip.id) {
+        return restored;
+      }
+
+      return {
+        ...current,
+        startDate: restored.startDate,
+        endDate: restored.endDate,
+        openEnded: restored.openEnded,
+        isEndDateUndecided: restored.isEndDateUndecided,
+        isRecording: true,
+        updatedAt: restored.updatedAt,
+      };
+    });
     setIsTraveling(true);
-  }, [isTraveling, supabaseActiveTrip]);
+  }, [
+    canUseSupabaseUserData,
+    homeActiveTrip,
+    isActiveTripFetched,
+    isEndTripCompleteVisible,
+    isPlaceCreateModalVisible,
+  ]);
 
   React.useEffect(() => {
     if (
@@ -1928,7 +1998,25 @@ export default function HomeScreen() {
       return;
     }
 
-    console.warn('Failed to create trip in Supabase.', error);
+    if (__DEV__) {
+      const stageError =
+        error instanceof TripCreationStageError
+          ? error
+          : null;
+
+      console.warn('[trip creation] failed', {
+        code: stageError?.code,
+        details: redactTripCreationDiagnostic(stageError?.details),
+        hint: redactTripCreationDiagnostic(stageError?.hint),
+        message: redactTripCreationDiagnostic(
+          stageError?.message ?? (error instanceof Error ? error.message : undefined),
+        ),
+        stage: stageError?.stage ?? 'unknown',
+        status: stageError?.status,
+        tripCreated: stageError?.tripCreated ?? false,
+        tripDayCount: stageError?.tripDayCount ?? 0,
+      });
+    }
     Alert.alert('여행을 저장하지 못했어요.', '잠시 후 다시 시도해주세요.');
   }, []);
 
@@ -2019,6 +2107,17 @@ export default function HomeScreen() {
       const primaryDestination = setupDestinations[0] ?? setupDestination;
       const destinationCity = getEnglishLocationLabel(primaryDestination);
       const destinationCountry = getEnglishCountryLabel(primaryDestination.countryName);
+
+      if (__DEV__) {
+        console.info('[trip creation] request prepared', {
+          endDate: setup.endDate,
+          isEndDateUndecided: setup.isEndDateUndecided ?? false,
+          stage: 'create_trip',
+          startDate: setup.startDate,
+          status: 'active',
+        });
+      }
+
       const createdTrip = canUseSupabaseUserData
         ? await createTripMutation.mutateAsync({
             destinations: setupDestinations.length

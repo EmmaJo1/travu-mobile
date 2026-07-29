@@ -20,18 +20,25 @@ export function useCreateTrip() {
 
       return createTripWithDays(input);
     },
-    onSuccess: async (trip) => {
+    onSuccess: (trip) => {
       const userId = user?.id;
 
       if (trip.status === 'active') {
         queryClient.setQueryData(supabaseQueryKeys.activeTrip(userId), trip);
       }
 
-      await Promise.all([
+      void Promise.all([
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.myTrips(userId) }),
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.activeTrip(userId) }),
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.recentTripsRoot(userId) }),
-      ]);
+      ]).catch(() => {
+        if (__DEV__) {
+          console.warn('[trip creation] home query refresh failed', {
+            stage: 'invalidate_home',
+            tripCreated: true,
+          });
+        }
+      });
     },
     onError: async (error) => {
       if (error instanceof ActiveTripExistsError) {

@@ -9,6 +9,10 @@ import {
   enrichTripsWithPhotoCovers,
   type TripWithPhotoCover,
 } from '@/services/supabase/photos';
+import {
+  evaluateTripActivityForHome,
+  getCurrentLocalDateKey,
+} from '@/utils/tripActivity';
 
 export type TripRow = TripWithPhotoCover<Tables<'trips'>>;
 export type SoftDeletedTrip = Pick<TripRow, 'deleted_at' | 'id' | 'updated_at'>;
@@ -17,6 +21,61 @@ export class ActiveTripExistsError extends Error {
   constructor() {
     super('An active trip already exists for this user.');
     this.name = 'ActiveTripExistsError';
+  }
+}
+
+export type TripCreationStage =
+  | 'archive_expired_active_trip'
+  | 'check_existing_active_trip'
+  | 'create_trip'
+  | 'create_trip_days'
+  | 'sync_destinations';
+
+type SupabaseErrorFields = {
+  code?: unknown;
+  details?: unknown;
+  hint?: unknown;
+  message?: unknown;
+  status?: unknown;
+};
+
+export class TripCreationStageError extends Error {
+  code?: string;
+  details?: string;
+  hint?: string;
+  stage: TripCreationStage;
+  status?: number;
+  tripCreated: boolean;
+  tripDayCount: number;
+
+  constructor(
+    stage: TripCreationStage,
+    cause: unknown,
+    context: {
+      tripCreated?: boolean;
+      tripDayCount?: number;
+    } = {},
+  ) {
+    const fields =
+      cause && typeof cause === 'object'
+        ? (cause as SupabaseErrorFields)
+        : {};
+    const message =
+      typeof fields.message === 'string'
+        ? fields.message
+        : cause instanceof Error
+          ? cause.message
+          : 'Trip creation failed.';
+
+    super(message);
+    this.name = 'TripCreationStageError';
+    this.stage = stage;
+    this.code = typeof fields.code === 'string' ? fields.code : undefined;
+    this.details = typeof fields.details === 'string' ? fields.details : undefined;
+    this.hint = typeof fields.hint === 'string' ? fields.hint : undefined;
+    this.status = typeof fields.status === 'number' ? fields.status : undefined;
+    this.tripCreated = context.tripCreated ?? false;
+    this.tripDayCount = context.tripDayCount ?? 0;
   }
 }
 
@@ -55,6 +114,23 @@ function normalizeText(value?: string | null) {
 
 function createLegacyDestinationKey(name: string, country: string) {
   return `legacy:${name.toLowerCase()}|${country.toLowerCase()}`;
+}
+
+function listPersistedActiveTripsByUser(userId: string) {
+  return supabase
+    .from('trips')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .is('deleted_at', null)
+    .order('start_date', { ascending: false, nullsFirst: false })
+    .order('created_at', { ascending: false });
+}
+
+async function fetchPersistedActiveTripsByUser(userId: string): Promise<TripRow[]> {
+  const { data, error } = await listPersistedActiveTripsByUser(userId);
+  throwIfError(error);
+  return data ?? [];
 }
 
 export function listTripsByUser(userId: string) {
@@ -119,16 +195,36 @@ export async function fetchActiveTrip(): Promise<TripRow | null> {
     return null;
   }
 
-  const { data, error } = await supabase
-    .from('trips')
-    .select('*')
-    .eq('user_id', authData.user.id)
-    .eq('status', 'active')
-    .is('deleted_at', null)
-    .maybeSingle();
+  const data = await fetchPersistedActiveTripsByUser(authData.user.id);
+  const currentLocalDateKey = getCurrentLocalDateKey();
+  const evaluations = data.map((trip) => ({
+    evaluation: evaluateTripActivityForHome(trip, currentLocalDateKey),
+    trip,
+  }));
+  const selectedTrip = evaluations.find(({ evaluation }) => evaluation.isActive)?.trip ?? null;
 
-  throwIfError(error);
-  return data;
+  if (__DEV__) {
+    console.info('[home trip activity] evaluated', {
+      activeTripCandidateCount: evaluations.length,
+      activeTripSelected: Boolean(selectedTrip),
+      dateBoundedTripCount: evaluations.filter(
+        ({ evaluation }) => evaluation.reason === 'active_date_bounded',
+      ).length,
+      expiredTripCount: evaluations.filter(
+        ({ evaluation }) => evaluation.reason === 'inactive_expired',
+      ).length,
+      homeMode: selectedTrip ? 'travel' : 'idle',
+      openEndedTripCount: evaluations.filter(
+        ({ evaluation }) => evaluation.reason === 'active_open_ended',
+      ).length,
+      periodUnsetTripCount: evaluations.filter(
+        ({ evaluation }) => evaluation.reason === 'active_period_unset',
+      ).length,
+      tripListCount: evaluations.length,
+    });
+  }
+
+  return selectedTrip;
 }
 
 export async function completeActiveTrip(): Promise<TripRow> {
@@ -189,6 +285,64 @@ export function createTrip(input: TablesInsert<'trips'>) {
     .single();
 }
 
+async function preparePersistedActiveTripsForNewStart(userId: string) {
+  const currentLocalDateKey = getCurrentLocalDateKey();
+  let persistedActiveTrips: TripRow[];
+
+  try {
+    persistedActiveTrips = await fetchPersistedActiveTripsByUser(userId);
+  } catch (error) {
+    throw new TripCreationStageError('check_existing_active_trip', error);
+  }
+  const evaluations = persistedActiveTrips.map((trip) => ({
+    evaluation: evaluateTripActivityForHome(trip, currentLocalDateKey),
+    trip,
+  }));
+  const blockingTrip = evaluations.find(
+    ({ evaluation }) => evaluation.reason !== 'inactive_expired',
+  );
+
+  if (blockingTrip) {
+    throw new ActiveTripExistsError();
+  }
+
+  for (const { trip } of evaluations) {
+    if (!trip.start_date || !trip.end_date) {
+      throw new ActiveTripExistsError();
+    }
+
+    const { data, error } = await supabase
+      .from('trips')
+      .update({
+        status: 'archived',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', trip.id)
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .eq('start_date', trip.start_date)
+      .eq('end_date', trip.end_date)
+      .eq('is_end_date_undecided', false)
+      .is('deleted_at', null)
+      .select('id')
+      .maybeSingle();
+
+    if (error || !data) {
+      throw new TripCreationStageError(
+        'archive_expired_active_trip',
+        error ?? new Error('The expired active trip was not archived.'),
+      );
+    }
+  }
+
+  if (__DEV__ && evaluations.length > 0) {
+    console.info('[trip creation] expired active trips archived', {
+      archivedTripCount: evaluations.length,
+      stage: 'archive_expired_active_trip',
+    });
+  }
+}
+
 export async function createTripWithDays(input: CreateTripWithDaysInput): Promise<TripRow> {
   const { data: authData, error: authError } = await supabase.auth.getUser();
   throwIfError(authError);
@@ -200,11 +354,7 @@ export async function createTripWithDays(input: CreateTripWithDaysInput): Promis
   const status = input.status ?? 'active';
 
   if (status === 'active') {
-    const existingActiveTrip = await fetchActiveTrip();
-
-    if (existingActiveTrip) {
-      throw new ActiveTripExistsError();
-    }
+    await preparePersistedActiveTripsForNewStart(authData.user.id);
   }
 
   const destinationCity =
@@ -238,15 +388,59 @@ export async function createTripWithDays(input: CreateTripWithDaysInput): Promis
     title,
     user_id: authData.user.id,
   });
-  throwIfError(error);
+
+  if (error) {
+    const uniqueViolationContext = `${error.message} ${error.details ?? ''}`;
+
+    if (
+      error.code === '23505'
+      && uniqueViolationContext.includes('trips_one_active_per_user_idx')
+    ) {
+      throw new ActiveTripExistsError();
+    }
+
+    throw new TripCreationStageError('create_trip', error);
+  }
 
   if (!trip) {
-    throw new Error('Trip was not created.');
+    throw new TripCreationStageError(
+      'create_trip',
+      new Error('Trip was not created.'),
+    );
+  }
+
+  if (__DEV__) {
+    console.info('[trip creation] stage completed', {
+      stage: 'create_trip',
+      tripCreated: true,
+    });
+  }
+
+  let createdTripDayCount = 0;
+
+  try {
+    const tripDays = await createTripDaysForRange(trip.id, input.startDate, input.endDate);
+    createdTripDayCount = tripDays.length;
+
+    if (__DEV__) {
+      console.info('[trip creation] stage completed', {
+        stage: 'create_trip_days',
+        tripCreated: true,
+        tripDayCount: createdTripDayCount,
+      });
+    }
+  } catch (creationError) {
+    try {
+      await softDeleteTrip(trip.id);
+    } catch {
+      // Keep the original dependent-row creation error as the actionable failure.
+    }
+    throw new TripCreationStageError('create_trip_days', creationError, {
+      tripCreated: true,
+    });
   }
 
   try {
-    await createTripDaysForRange(trip.id, input.startDate, input.endDate);
-
     if (status === 'active') {
       const destinations = input.destinations?.length
         ? input.destinations
@@ -263,6 +457,14 @@ export async function createTripWithDays(input: CreateTripWithDaysInput): Promis
         tripId: trip.id,
         destinations,
       });
+
+      if (__DEV__) {
+        console.info('[trip creation] stage completed', {
+          stage: 'sync_destinations',
+          tripCreated: true,
+          tripDayCount: createdTripDayCount,
+        });
+      }
     }
   } catch (creationError) {
     try {
@@ -270,7 +472,10 @@ export async function createTripWithDays(input: CreateTripWithDaysInput): Promis
     } catch {
       // Keep the original dependent-row creation error as the actionable failure.
     }
-    throw creationError;
+    throw new TripCreationStageError('sync_destinations', creationError, {
+      tripCreated: true,
+      tripDayCount: createdTripDayCount,
+    });
   }
 
   return trip;
