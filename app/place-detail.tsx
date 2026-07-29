@@ -69,7 +69,9 @@ import {
   type RecordRow,
 } from '@/services/supabase/records';
 import {
+  softDeletePhotos,
   uploadPlacePhotos,
+  type DeletePhotosResult,
   type UploadPlacePhotoItem,
 } from '@/services/supabase/photos';
 
@@ -93,6 +95,7 @@ type PlaceDetailRouteParams = {
 };
 
 const DESTRUCTIVE = '#EB524D';
+const PHOTO_GRID_COLUMN_COUNT = 3;
 const DATE_LABEL_PATTERN = /^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})(?:\s*(.*))?$/;
 const KOREAN_WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'] as const;
 const RECORD_SWIPE_ACTION_WIDTH = 104;
@@ -898,15 +901,15 @@ export default function PlaceDetailScreen() {
   const [isRecordSaving, setRecordSaving] = React.useState(false);
   const [isRecordDeleting, setRecordDeleting] = React.useState(false);
   const [isDeleteConfirmOpen, setDeleteConfirmOpen] = React.useState(false);
-  const [isPhotoDeleteConfirmOpen, setPhotoDeleteConfirmOpen] = React.useState(false);
+  const [isPhotoDeleting, setPhotoDeleting] = React.useState(false);
   const [pendingDeleteRecordId, setPendingDeleteRecordId] = React.useState<string | null>(null);
   const [openSwipeRecordId, setOpenSwipeRecordId] = React.useState<string | null>(null);
   const [isRecordSwipeActive, setRecordSwipeActive] = React.useState(false);
-  const [pendingDeletePhotoIds, setPendingDeletePhotoIds] = React.useState<string[]>([]);
   const [gridSelectionResetSignal, setGridSelectionResetSignal] = React.useState(0);
   const isRecordSavingRef = React.useRef(false);
   const isRecordDeletingRef = React.useRef(false);
   const isPhotoUploadingRef = React.useRef(false);
+  const isPhotoDeletingRef = React.useRef(false);
   const isPhotoScreenMountedRef = React.useRef(true);
   const [isPhotoUploading, setPhotoUploading] = React.useState(false);
   const [failedPhotoUploadItems, setFailedPhotoUploadItems] =
@@ -1317,6 +1320,10 @@ export default function PlaceDetailScreen() {
   };
 
   const handleClosePhotoGrid = () => {
+    if (isPhotoDeletingRef.current) {
+      return;
+    }
+
     if (gridSelectionPurpose === 'coverSelect') {
       setGridOpen(false);
       setGridSelectionPurpose('recordCreate');
@@ -1341,6 +1348,7 @@ export default function PlaceDetailScreen() {
 
       setGridSelectionInitiallyEnabled(false);
       setGridViewOnly(false);
+      setGridOpen(false);
       router.replace({
         pathname: '/record-day-detail',
         params: {
@@ -1358,6 +1366,7 @@ export default function PlaceDetailScreen() {
     if (params.entryPoint === 'archiveDayDetail' && params.openPhotoGrid === '1') {
       setGridSelectionInitiallyEnabled(false);
       setGridViewOnly(false);
+      setGridOpen(false);
       router.replace({
         pathname: '/day-archive-detail',
         params: {
@@ -1896,6 +1905,157 @@ export default function PlaceDetailScreen() {
     setViewerIndex(0);
   };
 
+  const removeDeletedPhotosFromScreen = (photoIds: string[]) => {
+    const photoIdSet = new Set(photoIds);
+    const remainingViewerPhotoIds = (viewerPhotoIds ?? photos.map((photo) => photo.id))
+      .filter((photoId) => !photoIdSet.has(photoId));
+
+    setPhotos((currentPhotos) => currentPhotos.filter((photo) => !photoIdSet.has(photo.id)));
+    setRecords((currentRecords) => currentRecords.map((record) => ({
+      ...record,
+      photoIds: (record.photoIds ?? []).filter((photoId) => !photoIdSet.has(photoId)),
+    })));
+    setViewerPhotoIds((currentIds) => (
+      currentIds ? currentIds.filter((photoId) => !photoIdSet.has(photoId)) : null
+    ));
+    setHeroIndex(0);
+    setViewerIndex(0);
+
+    if (remainingViewerPhotoIds.length === 0) {
+      setViewerOpen(false);
+    }
+  };
+
+  const invalidatePhotoDeleteQueries = async (result: DeletePhotosResult) => {
+    const tripIds = [...new Set(result.results.map((item) => item.tripId))];
+    const tripDayIds = [
+      ...new Set(
+        result.results
+          .map((item) => item.tripDayId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const placeIds = [
+      ...new Set(
+        result.results
+          .map((item) => item.placeId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const invalidations = [
+      queryClient.invalidateQueries({
+        queryKey: supabaseQueryKeys.myTrips(user?.id),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: supabaseQueryKeys.recentTripsRoot(user?.id),
+      }),
+      ...tripIds.flatMap((tripId) => [
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripDetail(user?.id, tripId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripDays(user?.id, tripId),
+        }),
+      ]),
+      ...tripDayIds.flatMap((tripDayId) => [
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripDayPhotos(user?.id, tripDayId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, tripDayId),
+        }),
+      ]),
+      ...placeIds.flatMap((placeId) => [
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.placePhotos(user?.id, placeId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.placeDetail(user?.id, placeId),
+        }),
+      ]),
+    ];
+
+    const settledInvalidations = await Promise.allSettled(invalidations);
+
+    if (__DEV__) {
+      console.info('[photo delete] query refresh completed', {
+        queryInvalidated: settledInvalidations.every(
+          (item) => item.status === 'fulfilled',
+        ),
+      });
+    }
+  };
+
+  const runSupabasePhotoDelete = async (photoIds: string[]) => {
+    if (isPhotoDeletingRef.current || photoIds.length === 0) {
+      return;
+    }
+
+    isPhotoDeletingRef.current = true;
+    setPhotoDeleting(true);
+
+    try {
+      const result = await softDeletePhotos(photoIds);
+      const deletedPhotoIds = result.results.map((item) => item.photoId);
+
+      if (deletedPhotoIds.length > 0) {
+        removeDeletedPhotosFromScreen(deletedPhotoIds);
+        await invalidatePhotoDeleteQueries(result);
+      }
+
+      const retryPhotoIds = [
+        ...new Set([
+          ...result.failed.map((item) => item.photoId),
+          ...result.storageCleanupFailedPhotoIds,
+        ]),
+      ];
+
+      if (retryPhotoIds.length > 0) {
+        const hasStorageCleanupFailure =
+          result.storageCleanupFailedPhotoIds.length > 0;
+        Alert.alert(
+          hasStorageCleanupFailure
+            ? '\uC0AC\uC9C4 \uD30C\uC77C \uC815\uB9AC\uAC00 \uD544\uC694\uD574\uC694'
+            : '\uC77C\uBD80 \uC0AC\uC9C4\uC744 \uC0AD\uC81C\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          hasStorageCleanupFailure
+            ? '\uC0AC\uC9C4 \uAE30\uB85D\uC740 \uC0AD\uC81C\uB410\uC9C0\uB9CC \uD30C\uC77C \uC815\uB9AC\uAC00 \uC644\uB8CC\uB418\uC9C0 \uC54A\uC558\uC5B4\uC694.'
+            : '\uC7A0\uC2DC \uD6C4 \uC2E4\uD328\uD55C \uC0AC\uC9C4\uB9CC \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+          [
+            { text: '\uB098\uC911\uC5D0', style: 'cancel' },
+            {
+              text: '\uB2E4\uC2DC \uC2DC\uB3C4',
+              onPress: () => {
+                void runSupabasePhotoDelete(retryPhotoIds);
+              },
+            },
+          ],
+        );
+      }
+
+      if (__DEV__) {
+        console.info('[photo delete] batch resolved', {
+          batchDeleteResolved: true,
+          failedCount: retryPhotoIds.length,
+          successCount: deletedPhotoIds.length,
+        });
+      }
+    } catch {
+      if (__DEV__) {
+        console.info('[photo delete] batch rejected', {
+          batchDeleteRejected: true,
+        });
+      }
+      Alert.alert(
+        '\uC0AC\uC9C4\uC744 \uC0AD\uC81C\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+        '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+      );
+    } finally {
+      isPhotoDeletingRef.current = false;
+      setPhotoDeleting(false);
+      setGridSelectionResetSignal((signal) => signal + 1);
+    }
+  };
+
   const handleDeleteViewerPhoto = (photoIndex: number) => {
     const targetPhoto = viewerPhotos[photoIndex];
     if (!targetPhoto) {
@@ -1908,24 +2068,12 @@ export default function PlaceDetailScreen() {
         text: '\uC0AD\uC81C',
         style: 'destructive',
         onPress: () => {
-          const remainingViewerPhotoIds = (viewerPhotoIds ?? photos.map((photo) => photo.id))
-            .filter((photoId) => photoId !== targetPhoto.id);
-
-          setPhotos((currentPhotos) => currentPhotos.filter((photo) => photo.id !== targetPhoto.id));
-          setRecords((currentRecords) => currentRecords.map((record) => ({
-            ...record,
-            photoIds: (record.photoIds ?? []).filter((photoId) => photoId !== targetPhoto.id),
-          })));
-          setViewerPhotoIds((currentIds) => (
-            currentIds ? currentIds.filter((photoId) => photoId !== targetPhoto.id) : null
-          ));
-          setHeroIndex(0);
-          if (remainingViewerPhotoIds.length === 0) {
-            setViewerOpen(false);
+          if (shouldUseSupabasePlaceDetail) {
+            void runSupabasePhotoDelete([targetPhoto.id]);
             return;
           }
 
-          setViewerIndex(Math.min(photoIndex, remainingViewerPhotoIds.length - 1));
+          removeDeletedPhotosFromScreen([targetPhoto.id]);
         },
       },
     ]);
@@ -1949,19 +2097,25 @@ export default function PlaceDetailScreen() {
   };
 
   const requestDeleteGridPhotos = (photoIds: string[]) => {
-    if (photoIds.length === 0) {
+    const targetPhotoIds = [...new Set(photoIds)];
+
+    if (targetPhotoIds.length === 0) {
       return;
     }
 
-    setPendingDeletePhotoIds(photoIds);
-    setPhotoDeleteConfirmOpen(true);
-  };
+    if (__DEV__) {
+      console.info('[photo delete] batch invoked', {
+        batchDeleteInvoked: true,
+        selectedPhotoIdCount: targetPhotoIds.length,
+      });
+    }
 
-  const confirmDeleteGridPhotos = () => {
-    handleDeleteGridPhotos(pendingDeletePhotoIds);
-    setPendingDeletePhotoIds([]);
-    setPhotoDeleteConfirmOpen(false);
-    setGridSelectionResetSignal((signal) => signal + 1);
+    if (shouldUseSupabasePlaceDetail) {
+      void runSupabasePhotoDelete(targetPhotoIds);
+    } else {
+      handleDeleteGridPhotos(targetPhotoIds);
+      setGridSelectionResetSignal((signal) => signal + 1);
+    }
   };
 
   const navigateToDay = () => {
@@ -2206,6 +2360,7 @@ export default function PlaceDetailScreen() {
       <PhotoGridModal
         key={photoGridSessionKey}
         clearSelectionSignal={gridSelectionResetSignal}
+        isDeleting={isPhotoDeleting}
         initialSelectionMode={isGridSelectionInitiallyEnabled}
         initialSelectedPhotoIds={gridSelectionPurpose === 'linkRecord' ? selectedRecordPhotoIds : undefined}
         onAddPhoto={handleAddPhoto}
@@ -2425,16 +2580,6 @@ export default function PlaceDetailScreen() {
         onCancel={() => setDeleteConfirmOpen(false)}
         onDelete={handleConfirmDeletePlace}
         visible={isDeleteConfirmOpen}
-      />
-
-      <ConfirmPhotoDeleteModal
-        count={pendingDeletePhotoIds.length}
-        onCancel={() => {
-          setPendingDeletePhotoIds([]);
-          setPhotoDeleteConfirmOpen(false);
-        }}
-        onDelete={confirmDeleteGridPhotos}
-        visible={isPhotoDeleteConfirmOpen}
       />
 
       <ConfirmRecordDeleteModal
@@ -2690,6 +2835,7 @@ interface PhotoGridModalProps {
   coverPhotoId?: string;
   initialSelectionMode: boolean;
   initialSelectedPhotoIds?: string[];
+  isDeleting: boolean;
   mode?: 'default' | 'cover-select' | 'selectForRecord';
   onAddPhoto: () => void;
   onClose: () => void;
@@ -2710,6 +2856,7 @@ function PhotoGridModal({
   coverPhotoId,
   initialSelectionMode,
   initialSelectedPhotoIds,
+  isDeleting,
   mode = 'default',
   onAddPhoto,
   onClose,
@@ -2728,15 +2875,48 @@ function PhotoGridModal({
   const isRecordSelectMode = mode === 'selectForRecord';
   const [isSelectionMode, setSelectionMode] = React.useState(initialSelectionMode);
   const [selectedPhotoIds, setSelectedPhotoIds] = React.useState<string[]>([]);
+  const [pendingDeletePhotoIds, setPendingDeletePhotoIds] = React.useState<string[]>([]);
   const [isPresented, setPresented] = React.useState(visible);
   const [isInlineViewerOpen, setInlineViewerOpen] = React.useState(false);
   const [inlineViewerIndex, setInlineViewerIndex] = React.useState(0);
   const slideX = React.useRef(new Animated.Value(visible ? 0 : width)).current;
+  const gridContainerWidthRef = React.useRef(0);
+  const addTileLayoutRef = React.useRef({ height: 0, width: 0 });
+  const photoGridContentWidth = Math.max(0, width - (Spacing.xl * 2));
+  const photoGridTileSize = Math.floor(
+    (
+      photoGridContentWidth
+      - (Spacing.xs * (PHOTO_GRID_COLUMN_COUNT - 1))
+    ) / PHOTO_GRID_COLUMN_COUNT,
+  );
+  const photoGridTileStyle = React.useMemo(
+    () => ({
+      height: photoGridTileSize,
+      width: photoGridTileSize,
+    }),
+    [photoGridTileSize],
+  );
+  const showsAddPhotoTile =
+    !isSelectionMode && !isCoverSelectMode && !isRecordSelectMode;
+
+  const logPhotoGridLayout = React.useCallback(() => {
+    if (!__DEV__) {
+      return;
+    }
+
+    console.info('[place photo grid] layout', {
+      addTileHeight: addTileLayoutRef.current.height,
+      addTileWidth: addTileLayoutRef.current.width,
+      gridContainerWidth: gridContainerWidthRef.current,
+      photoCount: photos.length,
+    });
+  }, [photos.length]);
 
   React.useEffect(() => {
     if (visible) {
       setSelectionMode(initialSelectionMode);
       setSelectedPhotoIds(initialSelectedPhotoIds ?? []);
+      setPendingDeletePhotoIds([]);
       setInlineViewerOpen(false);
     }
   }, [initialSelectedPhotoIds, initialSelectionMode, visible]);
@@ -2773,6 +2953,7 @@ function PhotoGridModal({
   React.useEffect(() => {
     setSelectionMode(false);
     setSelectedPhotoIds([]);
+    setPendingDeletePhotoIds([]);
   }, [clearSelectionSignal]);
 
   const togglePhoto = (photoId: string) => {
@@ -2792,14 +2973,33 @@ function PhotoGridModal({
   };
 
   const handlePressDeleteSelected = () => {
-    if (selectedPhotoIds.length === 0) {
+    const targetPhotoIds = [...new Set(selectedPhotoIds)];
+
+    if (targetPhotoIds.length === 0 || isDeleting) {
       return;
     }
 
-    onRequestDeletePhotos(selectedPhotoIds);
+    if (__DEV__) {
+      console.info('[photo delete] multi delete pressed', {
+        confirmationShown: true,
+        multiDeletePressed: true,
+        selectedCount: selectedPhotoIds.length,
+        selectedPhotoIdCount: targetPhotoIds.length,
+      });
+    }
+    setPendingDeletePhotoIds(targetPhotoIds);
   };
 
   const handleRequestClose = () => {
+    if (isDeleting) {
+      return;
+    }
+
+    if (pendingDeletePhotoIds.length > 0) {
+      setPendingDeletePhotoIds([]);
+      return;
+    }
+
     if (isInlineViewerOpen) {
       setInlineViewerOpen(false);
       return;
@@ -2829,7 +3029,12 @@ function PhotoGridModal({
         ]}
       >
         <View style={styles.modalHeader}>
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={onClose} style={styles.headerButton}>
+          <Pressable
+            accessibilityRole="button"
+            hitSlop={10}
+            onPress={handleRequestClose}
+            style={styles.headerButton}
+          >
             <Feather name="chevron-left" size={28} color={Colors.foundation.black} />
           </Pressable>
           <Text style={styles.modalTitle}>
@@ -2868,18 +3073,29 @@ function PhotoGridModal({
             styles.photoGrid,
             { paddingBottom: showSelectionActionBar ? insets.bottom + 96 : Spacing.xl },
           ]}
+          onLayout={(event) => {
+            gridContainerWidthRef.current = event.nativeEvent.layout.width;
+            logPhotoGridLayout();
+          }}
         >
-          {!isSelectionMode && !isCoverSelectMode && !isRecordSelectMode ? (
+          {showsAddPhotoTile ? (
             <Pressable
               accessibilityRole="button"
+              onLayout={(event) => {
+                addTileLayoutRef.current = {
+                  height: event.nativeEvent.layout.height,
+                  width: event.nativeEvent.layout.width,
+                };
+                logPhotoGridLayout();
+              }}
               onPress={onAddPhoto}
-              style={[styles.gridPhoto, styles.gridAddPhoto]}
+              style={[styles.gridPhoto, photoGridTileStyle, styles.gridAddPhoto]}
             >
               <Feather name="plus" size={28} color={Colors.foundation.grey500} />
               <Text style={styles.gridAddPhotoText}>{'\uC0AC\uC9C4 \uCD94\uAC00'}</Text>
             </Pressable>
           ) : null}
-          {photos.length === 0 ? (
+          {photos.length === 0 && !showsAddPhotoTile ? (
             <View style={styles.gridEmptyState}>
               <Text style={styles.gridEmptyText}>
                 {isCoverSelectMode
@@ -2909,7 +3125,7 @@ function PhotoGridModal({
                   setInlineViewerIndex(index);
                   setInlineViewerOpen(true);
                 }}
-                style={styles.gridPhoto}
+                style={[styles.gridPhoto, photoGridTileStyle]}
               >
                 <Image source={photo.source} style={styles.gridPhotoImage} resizeMode="cover" />
                 {(isSelectionMode || isCoverSelectMode || isRecordSelectMode) && isSelected ? <View style={styles.gridSelectedOverlay} /> : null}
@@ -2956,6 +3172,50 @@ function PhotoGridModal({
           renderActionSheet={renderViewerActionSheet}
           visible={isInlineViewerOpen}
         />
+        {pendingDeletePhotoIds.length > 0 ? (
+          <View style={[styles.overlay, styles.photoDeleteInlineOverlay]}>
+            <View style={styles.deleteModal}>
+              <Text style={styles.deleteTitle}>
+                {'\uC120\uD0DD\uD55C \uC0AC\uC9C4\uC744 \uC0AD\uC81C\uD560\uAE4C\uC694?'}
+              </Text>
+              <Text style={styles.deleteDescription}>
+                {pendingDeletePhotoIds.length}
+                {'\uC7A5\uC758 \uC0AC\uC9C4\uC740 \uAE30\uAE30 \uC0AC\uC9C4\uCCA9\uC5D0\uC11C\uB294 \uC0AD\uC81C\uB418\uC9C0 \uC54A\uACE0, Travu\uC758 \uD604\uC7AC \uC7A5\uC18C \uC0AC\uC9C4 \uBAA9\uB85D\uC5D0\uC11C\uB9CC \uC0AD\uC81C\uB429\uB2C8\uB2E4.'}
+              </Text>
+              <View style={styles.deleteButtonRow}>
+                <Pressable
+                  disabled={isDeleting}
+                  onPress={() => setPendingDeletePhotoIds([])}
+                  style={styles.secondaryButton}
+                >
+                  <Text style={styles.secondaryButtonText}>{'\uCDE8\uC18C'}</Text>
+                </Pressable>
+                <Pressable
+                  disabled={isDeleting}
+                  onPress={() => {
+                    const targetPhotoIds = [...pendingDeletePhotoIds];
+
+                    if (__DEV__) {
+                      console.info('[photo delete] confirmation accepted', {
+                        confirmationAccepted: true,
+                        selectedPhotoIdCount: targetPhotoIds.length,
+                      });
+                    }
+                    onRequestDeletePhotos(targetPhotoIds);
+                  }}
+                  style={[
+                    styles.destructiveButton,
+                    isDeleting && styles.destructiveButtonDisabled,
+                  ]}
+                >
+                  <Text style={styles.destructiveButtonText}>
+                    {isDeleting ? '\uC0AD\uC81C \uC911...' : '\uC0AD\uC81C'}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        ) : null}
       </Animated.View>
     </Modal>
   );
@@ -3363,36 +3623,6 @@ function ConfirmRecordDeleteModal({
   );
 }
 
-interface ConfirmPhotoDeleteModalProps {
-  visible: boolean;
-  count: number;
-  onCancel: () => void;
-  onDelete: () => void;
-}
-
-function ConfirmPhotoDeleteModal({ visible, count, onCancel, onDelete }: ConfirmPhotoDeleteModalProps) {
-  return (
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={onCancel}>
-      <View style={styles.overlay}>
-        <View style={styles.deleteModal}>
-          <Text style={styles.deleteTitle}>{'\uC120\uD0DD\uD55C \uC0AC\uC9C4\uC744 \uC0AD\uC81C\uD560\uAE4C\uC694?'}</Text>
-          <Text style={styles.deleteDescription}>
-            {count}{'\uC7A5\uC758 \uC0AC\uC9C4\uC740 \uAE30\uAE30 \uC0AC\uC9C4\uCCA9\uC5D0\uC11C\uB294 \uC0AD\uC81C\uB418\uC9C0 \uC54A\uACE0, Travu\uC758 \uD604\uC7AC \uC7A5\uC18C \uC0AC\uC9C4 \uBAA9\uB85D\uC5D0\uC11C\uB9CC \uC0AD\uC81C\uB429\uB2C8\uB2E4.'}
-          </Text>
-          <View style={styles.deleteButtonRow}>
-            <Pressable onPress={onCancel} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>{'\uCDE8\uC18C'}</Text>
-            </Pressable>
-            <Pressable onPress={onDelete} style={styles.destructiveButton}>
-              <Text style={styles.destructiveButtonText}>{'\uC0AD\uC81C'}</Text>
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -3737,6 +3967,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   photoGrid: {
+    width: '100%',
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.xs,
@@ -3754,8 +3985,7 @@ const styles = StyleSheet.create({
     color: Colors.foundation.grey500,
   },
   gridPhoto: {
-    width: '32%',
-    aspectRatio: 1,
+    flexShrink: 0,
     overflow: 'hidden',
     borderRadius: Radius.xs,
     backgroundColor: Colors.foundation.grey100,
@@ -3836,6 +4066,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: Spacing.xl,
     backgroundColor: 'rgba(0, 0, 0, 0.22)',
+  },
+  photoDeleteInlineOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 70,
   },
   sheetOverlay: {
     flex: 1,

@@ -354,6 +354,32 @@ export interface Database {
     };
     Views: Record<string, never>;
     Functions: {
+      ensure_photo_covers_for_trip: {
+        Args: {
+          p_trip_id: string;
+        };
+        Returns: {
+          active_photo_count: number;
+          trip_cover_photo_id: string | null;
+          trip_id: string;
+          updated_place_count: number;
+        }[];
+      };
+      soft_delete_photo: {
+        Args: {
+          p_photo_id: string;
+        };
+        Returns: {
+          already_deleted: boolean;
+          photo_id: string;
+          place_cover_photo_id: string | null;
+          place_id: string | null;
+          storage_path: string | null;
+          trip_cover_photo_id: string | null;
+          trip_day_id: string | null;
+          trip_id: string;
+        }[];
+      };
       sync_active_trip_destinations: {
         Args: {
           p_trip_id: string;

@@ -121,9 +121,11 @@ export function mapSupabaseTripToMyPageTrip(trip: TripRow): MyPageTrip {
     visitedCities: city ? [city] : [],
     visitedCountries: country ? [country] : [],
     dateRangeLabel: formatTripDateRange(trip),
-    coverImage: FALLBACK_TRIP_COVER,
+    coverImage: trip.cover_display_url
+      ? { uri: trip.cover_display_url }
+      : FALLBACK_TRIP_COVER,
     daysCount: getInclusiveDayCount(trip.start_date, trip.end_date),
-    photoCount: 0,
+    photoCount: trip.active_photo_count ?? 0,
   };
 }
 
@@ -141,8 +143,10 @@ export function mapSupabaseTripToIdleRecentTrip(trip: TripRow): IdleRecentTrip {
     city,
     country,
     dateRange: formatTripDateRange(trip),
-    image: FALLBACK_TRIP_COVER,
-    photoCount: 0,
+    image: trip.cover_display_url
+      ? { uri: trip.cover_display_url }
+      : FALLBACK_TRIP_COVER,
+    photoCount: trip.active_photo_count ?? 0,
     placeCount: 0,
     startDate: trip.start_date ?? undefined,
     endDate: trip.end_date ?? trip.start_date ?? undefined,

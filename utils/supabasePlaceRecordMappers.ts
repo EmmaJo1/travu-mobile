@@ -41,14 +41,23 @@ export function mapSupabasePlacesToPlaceEntries(
     }
 
     const nextPhotos = map.get(photo.place_id) ?? [];
-    nextPhotos.push(photo.displayUrl);
+    nextPhotos.push(photo);
     map.set(photo.place_id, nextPhotos);
     return map;
-  }, new Map<string, string[]>());
+  }, new Map<string, ResolvedPhotoRow[]>());
 
   return places.map((place) => {
     const placeRecords = recordsByPlaceId.get(place.id) ?? [];
-    const placePhotoUris = photosByPlaceId.get(place.id) ?? [];
+    const placePhotos = photosByPlaceId.get(place.id) ?? [];
+    const orderedPlacePhotos = place.cover_photo_id
+      ? [
+        ...placePhotos.filter((photo) => photo.id === place.cover_photo_id),
+        ...placePhotos.filter((photo) => photo.id !== place.cover_photo_id),
+      ]
+      : placePhotos;
+    const placePhotoUris = orderedPlacePhotos
+      .map((photo) => photo.displayUrl)
+      .filter((uri): uri is string => Boolean(uri));
     const firstRecord = placeRecords[0];
     const time = formatTimeLabel(place.visited_at ?? firstRecord?.visited_at);
     const text = firstRecord?.text ?? place.memo ?? undefined;

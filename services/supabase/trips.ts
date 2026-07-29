@@ -5,8 +5,12 @@ import {
   syncActiveTripDestinations,
   type TripDestinationInput,
 } from '@/services/supabase/tripDestinations';
+import {
+  enrichTripsWithPhotoCovers,
+  type TripWithPhotoCover,
+} from '@/services/supabase/photos';
 
-export type TripRow = Tables<'trips'>;
+export type TripRow = TripWithPhotoCover<Tables<'trips'>>;
 export type SoftDeletedTrip = Pick<TripRow, 'deleted_at' | 'id' | 'updated_at'>;
 
 export class ActiveTripExistsError extends Error {
@@ -82,7 +86,7 @@ export async function fetchMyTrips(): Promise<TripRow[]> {
 
   const { data, error } = await listTripsByUser(authData.user.id);
   throwIfError(error);
-  return data ?? [];
+  return enrichTripsWithPhotoCovers(data ?? []);
 }
 
 export async function fetchTripById(tripId: string): Promise<TripRow | null> {
@@ -103,7 +107,8 @@ export async function fetchTripById(tripId: string): Promise<TripRow | null> {
     .maybeSingle();
 
   throwIfError(error);
-  return data;
+  const [trip] = data ? await enrichTripsWithPhotoCovers([data]) : [];
+  return trip ?? null;
 }
 
 export async function fetchActiveTrip(): Promise<TripRow | null> {
@@ -173,7 +178,7 @@ export async function fetchRecentTrips(limit = 12): Promise<TripRow[]> {
     .limit(limit);
 
   throwIfError(error);
-  return data ?? [];
+  return enrichTripsWithPhotoCovers(data ?? []);
 }
 
 export function createTrip(input: TablesInsert<'trips'>) {

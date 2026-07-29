@@ -5,7 +5,10 @@ export const PHOTO_STORAGE_BUCKET = 'photos';
 
 export type PhotoRow = Tables<'photos'>;
 
-export type PhotoQueryScreen = 'saved_day_archive_detail' | 'saved_place_detail';
+export type PhotoQueryScreen =
+  | 'saved_day_archive_detail'
+  | 'saved_place_detail'
+  | 'saved_trip_cover';
 
 export type ResolvedPhotoRow = PhotoRow & {
   displayUrl: string | null;
@@ -59,6 +62,48 @@ export interface UploadPlacePhotosResult {
   skippedCount: number;
   uploadedPhotoCount: number;
 }
+
+export type PhotoStorageDeleteStatus = 'deleted' | 'failed' | 'not_applicable';
+
+export interface DeletePhotoResult {
+  alreadyDeleted: boolean;
+  photoId: string;
+  placeCoverPhotoId: string | null;
+  placeId: string | null;
+  softDeleteSucceeded: true;
+  storageDeleteFailed: boolean;
+  storageDeleteStatus: PhotoStorageDeleteStatus;
+  storageDeleteSucceeded: boolean;
+  tripCoverPhotoId: string | null;
+  tripDayId: string | null;
+  tripId: string;
+}
+
+export interface DeletePhotoFailure {
+  photoId: string;
+  stage: 'rpc' | 'storage';
+}
+
+export interface DeletePhotosResult {
+  failed: DeletePhotoFailure[];
+  requestedPhotoCount: number;
+  results: DeletePhotoResult[];
+  softDeletedPhotoCount: number;
+  storageCleanupFailedPhotoIds: string[];
+  storageDeleteSuccessCount: number;
+}
+
+export interface EnsuredTripPhotoCovers {
+  activePhotoCount: number;
+  tripCoverPhotoId: string | null;
+  tripId: string;
+  updatedPlaceCount: number;
+}
+
+export type TripWithPhotoCover<T> = T & {
+  active_photo_count?: number;
+  cover_display_url?: string | null;
+};
 
 export type PhotoUploadFailureStage =
   | 'original_preparation'
@@ -114,6 +159,8 @@ const activePlacePhotoUploadOperations =
   new Map<string, Promise<UploadPlacePhotosResult>>();
 const savedPlacePhotoResultsByIdentifier =
   new Map<string, UploadPhotoAssetResult>();
+const activePhotoDeleteOperations = new Map<string, Promise<DeletePhotoResult>>();
+const PHOTO_DELETE_CONCURRENCY = 3;
 
 function throwIfError(error: Error | null) {
   if (error) {
@@ -449,7 +496,7 @@ async function getCurrentUserId() {
   throwIfError(error);
 
   if (!data.user?.id) {
-    throw new Error('A Supabase session is required to upload a photo.');
+    throw new Error('A Supabase session is required.');
   }
 
   return data.user.id;
@@ -529,6 +576,7 @@ async function removePhotoStorageObjectForUser(storagePath: string, userId: stri
     .remove([storagePath]);
 
   throwIfError(error);
+  signedPhotoUrlCache.delete(storagePath);
 }
 
 export async function removePhotoStorageObject(storagePath: string) {
@@ -801,11 +849,45 @@ export function listPhotosByPlace(placeId: string) {
     .order('taken_at', { ascending: true, nullsFirst: false });
 }
 
-export function fetchPhotosByPlaceId(
+export async function fetchPhotosByPlaceId(
   placeId: string,
   screen: PhotoQueryScreen = 'saved_place_detail',
 ) {
-  return fetchResolvedPhotos('place_id', placeId, screen);
+  const { data: place, error: placeError } = await supabase
+    .from('places')
+    .select('id, trip_id, cover_photo_id')
+    .eq('id', placeId)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  throwIfError(placeError);
+
+  if (!place) {
+    return [];
+  }
+
+  await ensurePhotoCoversForTrip(place.trip_id);
+  const [{ data: refreshedPlace, error: refreshedPlaceError }, photos] =
+    await Promise.all([
+      supabase
+        .from('places')
+        .select('cover_photo_id')
+        .eq('id', placeId)
+        .is('deleted_at', null)
+        .maybeSingle(),
+      fetchResolvedPhotos('place_id', placeId, screen),
+    ]);
+
+  throwIfError(refreshedPlaceError);
+
+  if (!refreshedPlace?.cover_photo_id) {
+    return photos;
+  }
+
+  return [
+    ...photos.filter((photo) => photo.id === refreshedPlace.cover_photo_id),
+    ...photos.filter((photo) => photo.id !== refreshedPlace.cover_photo_id),
+  ];
 }
 
 export function fetchPhotosByTripDayId(
@@ -824,6 +906,221 @@ export function listPhotosByTrip(tripId: string) {
     .order('taken_at', { ascending: true, nullsFirst: false });
 }
 
+export async function ensurePhotoCoversForTrip(
+  tripId: string,
+): Promise<EnsuredTripPhotoCovers> {
+  await getCurrentUserId();
+  const { data, error } = await supabase
+    .rpc('ensure_photo_covers_for_trip', { p_trip_id: tripId })
+    .single();
+
+  throwIfError(error);
+
+  if (!data) {
+    throw new Error('The trip photo covers could not be resolved.');
+  }
+
+  return {
+    activePhotoCount: Number(data.active_photo_count ?? 0),
+    tripCoverPhotoId: data.trip_cover_photo_id,
+    tripId: data.trip_id,
+    updatedPlaceCount: data.updated_place_count,
+  };
+}
+
+export async function enrichTripsWithPhotoCovers<
+  T extends { cover_photo_id: string | null; id: string },
+>(trips: T[]): Promise<TripWithPhotoCover<T>[]> {
+  const uniqueTrips = [...new Map(trips.map((trip) => [trip.id, trip])).values()];
+  const ensuredCovers: EnsuredTripPhotoCovers[] = [];
+  let nextIndex = 0;
+
+  const ensureNext = async () => {
+    while (nextIndex < uniqueTrips.length) {
+      const trip = uniqueTrips[nextIndex];
+      nextIndex += 1;
+      ensuredCovers.push(await ensurePhotoCoversForTrip(trip.id));
+    }
+  };
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(PHOTO_DELETE_CONCURRENCY, uniqueTrips.length) },
+      () => ensureNext(),
+    ),
+  );
+
+  const ensuredByTripId = new Map(
+    ensuredCovers.map((cover) => [cover.tripId, cover]),
+  );
+  const coverPhotoIds = [
+    ...new Set(
+      ensuredCovers
+        .map((cover) => cover.tripCoverPhotoId)
+        .filter((photoId): photoId is string => Boolean(photoId)),
+    ),
+  ];
+  const coverUrlByPhotoId = new Map<string, string | null>();
+
+  if (coverPhotoIds.length > 0) {
+    const { data, error } = await supabase
+      .from('photos')
+      .select(
+        'id, user_id, trip_id, trip_day_id, place_id, storage_path, image_url, thumbnail_url, local_uri, taken_at, width, height, mime_type, file_name, file_size, latitude, longitude, city, country, city_ko, country_ko, exif_data, created_at, updated_at, deleted_at',
+      )
+      .in('id', coverPhotoIds)
+      .is('deleted_at', null);
+
+    throwIfError(error);
+    const resolvedCovers = await resolvePhotoRows(data ?? [], 'saved_trip_cover');
+    resolvedCovers.forEach((photo) => {
+      coverUrlByPhotoId.set(photo.id, photo.displayUrl);
+    });
+  }
+
+  return trips.map((trip) => {
+    const ensuredCover = ensuredByTripId.get(trip.id);
+    const coverPhotoId = ensuredCover?.tripCoverPhotoId ?? trip.cover_photo_id;
+
+    return {
+      ...trip,
+      active_photo_count: ensuredCover?.activePhotoCount,
+      cover_display_url: coverPhotoId
+        ? coverUrlByPhotoId.get(coverPhotoId) ?? null
+        : null,
+      cover_photo_id: coverPhotoId,
+    };
+  });
+}
+
+async function executePhotoDelete(photoId: string): Promise<DeletePhotoResult> {
+  const userId = await getCurrentUserId();
+  const { data, error } = await supabase
+    .rpc('soft_delete_photo', { p_photo_id: photoId })
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data) {
+    throw new Error('The photo could not be deleted.');
+  }
+
+  let storageDeleteStatus: PhotoStorageDeleteStatus = 'not_applicable';
+
+  if (data.storage_path) {
+    try {
+      await removePhotoStorageObjectForUser(data.storage_path, userId);
+      storageDeleteStatus = 'deleted';
+    } catch {
+      storageDeleteStatus = 'failed';
+    }
+  }
+
+  return {
+    alreadyDeleted: data.already_deleted,
+    photoId: data.photo_id,
+    placeCoverPhotoId: data.place_cover_photo_id,
+    placeId: data.place_id,
+    softDeleteSucceeded: true,
+    storageDeleteFailed: storageDeleteStatus === 'failed',
+    storageDeleteStatus,
+    storageDeleteSucceeded: storageDeleteStatus === 'deleted',
+    tripCoverPhotoId: data.trip_cover_photo_id,
+    tripDayId: data.trip_day_id,
+    tripId: data.trip_id,
+  };
+}
+
+export function softDeletePhoto(photoId: string) {
+  const activeOperation = activePhotoDeleteOperations.get(photoId);
+
+  if (activeOperation) {
+    if (__DEV__) {
+      console.info('[photo delete] duplicate blocked', {
+        saveOperationDuplicateBlocked: true,
+      });
+    }
+    return activeOperation;
+  }
+
+  const operation = executePhotoDelete(photoId);
+  activePhotoDeleteOperations.set(photoId, operation);
+  const clearOperation = () => {
+    if (activePhotoDeleteOperations.get(photoId) === operation) {
+      activePhotoDeleteOperations.delete(photoId);
+    }
+  };
+  void operation.then(clearOperation, clearOperation);
+
+  return operation;
+}
+
+export async function softDeletePhotos(photoIds: string[]): Promise<DeletePhotosResult> {
+  const uniquePhotoIds = [...new Set(photoIds.filter(Boolean))];
+  const results: DeletePhotoResult[] = [];
+  const failed: DeletePhotoFailure[] = [];
+  let nextIndex = 0;
+
+  if (__DEV__) {
+    console.info('[photo delete] started', {
+      eligiblePhotoCount: uniquePhotoIds.length,
+      photoDeleteStarted: true,
+      requestedPhotoCount: uniquePhotoIds.length,
+    });
+  }
+
+  const deleteNext = async () => {
+    while (nextIndex < uniquePhotoIds.length) {
+      const photoId = uniquePhotoIds[nextIndex];
+      nextIndex += 1;
+
+      try {
+        const result = await softDeletePhoto(photoId);
+        results.push(result);
+      } catch {
+        failed.push({ photoId, stage: 'rpc' });
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(PHOTO_DELETE_CONCURRENCY, uniquePhotoIds.length) },
+      () => deleteNext(),
+    ),
+  );
+
+  const storageCleanupFailedPhotoIds = results
+    .filter((result) => result.storageDeleteFailed)
+    .map((result) => result.photoId);
+  const storageDeleteSuccessCount = results.filter(
+    (result) => result.storageDeleteSucceeded,
+  ).length;
+
+  if (__DEV__) {
+    console.info('[photo delete] completed', {
+      failedPhotoCount: failed.length,
+      representativeFallbackCount: results.filter(
+        (result) => result.placeCoverPhotoId || result.tripCoverPhotoId,
+      ).length,
+      softDeletedPhotoCount: results.filter((result) => !result.alreadyDeleted).length,
+      storageDeleteFailureCount: storageCleanupFailedPhotoIds.length,
+      storageDeleteSuccessCount,
+    });
+  }
+
+  return {
+    failed,
+    requestedPhotoCount: uniquePhotoIds.length,
+    results,
+    softDeletedPhotoCount: results.filter((result) => !result.alreadyDeleted).length,
+    storageCleanupFailedPhotoIds,
+    storageDeleteSuccessCount,
+  };
+}
+
 export function createPhoto(input: TablesInsert<'photos'>) {
   return supabase
     .from('photos')
@@ -839,8 +1136,4 @@ export function updatePhoto(photoId: string, patch: TablesUpdate<'photos'>) {
     .eq('id', photoId)
     .select()
     .single();
-}
-
-export function softDeletePhoto(photoId: string) {
-  return updatePhoto(photoId, { deleted_at: new Date().toISOString() });
 }
