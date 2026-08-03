@@ -349,7 +349,22 @@ export interface Database {
           deleted_at?: string | null;
         };
         Update: Partial<Database['public']['Tables']['record_photos']['Insert']>;
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: 'record_photos_photo_id_fkey';
+            columns: ['photo_id'];
+            isOneToOne: false;
+            referencedRelation: 'photos';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'record_photos_record_id_fkey';
+            columns: ['record_id'];
+            isOneToOne: false;
+            referencedRelation: 'records';
+            referencedColumns: ['id'];
+          },
+        ];
       };
     };
     Views: Record<string, never>;
@@ -378,6 +393,16 @@ export interface Database {
           trip_cover_photo_id: string | null;
           trip_day_id: string | null;
           trip_id: string;
+        }[];
+      };
+      soft_delete_record_photo_links: {
+        Args: {
+          p_photo_ids: string[];
+          p_record_id: string;
+        };
+        Returns: {
+          deleted_photo_count: number;
+          requested_photo_count: number;
         }[];
       };
       sync_active_trip_destinations: {

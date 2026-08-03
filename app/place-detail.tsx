@@ -65,8 +65,10 @@ import type { TripDayRow } from '@/services/supabase/tripDays';
 import {
   createRecordForPlace,
   softDeleteRecord,
+  syncRecordPhotos,
   updateRecord,
   type RecordRow,
+  type RecordWithPhotos,
 } from '@/services/supabase/records';
 import {
   softDeletePhotos,
@@ -446,7 +448,7 @@ function hasDisplayableRecordContent(record: RecordRow) {
 
 function createSupabasePlaceDetail(
   place: PlaceRow,
-  placeRecords: RecordRow[],
+  placeRecords: RecordWithPhotos[],
   params: PlaceDetailRouteParams,
 ): PlaceDetailData {
   const firstRecord = placeRecords[0];
@@ -466,7 +468,14 @@ function createSupabasePlaceDetail(
       createdAt: record.created_at,
       dayId: record.trip_day_id ?? place.trip_day_id ?? getParamValue(params.dayId) ?? '',
       id: record.id,
-      photoIds: [],
+      photoIds: record.record_photos
+        .filter((recordPhoto) => recordPhoto.deleted_at === null)
+        .sort((left, right) => (
+          left.sort_order - right.sort_order
+          || left.created_at.localeCompare(right.created_at)
+          || left.id.localeCompare(right.id)
+        ))
+        .map((recordPhoto) => recordPhoto.photo_id),
       placeId: record.place_id,
       text: record.text ?? undefined,
       time: formatSupabaseVisitedTime(record.visited_at),
@@ -914,8 +923,9 @@ export default function PlaceDetailScreen() {
   const [isPhotoUploading, setPhotoUploading] = React.useState(false);
   const [failedPhotoUploadItems, setFailedPhotoUploadItems] =
     React.useState<UploadPlacePhotoItem[]>([]);
-  const recordPhotoPickerOpenTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const recordSheetRestoreTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRecordPhotoGridOpenRef = React.useRef(false);
+  const pendingRecordModalCleanupRef = React.useRef(false);
+  const pendingRecordSheetRestoreRef = React.useRef(false);
   const supabaseTripIdForPlace = shouldUseSupabasePlaceDetail && isSupabaseUuid(initialDetail?.tripId)
     ? initialDetail?.tripId
     : undefined;
@@ -987,6 +997,7 @@ export default function PlaceDetailScreen() {
     }
 
     setOpenSwipeRecordId(null);
+    pendingRecordModalCleanupRef.current = false;
     setEditingRecordId(record.id);
     setSelectedRecordPhotoIds(record.photoIds ?? []);
     setRecordDraft(record.text ?? '');
@@ -1000,19 +1011,16 @@ export default function PlaceDetailScreen() {
     photoIds: string[],
     mode: 'sheet' | 'screen',
   ) => {
+    pendingRecordModalCleanupRef.current = false;
     prepareRecordComposer(photoIds);
     setRecordModalMode(mode);
     setRecordModalOpen(true);
   }, [prepareRecordComposer]);
 
   React.useEffect(() => () => {
-    if (recordPhotoPickerOpenTimerRef.current) {
-      clearTimeout(recordPhotoPickerOpenTimerRef.current);
-    }
-
-    if (recordSheetRestoreTimerRef.current) {
-      clearTimeout(recordSheetRestoreTimerRef.current);
-    }
+    pendingRecordModalCleanupRef.current = false;
+    pendingRecordPhotoGridOpenRef.current = false;
+    pendingRecordSheetRestoreRef.current = false;
   }, []);
 
   React.useEffect(() => {
@@ -1307,16 +1315,27 @@ export default function PlaceDetailScreen() {
     setGridOpen(true);
   };
 
-  const restoreRecordSheetAfterPhotoGrid = () => {
-    if (recordSheetRestoreTimerRef.current) {
-      clearTimeout(recordSheetRestoreTimerRef.current);
+  const requestRecordSheetRestoreAfterPhotoGrid = () => {
+    if (pendingRecordSheetRestoreRef.current) {
+      return false;
     }
 
-    recordSheetRestoreTimerRef.current = setTimeout(() => {
-      setRecordModalOpen(true);
-      setRecordPhotoPickerTransitioning(false);
-      recordSheetRestoreTimerRef.current = null;
-    }, 120);
+    pendingRecordSheetRestoreRef.current = true;
+    setRecordPhotoPickerTransitioning(true);
+    setGridOpen(false);
+    return true;
+  };
+
+  const handlePhotoGridDidDismiss = () => {
+    if (!pendingRecordSheetRestoreRef.current) {
+      return;
+    }
+
+    pendingRecordSheetRestoreRef.current = false;
+    pendingRecordModalCleanupRef.current = false;
+    setGridSelectionPurpose('recordCreate');
+    setRecordPhotoPickerTransitioning(false);
+    setRecordModalOpen(true);
   };
 
   const handleClosePhotoGrid = () => {
@@ -1331,9 +1350,7 @@ export default function PlaceDetailScreen() {
     }
 
     if (gridSelectionPurpose === 'linkRecord') {
-      setGridOpen(false);
-      setGridSelectionPurpose('recordCreate');
-      restoreRecordSheetAfterPhotoGrid();
+      requestRecordSheetRestoreAfterPhotoGrid();
       return;
     }
 
@@ -1516,6 +1533,20 @@ export default function PlaceDetailScreen() {
     await uploadSelectedPlacePhotos(items);
   };
 
+  const resetRecordModalState = () => {
+    setRecordDraft('');
+    setSelectedRecordPhotoIds([]);
+    setRecordTimeLabel(createCurrentTimeLabel());
+    setRecordTimeEdited(false);
+    setEditingRecordId(null);
+  };
+
+  const closeRecordModalWithCleanup = () => {
+    pendingRecordPhotoGridOpenRef.current = false;
+    pendingRecordModalCleanupRef.current = true;
+    setRecordModalOpen(false);
+  };
+
   const handleSaveRecord = async () => {
     if (isRecordSavingRef.current || isRecordSaving) {
       return;
@@ -1564,8 +1595,27 @@ export default function PlaceDetailScreen() {
           },
           placeInfo.dateLabel,
         ) ?? null;
-        if (editingRecordId) {
-          const updatedRecord = await updateRecord(
+        const refreshRecordQueries = () => {
+          void refetchPlaceDetailData();
+          void Promise.all([
+            queryClient.invalidateQueries({
+              queryKey: supabaseQueryKeys.placeDetail(user?.id, initialDetail.placeId),
+            }),
+            queryClient.invalidateQueries({
+              queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, tripDayId),
+            }),
+            queryClient.invalidateQueries({
+              queryKey: supabaseQueryKeys.tripDayRecords(user?.id, tripDayId),
+            }),
+            queryClient.invalidateQueries({
+              queryKey: supabaseQueryKeys.tripDays(user?.id, tripId),
+            }),
+          ]).catch((error: unknown) => {
+            console.warn('[place-detail] invalidate after record save failed', error);
+          });
+        };
+        const savedRecord = editingRecordId
+          ? await updateRecord(
             editingRecordId,
             {
               text: trimmedText,
@@ -1576,20 +1626,8 @@ export default function PlaceDetailScreen() {
               tripDayId,
               tripId,
             },
-          );
-
-          setRecords((currentRecords) => currentRecords.map((record) => (
-            record.id === updatedRecord.id
-              ? {
-                ...record,
-                time: formatSupabaseVisitedTime(updatedRecord.visited_at) || recordTimeLabel,
-                text: updatedRecord.text ?? trimmedText,
-                updatedAt: updatedRecord.updated_at,
-              }
-              : record
-          )));
-        } else {
-          const record = await createRecordForPlace({
+          )
+          : await createRecordForPlace({
             placeId: initialDetail.placeId,
             text: trimmedText,
             tripDayId,
@@ -1597,47 +1635,103 @@ export default function PlaceDetailScreen() {
             visitedAt,
           });
 
+        let syncedPhotoIds: string[];
+
+        try {
+          const syncResult = await syncRecordPhotos(
+            savedRecord.id,
+            selectedRecordPhotoIds,
+            {
+              placeId: initialDetail.placeId,
+              tripDayId,
+              tripId,
+            },
+          );
+          syncedPhotoIds = syncResult.photoIds;
+        } catch (error) {
+          if (__DEV__) {
+            console.warn('[place-detail] record photo sync failed', {
+              errorMessage: error instanceof Error ? error.message : 'Unknown error',
+              recordSaved: true,
+              stage: 'sync_record_photos',
+            });
+          }
+
+          if (editingRecord) {
+            setRecords((currentRecords) => currentRecords.map((record) => (
+              record.id === savedRecord.id
+                ? {
+                  ...record,
+                  time: formatSupabaseVisitedTime(savedRecord.visited_at) || recordTimeLabel,
+                  text: savedRecord.text ?? trimmedText,
+                  updatedAt: savedRecord.updated_at,
+                }
+                : record
+            )));
+          } else {
+            setRecords((currentRecords) => [
+              ...currentRecords,
+              {
+                id: savedRecord.id,
+                tripId: savedRecord.trip_id,
+                dayId: savedRecord.trip_day_id ?? tripDayId,
+                placeId: savedRecord.place_id,
+                time: formatSupabaseVisitedTime(savedRecord.visited_at) || recordTimeLabel,
+                text: savedRecord.text ?? trimmedText,
+                photoIds: [],
+                createdAt: savedRecord.created_at,
+                updatedAt: savedRecord.updated_at,
+              },
+            ]);
+            setEditingRecordId(savedRecord.id);
+          }
+
+          refreshRecordQueries();
+          Alert.alert(
+            '\uAE30\uB85D\uC740 \uC800\uC7A5\uD588\uC9C0\uB9CC \uC0AC\uC9C4\uC744 \uC5F0\uACB0\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+            '\uC0AC\uC9C4 \uC120\uD0DD\uC744 \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+          );
+          return;
+        }
+
+        if (editingRecordId) {
+          setRecords((currentRecords) => currentRecords.map((record) => (
+            record.id === savedRecord.id
+              ? {
+                ...record,
+                photoIds: syncedPhotoIds,
+                time: formatSupabaseVisitedTime(savedRecord.visited_at) || recordTimeLabel,
+                text: savedRecord.text ?? trimmedText,
+                updatedAt: savedRecord.updated_at,
+              }
+              : record
+          )));
+        } else {
           setRecords((currentRecords) => [
             ...currentRecords,
             {
-              id: record.id,
-              tripId: record.trip_id,
-              dayId: record.trip_day_id ?? tripDayId,
-              placeId: record.place_id,
-              time: formatSupabaseVisitedTime(record.visited_at) || recordTimeLabel,
-              text: record.text ?? trimmedText,
-              photoIds: selectedRecordPhotoIds,
-              createdAt: record.created_at,
-              updatedAt: record.updated_at,
+              id: savedRecord.id,
+              tripId: savedRecord.trip_id,
+              dayId: savedRecord.trip_day_id ?? tripDayId,
+              placeId: savedRecord.place_id,
+              time: formatSupabaseVisitedTime(savedRecord.visited_at) || recordTimeLabel,
+              text: savedRecord.text ?? trimmedText,
+              photoIds: syncedPhotoIds,
+              createdAt: savedRecord.created_at,
+              updatedAt: savedRecord.updated_at,
             },
           ]);
         }
-        setRecordDraft('');
-        setSelectedRecordPhotoIds([]);
-        setRecordTimeLabel(createCurrentTimeLabel());
-        setRecordTimeEdited(false);
-        setEditingRecordId(null);
-        setRecordModalOpen(false);
-        void refetchPlaceDetailData();
-
-        void Promise.all([
-          queryClient.invalidateQueries({
-            queryKey: supabaseQueryKeys.placeDetail(user?.id, initialDetail.placeId),
-          }),
-          queryClient.invalidateQueries({
-            queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, tripDayId),
-          }),
-          queryClient.invalidateQueries({
-            queryKey: supabaseQueryKeys.tripDayRecords(user?.id, tripDayId),
-          }),
-          queryClient.invalidateQueries({
-            queryKey: supabaseQueryKeys.tripDays(user?.id, tripId),
-          }),
-        ]).catch((error: unknown) => {
-          console.warn('[place-detail] invalidate after record save failed', error);
-        });
+        closeRecordModalWithCleanup();
+        refreshRecordQueries();
       } catch (error) {
-        console.warn('[place-detail] save record failed', error);
+        if (__DEV__) {
+          console.warn('[place-detail] record body save failed', {
+            errorMessage: error instanceof Error ? error.message : 'Unknown error',
+            recordSaved: false,
+            stage: 'save_record_body',
+          });
+        }
         Alert.alert(
           editingRecordId
             ? '\uAE30\uB85D\uC744 \uC218\uC815\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694'
@@ -1678,17 +1772,11 @@ export default function PlaceDetailScreen() {
         },
       ]);
     }
-    setRecordDraft('');
-    setSelectedRecordPhotoIds([]);
-    setRecordTimeLabel(createCurrentTimeLabel());
-    setRecordTimeEdited(false);
-    setEditingRecordId(null);
-    setRecordModalOpen(false);
+    closeRecordModalWithCleanup();
   };
 
   const handleCloseRecordModal = () => {
-    setRecordModalOpen(false);
-    setEditingRecordId(null);
+    closeRecordModalWithCleanup();
   };
 
   const handlePressAddRecord = () => {
@@ -1715,32 +1803,39 @@ export default function PlaceDetailScreen() {
   };
 
   const handleOpenRecordPhotoPicker = () => {
-    if (isRecordPhotoPickerTransitioning) {
+    if (isRecordPhotoPickerTransitioning || pendingRecordPhotoGridOpenRef.current) {
       return;
     }
 
-    if (recordPhotoPickerOpenTimerRef.current) {
-      clearTimeout(recordPhotoPickerOpenTimerRef.current);
-    }
-
-    if (recordSheetRestoreTimerRef.current) {
-      clearTimeout(recordSheetRestoreTimerRef.current);
-      recordSheetRestoreTimerRef.current = null;
-    }
-
+    pendingRecordModalCleanupRef.current = false;
+    pendingRecordPhotoGridOpenRef.current = true;
     setRecordPhotoPickerTransitioning(true);
-    setGridOpen(false);
     setGridSelectionPurpose('linkRecord');
     setGridViewOnly(false);
     setGridSelectionInitiallyEnabled(true);
+    Keyboard.dismiss();
     setRecordModalOpen(false);
-    setPhotoGridSessionKey((currentKey) => currentKey + 1);
+  };
 
-    recordPhotoPickerOpenTimerRef.current = setTimeout(() => {
+  const handleRecordModalDidDismiss = () => {
+    if (pendingRecordPhotoGridOpenRef.current) {
+      pendingRecordPhotoGridOpenRef.current = false;
+
+      if (!isPhotoScreenMountedRef.current) {
+        return;
+      }
+
+      setPhotoGridSessionKey((currentKey) => currentKey + 1);
       setGridOpen(true);
-      setRecordPhotoPickerTransitioning(false);
-      recordPhotoPickerOpenTimerRef.current = null;
-    }, 200);
+      return;
+    }
+
+    if (!pendingRecordModalCleanupRef.current) {
+      return;
+    }
+
+    pendingRecordModalCleanupRef.current = false;
+    resetRecordModalState();
   };
 
   const handleUnlinkRecordPhoto = (photoId: string) => {
@@ -1819,7 +1914,7 @@ export default function PlaceDetailScreen() {
           supabaseQueryKeys.placeDetail(user?.id, initialDetail.placeId),
           (
             current:
-              | { place: PlaceRow | null; records: RecordRow[] }
+              | { place: PlaceRow | null; records: RecordWithPhotos[] }
               | undefined,
           ) => {
             if (!current?.place) {
@@ -2365,6 +2460,7 @@ export default function PlaceDetailScreen() {
         initialSelectedPhotoIds={gridSelectionPurpose === 'linkRecord' ? selectedRecordPhotoIds : undefined}
         onAddPhoto={handleAddPhoto}
         onClose={handleClosePhotoGrid}
+        onDidDismiss={handlePhotoGridDidDismiss}
         onRequestDeletePhotos={requestDeleteGridPhotos}
         onPressPhoto={(index) => {
           if (gridSelectionPurpose === 'coverSelect') {
@@ -2378,7 +2474,10 @@ export default function PlaceDetailScreen() {
         }}
         onStartRecord={(photoIds) => {
           if (gridSelectionPurpose === 'linkRecord') {
-            setRecordPhotoPickerTransitioning(true);
+            if (pendingRecordSheetRestoreRef.current) {
+              return;
+            }
+
             setSelectedRecordPhotoIds(photoIds);
             if (!hasRecordTimeBeenEdited) {
               const earliestPhotoDate = getEarliestRecordPhotoTakenDate(photoIds, photos);
@@ -2387,9 +2486,7 @@ export default function PlaceDetailScreen() {
                 setRecordTimeLabel(formatPlaceEntryTime(convertDateToPlaceEntryTime(earliestPhotoDate)));
               }
             }
-            setGridOpen(false);
-            setGridSelectionPurpose('recordCreate');
-            restoreRecordSheetAfterPhotoGrid();
+            requestRecordSheetRestoreAfterPhotoGrid();
             return;
           }
 
@@ -2560,12 +2657,13 @@ export default function PlaceDetailScreen() {
       />
 
       <RecordCreateModal
-        allowPhotoChanges={editingRecordId == null}
+        allowPhotoChanges
         draft={recordDraft}
         mode={recordModalMode}
         onChangeDraft={setRecordDraft}
         onChangeTime={handleChangeRecordTime}
         onClose={handleCloseRecordModal}
+        onDidDismiss={handleRecordModalDidDismiss}
         onOpenPhotoPicker={handleOpenRecordPhotoPicker}
         onRemovePhoto={handleUnlinkRecordPhoto}
         onSave={handleSaveRecord}
@@ -2839,6 +2937,7 @@ interface PhotoGridModalProps {
   mode?: 'default' | 'cover-select' | 'selectForRecord';
   onAddPhoto: () => void;
   onClose: () => void;
+  onDidDismiss?: () => void;
   onRequestDeletePhotos: (photoIds: string[]) => void;
   onPressPhoto: (index: number) => void;
   onStartRecord: (photoIds: string[]) => void;
@@ -2860,6 +2959,7 @@ function PhotoGridModal({
   mode = 'default',
   onAddPhoto,
   onClose,
+  onDidDismiss,
   onRequestDeletePhotos,
   onPressPhoto,
   onStartRecord,
@@ -2880,6 +2980,9 @@ function PhotoGridModal({
   const [isInlineViewerOpen, setInlineViewerOpen] = React.useState(false);
   const [inlineViewerIndex, setInlineViewerIndex] = React.useState(0);
   const slideX = React.useRef(new Animated.Value(visible ? 0 : width)).current;
+  const dismissPendingRef = React.useRef(false);
+  const onDidDismissRef = React.useRef(onDidDismiss);
+  const previousClearSelectionSignalRef = React.useRef(clearSelectionSignal);
   const gridContainerWidthRef = React.useRef(0);
   const addTileLayoutRef = React.useRef({ height: 0, width: 0 });
   const photoGridContentWidth = Math.max(0, width - (Spacing.xl * 2));
@@ -2898,6 +3001,10 @@ function PhotoGridModal({
   );
   const showsAddPhotoTile =
     !isSelectionMode && !isCoverSelectMode && !isRecordSelectMode;
+
+  React.useEffect(() => {
+    onDidDismissRef.current = onDidDismiss;
+  }, [onDidDismiss]);
 
   const logPhotoGridLayout = React.useCallback(() => {
     if (!__DEV__) {
@@ -2923,6 +3030,7 @@ function PhotoGridModal({
 
   React.useEffect(() => {
     if (visible) {
+      dismissPendingRef.current = false;
       setPresented(true);
       slideX.setValue(width);
       Animated.timing(slideX, {
@@ -2938,19 +3046,34 @@ function PhotoGridModal({
       return;
     }
 
+    dismissPendingRef.current = true;
     Animated.timing(slideX, {
       toValue: width,
       duration: transitionDuration,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start(({ finished }) => {
-      if (finished) {
+      if (finished && dismissPendingRef.current) {
         setPresented(false);
       }
     });
   }, [isPresented, slideX, transitionDuration, visible, width]);
 
   React.useEffect(() => {
+    if (isPresented || visible || !dismissPendingRef.current) {
+      return;
+    }
+
+    dismissPendingRef.current = false;
+    onDidDismissRef.current?.();
+  }, [isPresented, visible]);
+
+  React.useEffect(() => {
+    if (previousClearSelectionSignalRef.current === clearSelectionSignal) {
+      return;
+    }
+
+    previousClearSelectionSignalRef.current = clearSelectionSignal;
     setSelectionMode(false);
     setSelectedPhotoIds([]);
     setPendingDeletePhotoIds([]);
@@ -3234,6 +3357,7 @@ interface RecordCreateModalProps {
   onChangeDraft: (value: string) => void;
   onChangeTime: (value: string) => void;
   onClose: () => void;
+  onDidDismiss?: () => void;
   onOpenPhotoPicker: () => void;
   onRemovePhoto: (photoId: string) => void;
   onSave: () => Promise<void> | void;
@@ -3253,6 +3377,7 @@ function RecordCreateModal({
   onChangeDraft,
   onChangeTime,
   onClose,
+  onDidDismiss,
   onOpenPhotoPicker,
   onRemovePhoto,
   onSave,
@@ -3268,6 +3393,9 @@ function RecordCreateModal({
   const sheetTranslateY = React.useRef(new Animated.Value(320)).current;
   const formScrollRef = React.useRef<ScrollView>(null);
   const recordInputOffsetYRef = React.useRef(0);
+  const dismissPendingRef = React.useRef(false);
+  const isSheetPresentedRef = React.useRef(visible);
+  const onDidDismissRef = React.useRef(onDidDismiss);
   const isScreenMode = mode === 'screen';
   const isInlinePresentation = presentation === 'inline';
   const saveDisabled = isSaving || !draft.trim();
@@ -3280,6 +3408,10 @@ function RecordCreateModal({
     windowHeight - keyboardBottomOffset - keyboardSheetTopClearance,
     0,
   );
+
+  React.useEffect(() => {
+    onDidDismissRef.current = onDidDismiss;
+  }, [onDidDismiss]);
 
   const scrollRecordInputIntoView = React.useCallback(() => {
     requestAnimationFrame(() => {
@@ -3318,6 +3450,8 @@ function RecordCreateModal({
     }
 
     if (visible) {
+      dismissPendingRef.current = false;
+      isSheetPresentedRef.current = true;
       setSheetPresented(true);
       dimOpacity.setValue(0);
       sheetTranslateY.setValue(320);
@@ -3338,6 +3472,11 @@ function RecordCreateModal({
       return undefined;
     }
 
+    if (!isSheetPresentedRef.current) {
+      return undefined;
+    }
+
+    dismissPendingRef.current = true;
     Animated.parallel([
       Animated.timing(dimOpacity, {
         toValue: 0,
@@ -3352,13 +3491,29 @@ function RecordCreateModal({
         useNativeDriver: true,
       }),
     ]).start(({ finished }) => {
-      if (finished) {
+      if (finished && dismissPendingRef.current) {
+        isSheetPresentedRef.current = false;
         setSheetPresented(false);
       }
     });
 
     return undefined;
   }, [dimOpacity, isScreenMode, sheetTranslateY, visible]);
+
+  React.useEffect(() => {
+    if (
+      isInlinePresentation
+      || isScreenMode
+      || isSheetPresented
+      || visible
+      || !dismissPendingRef.current
+    ) {
+      return;
+    }
+
+    dismissPendingRef.current = false;
+    onDidDismissRef.current?.();
+  }, [isInlinePresentation, isScreenMode, isSheetPresented, visible]);
 
   const handleSavePress = React.useCallback(() => {
     Keyboard.dismiss();

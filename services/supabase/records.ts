@@ -2,6 +2,10 @@ import { supabase } from '@/lib/supabase';
 import type { Tables, TablesInsert, TablesUpdate } from '@/types/supabase';
 
 export type RecordRow = Tables<'records'>;
+export type RecordPhotoRow = Tables<'record_photos'>;
+export type RecordWithPhotos = RecordRow & {
+  record_photos: RecordPhotoRow[];
+};
 
 export interface CreateRecordForPlaceInput {
   placeId: string;
@@ -22,10 +26,25 @@ export type UpdateRecordPatch = Pick<
   'text' | 'updated_at' | 'visited_at'
 >;
 
+export type SyncRecordPhotosResult = {
+  links: RecordPhotoRow[];
+  photoIds: string[];
+};
+
 function throwIfError(error: Error | null) {
   if (error) {
     throw error;
   }
+}
+
+function sortActiveRecordPhotos(recordPhotos: RecordPhotoRow[]) {
+  return recordPhotos
+    .filter((recordPhoto) => recordPhoto.deleted_at === null)
+    .sort((left, right) => (
+      left.sort_order - right.sort_order
+      || left.created_at.localeCompare(right.created_at)
+      || left.id.localeCompare(right.id)
+    ));
 }
 
 async function getCurrentUserId() {
@@ -113,10 +132,13 @@ export function listRecordsByPlace(placeId: string) {
     .order('created_at', { ascending: true });
 }
 
-export async function fetchRecordsByPlaceId(placeId: string): Promise<RecordRow[]> {
+export async function fetchRecordsByPlaceId(placeId: string): Promise<RecordWithPhotos[]> {
   const { data, error } = await listRecordsByPlace(placeId);
   throwIfError(error);
-  return data ?? [];
+  return (data ?? []).map((record) => ({
+    ...record,
+    record_photos: sortActiveRecordPhotos(record.record_photos ?? []),
+  }));
 }
 
 export function listRecordsByTripDay(tripDayId: string) {
@@ -329,18 +351,150 @@ export async function softDeleteRecordsByPlaceId(
   return { deleted_at: timestamp, place_id: placeId, updated_at: timestamp };
 }
 
-export function attachPhotoToRecord(input: TablesInsert<'record_photos'>) {
-  return supabase
-    .from('record_photos')
-    .insert(input)
-    .select()
-    .single();
-}
+export async function syncRecordPhotos(
+  recordId: string,
+  photoIds: string[],
+  context: RecordMutationContext,
+): Promise<SyncRecordPhotosResult> {
+  const userId = await getCurrentUserId();
+  const uniquePhotoIds = [...new Set(photoIds.filter(Boolean))];
+  await validateActiveRecordContext(recordId, context, userId);
 
-export function detachPhotoFromRecord(recordId: string, photoId: string) {
-  return supabase
+  if (uniquePhotoIds.length > 0) {
+    const { data: photos, error: photosError } = await supabase
+      .from('photos')
+      .select('id, user_id, trip_id, trip_day_id, place_id, deleted_at')
+      .in('id', uniquePhotoIds)
+      .eq('user_id', userId)
+      .is('deleted_at', null);
+
+    throwIfError(photosError);
+
+    const validPhotoIds = new Set(
+      (photos ?? [])
+        .filter((photo) => (
+          photo.user_id === userId
+          && photo.trip_id === context.tripId
+          && photo.trip_day_id === context.tripDayId
+          && photo.place_id === context.placeId
+        ))
+        .map((photo) => photo.id),
+    );
+
+    if (
+      validPhotoIds.size !== uniquePhotoIds.length
+      || uniquePhotoIds.some((photoId) => !validPhotoIds.has(photoId))
+    ) {
+      throw new Error('Every selected photo must belong to the record place and trip day.');
+    }
+  }
+
+  const { data: activeLinks, error: activeLinksError } = await supabase
     .from('record_photos')
-    .update({ deleted_at: new Date().toISOString() })
+    .select('*')
     .eq('record_id', recordId)
-    .eq('photo_id', photoId);
+    .is('deleted_at', null);
+
+  throwIfError(activeLinksError);
+
+  const activeLinkByPhotoId = new Map(
+    (activeLinks ?? []).map((link) => [link.photo_id, link]),
+  );
+  const selectedPhotoIdSet = new Set(uniquePhotoIds);
+  const removedPhotoIds = (activeLinks ?? [])
+    .filter((link) => !selectedPhotoIdSet.has(link.photo_id))
+    .map((link) => link.photo_id);
+  const timestamp = new Date().toISOString();
+  const retainedLinkUpdates = uniquePhotoIds.flatMap((photoId, sortOrder) => {
+    const link = activeLinkByPhotoId.get(photoId);
+
+    if (!link || link.sort_order === sortOrder) {
+      return [];
+    }
+
+    return [{
+      id: link.id,
+      sortOrder,
+    }];
+  });
+  const insertedLinks: TablesInsert<'record_photos'>[] = uniquePhotoIds.flatMap(
+    (photoId, sortOrder) => (
+      activeLinkByPhotoId.has(photoId)
+        ? []
+        : [{
+          photo_id: photoId,
+          record_id: recordId,
+          sort_order: sortOrder,
+        }]
+    ),
+  );
+
+  if (removedPhotoIds.length > 0) {
+    const { data, error } = await supabase
+      .rpc('soft_delete_record_photo_links', {
+        p_photo_ids: removedPhotoIds,
+        p_record_id: recordId,
+      })
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to soft delete removed record photo links: ${error.message}`);
+    }
+
+    if (!data) {
+      throw new Error('Failed to soft delete removed record photo links: no result returned.');
+    }
+  }
+
+  if (insertedLinks.length > 0) {
+    const { error } = await supabase
+      .from('record_photos')
+      .insert(insertedLinks);
+
+    throwIfError(error);
+  }
+
+  await Promise.all(retainedLinkUpdates.map(async ({ id, sortOrder }) => {
+    const { data, error } = await supabase
+      .from('record_photos')
+      .update({
+        sort_order: sortOrder,
+        updated_at: timestamp,
+      })
+      .eq('id', id)
+      .is('deleted_at', null)
+      .select('id')
+      .maybeSingle();
+
+    throwIfError(error);
+
+    if (!data) {
+      throw new Error('An existing record photo link could not be reordered.');
+    }
+  }));
+
+  const { data: finalLinks, error: finalLinksError } = await supabase
+    .from('record_photos')
+    .select('*')
+    .eq('record_id', recordId)
+    .is('deleted_at', null)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+
+  throwIfError(finalLinksError);
+
+  const sortedFinalLinks = sortActiveRecordPhotos(finalLinks ?? []);
+  const finalPhotoIds = sortedFinalLinks.map((link) => link.photo_id);
+
+  if (
+    finalPhotoIds.length !== uniquePhotoIds.length
+    || finalPhotoIds.some((photoId, index) => photoId !== uniquePhotoIds[index])
+  ) {
+    throw new Error('The record photo links were not synchronized completely.');
+  }
+
+  return {
+    links: sortedFinalLinks,
+    photoIds: finalPhotoIds,
+  };
 }
