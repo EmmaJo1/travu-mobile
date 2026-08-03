@@ -2,26 +2,10 @@ import type { PlaceEntry } from '@/components/trip/PlaceEntryCard';
 import type { ResolvedPhotoRow } from '@/services/supabase/photos';
 import type { PlaceRow } from '@/services/supabase/places';
 import type { RecordRow } from '@/services/supabase/records';
-
-function formatTimeLabel(value?: string | null) {
-  if (!value) {
-    return '';
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-
-  const hours = date.getUTCHours();
-  const minutes = date.getUTCMinutes();
-  const period = hours >= 12 ? 'PM' : 'AM';
-  const hour12 = hours % 12 || 12;
-  const minuteLabel = minutes > 0 ? `:${String(minutes).padStart(2, '0')}` : '';
-
-  return `${hour12}${minuteLabel} ${period}`;
-}
+import {
+  formatLocalDateKeyFromTimestamp,
+  formatVisitedAtTimeLabel,
+} from '@/utils/placeEntryTime';
 
 export function mapSupabasePlacesToPlaceEntries(
   places: PlaceRow[],
@@ -36,7 +20,7 @@ export function mapSupabasePlacesToPlaceEntries(
     return map;
   }, new Map<string, RecordRow[]>());
   const photosByPlaceId = photos.reduce((map, photo) => {
-    if (!photo.place_id || !photo.displayUrl) {
+    if (!photo.place_id || photo.deleted_at !== null) {
       return map;
     }
 
@@ -59,7 +43,8 @@ export function mapSupabasePlacesToPlaceEntries(
       .map((photo) => photo.displayUrl)
       .filter((uri): uri is string => Boolean(uri));
     const firstRecord = placeRecords[0];
-    const time = formatTimeLabel(place.visited_at ?? firstRecord?.visited_at);
+    const visitedAt = place.visited_at ?? firstRecord?.visited_at;
+    const time = formatVisitedAtTimeLabel(visitedAt) ?? '';
     const text = firstRecord?.text ?? place.memo ?? undefined;
 
     return {
@@ -67,13 +52,13 @@ export function mapSupabasePlacesToPlaceEntries(
       cityName: place.city ?? undefined,
       countryName: place.country ?? undefined,
       dataSource: 'supabase',
-      dateKey: place.visited_at?.slice(0, 10) ?? firstRecord?.visited_at?.slice(0, 10),
+      dateKey: formatLocalDateKeyFromTimestamp(visitedAt),
       formattedAddress: place.address ?? undefined,
       googlePlaceId: place.google_place_id ?? undefined,
       id: place.id,
       latitude: place.latitude ?? undefined,
       longitude: place.longitude ?? undefined,
-      photoCount: placePhotoUris.length,
+      photoCount: orderedPlacePhotos.length,
       photoUris: placePhotoUris,
       place: place.custom_name ?? place.name,
       placeId: place.id,

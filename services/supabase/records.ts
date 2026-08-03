@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { Tables, TablesInsert, TablesUpdate } from '@/types/supabase';
+import { formatLocalDateKeyFromTimestamp } from '@/utils/placeEntryTime';
 
 export type RecordRow = Tables<'records'>;
 export type RecordPhotoRow = Tables<'record_photos'>;
@@ -157,6 +158,22 @@ export async function fetchRecordsByTripDayId(tripDayId: string): Promise<Record
   return data ?? [];
 }
 
+export function listRecordsByTrip(tripId: string) {
+  return supabase
+    .from('records')
+    .select('*')
+    .eq('trip_id', tripId)
+    .is('deleted_at', null)
+    .order('visited_at', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true });
+}
+
+export async function fetchRecordsByTripId(tripId: string): Promise<RecordRow[]> {
+  const { data, error } = await listRecordsByTrip(tripId);
+  throwIfError(error);
+  return data ?? [];
+}
+
 export function createRecord(input: TablesInsert<'records'>) {
   return supabase
     .from('records')
@@ -175,7 +192,7 @@ export async function createRecordForPlace(
     throw new Error('A record must contain text.');
   }
 
-  if (!input.visitedAt || Number.isNaN(new Date(input.visitedAt).getTime())) {
+  if (input.visitedAt && Number.isNaN(new Date(input.visitedAt).getTime())) {
     throw new Error('A record must contain a valid visit time.');
   }
 
@@ -216,7 +233,7 @@ export async function createRecordForPlace(
     place.trip_id === input.tripId &&
     place.trip_day_id === input.tripDayId &&
     tripDay?.trip_id === input.tripId &&
-    input.visitedAt.slice(0, 10) === tripDay.date &&
+    (!input.visitedAt || formatLocalDateKeyFromTimestamp(input.visitedAt) === tripDay.date) &&
     trip?.user_id === userId;
 
   if (!hasValidParentRelationship) {
@@ -255,13 +272,13 @@ export async function updateRecord(
     throw new Error('A record must contain text.');
   }
 
-  if (!visitedAt || Number.isNaN(new Date(visitedAt).getTime())) {
+  if (visitedAt && Number.isNaN(new Date(visitedAt).getTime())) {
     throw new Error('A record must contain a valid visit time.');
   }
 
   const { tripDay } = await validateActiveRecordContext(recordId, context, userId);
 
-  if (visitedAt.slice(0, 10) !== tripDay.date) {
+  if (visitedAt && formatLocalDateKeyFromTimestamp(visitedAt) !== tripDay.date) {
     throw new Error('The record visit time must belong to the selected trip day.');
   }
 

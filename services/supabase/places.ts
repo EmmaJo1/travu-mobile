@@ -65,6 +65,22 @@ export async function fetchPlacesByTripDayId(tripDayId: string): Promise<PlaceRo
   return data ?? [];
 }
 
+export function listPlacesByTrip(tripId: string) {
+  return supabase
+    .from('places')
+    .select('*')
+    .eq('trip_id', tripId)
+    .is('deleted_at', null)
+    .order('visited_at', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true });
+}
+
+export async function fetchPlacesByTripId(tripId: string): Promise<PlaceRow[]> {
+  const { data, error } = await listPlacesByTrip(tripId);
+  throwIfError(error);
+  return data ?? [];
+}
+
 export function getPlaceById(placeId: string) {
   return supabase
     .from('places')
@@ -146,7 +162,7 @@ export async function softDeletePlace(
 ): Promise<{ deleted_at: string; id: string; updated_at: string }> {
   const userId = await getCurrentUserId();
   const timestamp = new Date().toISOString();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('places')
     .update({
       deleted_at: timestamp,
@@ -154,7 +170,9 @@ export async function softDeletePlace(
     })
     .eq('id', placeId)
     .eq('user_id', userId)
-    .is('deleted_at', null);
+    .is('deleted_at', null)
+    .select('id, deleted_at, updated_at')
+    .maybeSingle();
 
   if (error) {
     console.warn('[softDeletePlace] update failed', {
@@ -167,5 +185,14 @@ export async function softDeletePlace(
     });
   }
   throwIfError(error);
-  return { deleted_at: timestamp, id: placeId, updated_at: timestamp };
+
+  if (!data?.deleted_at) {
+    throw new Error('The place could not be deleted.');
+  }
+
+  return {
+    deleted_at: data.deleted_at,
+    id: data.id,
+    updated_at: data.updated_at,
+  };
 }

@@ -49,9 +49,11 @@ import { MOCK_ARCHIVE_DETAIL } from '@/constants/mockArchiveDetail';
 import { RECORD_DAY_ENTRIES } from '@/constants/mockRecordDayDetail';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 import {
+  buildVisitedAtIso,
   convertDateToPlaceEntryTime,
   extractPhotoTakenAt,
   formatPlaceEntryTime,
+  formatVisitedAtTimeLabel,
   parsePlaceEntryTime,
 } from '@/utils/placeEntryTime';
 import { isSupabaseUuid, usePlaceDetailData } from '@/hooks/usePlaceDetailData';
@@ -425,23 +427,6 @@ function getSerializablePhotoUris(photos: PlaceDetailPhoto[]): string[] {
     .filter((uri): uri is string => typeof uri === 'string' && uri.length > 0);
 }
 
-function formatSupabaseVisitedTime(value?: string | null) {
-  if (!value) {
-    return undefined;
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return undefined;
-  }
-
-  return formatPlaceEntryTime({
-    hour: date.getUTCHours() % 12 || 12,
-    minute: date.getUTCMinutes(),
-    meridiem: date.getUTCHours() >= 12 ? 'PM' : 'AM',
-  });
-}
-
 function hasDisplayableRecordContent(record: RecordRow) {
   return Boolean(record.text?.trim());
 }
@@ -478,11 +463,11 @@ function createSupabasePlaceDetail(
         .map((recordPhoto) => recordPhoto.photo_id),
       placeId: record.place_id,
       text: record.text ?? undefined,
-      time: formatSupabaseVisitedTime(record.visited_at),
+      time: formatVisitedAtTimeLabel(record.visited_at),
       tripId: record.trip_id,
       updatedAt: record.updated_at,
     })),
-    timeLabel: formatSupabaseVisitedTime(visitedAt),
+    timeLabel: formatVisitedAtTimeLabel(visitedAt),
     tripDateRange: getParamValue(params.dateLabel) ?? '',
     tripId: place.trip_id,
     tripName: getParamValue(params.cityName) ?? getParamValue(params.placeName) ?? 'Trip',
@@ -737,7 +722,7 @@ function getDateKeyFromPlaceDetailLabel(value?: string) {
   ].join('-');
 }
 
-function buildVisitedAtForPlaceUpdate(input: PlaceCreateInput, fallbackDateLabel?: string) {
+function resolveVisitedAtForPlaceUpdate(input: PlaceCreateInput, fallbackDateLabel?: string) {
   const dateKey =
     input.dateKey ??
     getDateKeyFromPlaceDetailLabel(input.dateLabel) ??
@@ -747,20 +732,7 @@ function buildVisitedAtForPlaceUpdate(input: PlaceCreateInput, fallbackDateLabel
     return undefined;
   }
 
-  const parsedTime = input.time ? parsePlaceEntryTime(input.time) : null;
-
-  if (!parsedTime) {
-    return `${dateKey}T00:00:00.000Z`;
-  }
-
-  const hour = parsedTime.meridiem === 'AM'
-    ? parsedTime.hour % 12
-    : (parsedTime.hour % 12) + 12;
-
-  return `${dateKey}T${String(hour).padStart(2, '0')}:${String(parsedTime.minute).padStart(
-    2,
-    '0',
-  )}:00.000Z`;
+  return buildVisitedAtIso(dateKey, input.time);
 }
 
 export default function PlaceDetailScreen() {
@@ -1203,6 +1175,9 @@ export default function PlaceDetailScreen() {
             queryKey: supabaseQueryKeys.tripDayRecords(user?.id, tripDayId),
           }),
           queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripRecords(user?.id, tripId),
+          }),
+          queryClient.invalidateQueries({
             queryKey: supabaseQueryKeys.tripDays(user?.id, tripId),
           }),
         ]).catch((error: unknown) => {
@@ -1417,9 +1392,14 @@ export default function PlaceDetailScreen() {
 
       const uploadContext = items[0]?.input;
       if (uploadContext) {
-        await queryClient.invalidateQueries({
-          queryKey: supabaseQueryKeys.tripDayPhotos(user?.id, uploadContext.tripDayId),
-        });
+        await Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDayPhotos(user?.id, uploadContext.tripDayId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripPhotos(user?.id, uploadContext.tripId),
+          }),
+        ]);
       }
 
       const refreshResult = await refetchPlacePhotos();
@@ -1587,7 +1567,7 @@ export default function PlaceDetailScreen() {
         const tripDayDate = placeTripDays?.find(
           (day) => day.id === tripDayId && day.deleted_at == null,
         )?.date;
-        const visitedAt = buildVisitedAtForPlaceUpdate(
+        const visitedAt = resolveVisitedAtForPlaceUpdate(
           {
             dateKey: tripDayDate,
             place: placeInfo.placeName,
@@ -1606,6 +1586,9 @@ export default function PlaceDetailScreen() {
             }),
             queryClient.invalidateQueries({
               queryKey: supabaseQueryKeys.tripDayRecords(user?.id, tripDayId),
+            }),
+            queryClient.invalidateQueries({
+              queryKey: supabaseQueryKeys.tripRecords(user?.id, tripId),
             }),
             queryClient.invalidateQueries({
               queryKey: supabaseQueryKeys.tripDays(user?.id, tripId),
@@ -1662,7 +1645,7 @@ export default function PlaceDetailScreen() {
               record.id === savedRecord.id
                 ? {
                   ...record,
-                  time: formatSupabaseVisitedTime(savedRecord.visited_at) || recordTimeLabel,
+                  time: formatVisitedAtTimeLabel(savedRecord.visited_at) || recordTimeLabel,
                   text: savedRecord.text ?? trimmedText,
                   updatedAt: savedRecord.updated_at,
                 }
@@ -1676,7 +1659,7 @@ export default function PlaceDetailScreen() {
                 tripId: savedRecord.trip_id,
                 dayId: savedRecord.trip_day_id ?? tripDayId,
                 placeId: savedRecord.place_id,
-                time: formatSupabaseVisitedTime(savedRecord.visited_at) || recordTimeLabel,
+                time: formatVisitedAtTimeLabel(savedRecord.visited_at) || recordTimeLabel,
                 text: savedRecord.text ?? trimmedText,
                 photoIds: [],
                 createdAt: savedRecord.created_at,
@@ -1700,7 +1683,7 @@ export default function PlaceDetailScreen() {
               ? {
                 ...record,
                 photoIds: syncedPhotoIds,
-                time: formatSupabaseVisitedTime(savedRecord.visited_at) || recordTimeLabel,
+                time: formatVisitedAtTimeLabel(savedRecord.visited_at) || recordTimeLabel,
                 text: savedRecord.text ?? trimmedText,
                 updatedAt: savedRecord.updated_at,
               }
@@ -1714,7 +1697,7 @@ export default function PlaceDetailScreen() {
               tripId: savedRecord.trip_id,
               dayId: savedRecord.trip_day_id ?? tripDayId,
               placeId: savedRecord.place_id,
-              time: formatSupabaseVisitedTime(savedRecord.visited_at) || recordTimeLabel,
+              time: formatVisitedAtTimeLabel(savedRecord.visited_at) || recordTimeLabel,
               text: savedRecord.text ?? trimmedText,
               photoIds: syncedPhotoIds,
               createdAt: savedRecord.created_at,
@@ -1880,7 +1863,7 @@ export default function PlaceDetailScreen() {
           country: nextPlaceInfo.countryName || null,
           name: nextPlaceInfo.placeName.trim() || placeInfo.placeName,
         };
-        const visitedAt = buildVisitedAtForPlaceUpdate(
+        const visitedAt = resolveVisitedAtForPlaceUpdate(
           {
             ...input,
             dateLabel: nextDateLabelSource ?? input.dateLabel,
@@ -1958,6 +1941,18 @@ export default function PlaceDetailScreen() {
           }),
           queryClient.invalidateQueries({
             queryKey: supabaseQueryKeys.tripDays(user?.id, initialDetail.tripId || routeTripId || ''),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripPlaces(
+              user?.id,
+              initialDetail.tripId || routeTripId || '',
+            ),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripRecords(
+              user?.id,
+              initialDetail.tripId || routeTripId || '',
+            ),
           }),
         ]).catch((error: unknown) => {
           console.warn('[place-detail] invalidate after place update failed', error);
@@ -2050,6 +2045,9 @@ export default function PlaceDetailScreen() {
         }),
         queryClient.invalidateQueries({
           queryKey: supabaseQueryKeys.tripDays(user?.id, tripId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripPhotos(user?.id, tripId),
         }),
       ]),
       ...tripDayIds.flatMap((tripDayId) => [

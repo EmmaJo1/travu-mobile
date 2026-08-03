@@ -5,6 +5,7 @@ import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
 import { useAuth } from '@/providers/AuthProvider';
 import { updatePlace } from '@/services/supabase/places';
 import { createRecordForPlace, updateRecord } from '@/services/supabase/records';
+import { buildVisitedAtIso } from '@/utils/placeEntryTime';
 
 export interface UpdatePlaceRecordInput extends PlaceCreateInput {
   placeId: string;
@@ -25,28 +26,6 @@ function parseDateKeyFromDateLabel(dateLabel?: string) {
   ).padStart(2, '0')}`;
 }
 
-function buildVisitedAt(dateKey?: string, timeLabel?: string) {
-  if (!dateKey) {
-    return null;
-  }
-
-  const matchedTime = timeLabel?.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
-
-  if (!matchedTime) {
-    return `${dateKey}T00:00:00.000Z`;
-  }
-
-  const hour12 = Number(matchedTime[1]);
-  const minute = Number(matchedTime[2] ?? 0);
-  const period = matchedTime[3].toUpperCase();
-  const hour = period === 'AM' ? hour12 % 12 : (hour12 % 12) + 12;
-
-  return `${dateKey}T${String(hour).padStart(2, '0')}:${String(minute).padStart(
-    2,
-    '0',
-  )}:00.000Z`;
-}
-
 export function useUpdatePlaceRecord() {
   const queryClient = useQueryClient();
   const { canUseSupabaseUserData, user } = useAuth();
@@ -61,7 +40,7 @@ export function useUpdatePlaceRecord() {
       const recordText = input.text?.trim() || null;
       const shouldCreateRecord = Boolean(recordText);
       const dateKey = input.dateKey ?? parseDateKeyFromDateLabel(input.dateLabel);
-      const visitedAt = buildVisitedAt(dateKey, input.time);
+      const visitedAt = buildVisitedAtIso(dateKey, input.time);
       const place = await updatePlace(input.placeId, {
         address: input.formattedAddress ?? null,
         city: input.cityName ?? input.city ?? null,
@@ -101,6 +80,12 @@ export function useUpdatePlaceRecord() {
         }),
         queryClient.invalidateQueries({
           queryKey: supabaseQueryKeys.tripDayRecords(userId, input.tripDayId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripPlaces(userId, input.tripId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripRecords(userId, input.tripId),
         }),
         queryClient.invalidateQueries({
           queryKey: supabaseQueryKeys.tripDays(userId, input.tripId),

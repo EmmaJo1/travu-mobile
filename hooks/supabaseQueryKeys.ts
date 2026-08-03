@@ -20,6 +20,12 @@ export const supabaseQueryKeys = {
     ['supabase', 'records', 'trip-day', userId ?? 'no-user', tripDayId ?? 'no-trip-day'] as const,
   tripDayPhotos: (userId?: string | null, tripDayId?: string | null) =>
     ['supabase', 'photos', 'trip-day', userId ?? 'no-user', tripDayId ?? 'no-trip-day'] as const,
+  tripPlaces: (userId?: string | null, tripId?: string | null) =>
+    ['supabase', 'places', 'trip', userId ?? 'no-user', tripId ?? 'no-trip'] as const,
+  tripRecords: (userId?: string | null, tripId?: string | null) =>
+    ['supabase', 'records', 'trip', userId ?? 'no-user', tripId ?? 'no-trip'] as const,
+  tripPhotos: (userId?: string | null, tripId?: string | null) =>
+    ['supabase', 'photos', 'trip', userId ?? 'no-user', tripId ?? 'no-trip'] as const,
   placePhotos: (userId?: string | null, placeId?: string | null) =>
     ['supabase', 'photos', 'place', userId ?? 'no-user', placeId ?? 'no-place'] as const,
 };

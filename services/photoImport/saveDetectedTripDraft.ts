@@ -18,6 +18,7 @@ import {
   type LocalDetectedPlaceGroup,
   type LocalDetectedTripDraft,
 } from '@/services/photoImport/localDetectedTripDraftStore';
+import { buildVisitedAtIso } from '@/utils/placeEntryTime';
 
 const PHOTO_UPLOAD_CONCURRENCY = 3;
 const PHOTO_PREPARATION_CONCURRENCY = 4;
@@ -168,37 +169,6 @@ function parseDateLabelToDateKey(dateLabel?: string | null) {
   return `${matched[1]}-${String(Number(matched[2])).padStart(2, '0')}-${String(
     Number(matched[3]),
   ).padStart(2, '0')}`;
-}
-
-function parseTimeLabel(timeLabel?: string | null) {
-  const trimmedTime = timeLabel?.trim();
-  const matchedTime = trimmedTime?.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
-
-  if (!matchedTime) {
-    return { hour: 0, minute: 0 };
-  }
-
-  const hour12 = Number(matchedTime[1]);
-  const minute = Number(matchedTime[2] ?? 0);
-  const period = matchedTime[3].toUpperCase();
-  const hour = period === 'AM'
-    ? hour12 % 12
-    : (hour12 % 12) + 12;
-
-  return { hour, minute };
-}
-
-function buildVisitedAt(dateKey?: string | null, timeLabel?: string | null) {
-  if (!dateKey) {
-    return null;
-  }
-
-  const { hour, minute } = parseTimeLabel(timeLabel);
-
-  return `${dateKey}T${String(hour).padStart(2, '0')}:${String(minute).padStart(
-    2,
-    '0',
-  )}:00.000Z`;
 }
 
 function getDateKeyTime(dateKey: string) {
@@ -903,7 +873,7 @@ async function executeDetectedTripDraftSave(
           source: 'photo_cluster',
           tripDayId: tripDay.id,
           tripId: trip.id,
-          visitedAt: buildVisitedAt(dateKey, place.time),
+          visitedAt: buildVisitedAtIso(dateKey, place.time),
         });
 
         createdPlaces.push(createdPlace);

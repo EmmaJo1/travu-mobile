@@ -161,6 +161,14 @@ const savedPlacePhotoResultsByIdentifier =
   new Map<string, UploadPhotoAssetResult>();
 const activePhotoDeleteOperations = new Map<string, Promise<DeletePhotoResult>>();
 const PHOTO_DELETE_CONCURRENCY = 3;
+const PLACE_PHOTO_UPLOAD_CONCURRENCY = 3;
+
+type ValidatedPhotoUploadContext = {
+  placeId: string | null;
+  tripDayId: string;
+  tripId: string;
+  userId: string;
+};
 
 function throwIfError(error: Error | null) {
   if (error) {
@@ -556,6 +564,31 @@ async function validatePhotoUploadRelationships(
   }
 }
 
+function assertPhotoUploadContext(
+  input: UploadPhotoAssetInput,
+  context: ValidatedPhotoUploadContext,
+) {
+  if (
+    input.tripId !== context.tripId ||
+    input.tripDayId !== context.tripDayId ||
+    (input.placeId ?? null) !== context.placeId
+  ) {
+    throw new Error('The photo upload does not match the validated batch relationship.');
+  }
+}
+
+async function createValidatedPhotoUploadContext(input: UploadPhotoAssetInput) {
+  const userId = await getCurrentUserId();
+  await validatePhotoUploadRelationships(input, userId);
+
+  return {
+    placeId: input.placeId ?? null,
+    tripDayId: input.tripDayId,
+    tripId: input.tripId,
+    userId,
+  } satisfies ValidatedPhotoUploadContext;
+}
+
 async function removePhotoStorageObjectForUser(storagePath: string, userId: string) {
   const [pathUserId, pathTripId, pathFileName, extraSegment] = storagePath.split('/');
   const pathPhotoId = pathFileName?.split('.')[0] ?? '';
@@ -584,9 +617,12 @@ export async function removePhotoStorageObject(storagePath: string) {
   await removePhotoStorageObjectForUser(storagePath, userId);
 }
 
-export async function uploadPhotoAsset(
+async function uploadPhotoAssetWithContext(
   input: UploadPhotoAssetInput,
+  context: ValidatedPhotoUploadContext,
 ): Promise<UploadPhotoAssetResult> {
+  assertPhotoUploadContext(input, context);
+
   if (!/^(blob:|content:\/\/|file:\/\/)/i.test(input.localUri.trim())) {
     throw new Error('A renderable local photo URI is required for upload.');
   }
@@ -602,9 +638,6 @@ export async function uploadPhotoAsset(
     throw new Error('The selected image exceeds the photo upload size limit.');
   }
 
-  const userId = await getCurrentUserId();
-  await validatePhotoUploadRelationships(input, userId);
-
   const fileType = resolvePhotoUploadFileType(input.mimeType, input.fileName, input.localUri);
   const metadata = normalizePhotoMetadata(input);
 
@@ -614,7 +647,7 @@ export async function uploadPhotoAsset(
 
   const photoId = createPhotoUuid();
   const storagePath = buildPhotoStoragePath(
-    userId,
+    context.userId,
     input.tripId,
     photoId,
     fileType.extension,
@@ -671,7 +704,7 @@ export async function uploadPhotoAsset(
     thumbnail_url: null,
     trip_day_id: input.tripDayId,
     trip_id: input.tripId,
-    user_id: userId,
+    user_id: context.userId,
     width: metadata.width,
   };
 
@@ -691,7 +724,7 @@ export async function uploadPhotoAsset(
     };
   } catch (insertError) {
     try {
-      await removePhotoStorageObjectForUser(storagePath, userId);
+      await removePhotoStorageObjectForUser(storagePath, context.userId);
       notifyPhotoUploadLifecycle(input, 'storage_object_deleted');
     } catch {
       console.warn('[photo upload] storage rollback failed', {
@@ -706,6 +739,13 @@ export async function uploadPhotoAsset(
         'photo_row_insert',
       );
   }
+}
+
+export async function uploadPhotoAsset(
+  input: UploadPhotoAssetInput,
+): Promise<UploadPhotoAssetResult> {
+  const context = await createValidatedPhotoUploadContext(input);
+  return uploadPhotoAssetWithContext(input, context);
 }
 
 export function uploadPlacePhotos(items: UploadPlacePhotoItem[]) {
@@ -773,22 +813,46 @@ export function uploadPlacePhotos(items: UploadPlacePhotoItem[]) {
       });
     }
 
+    if (pendingItems.length === 0) {
+      if (__DEV__) {
+        console.info('[photo upload] completed', {
+          photoUploadFailureCount: 0,
+          photoUploadSuccessCount: 0,
+          photoUploadFailureCounts: failureCounts,
+          rollbackDeleteCount,
+        });
+      }
+      return {
+        failedItems,
+        failureCounts,
+        skippedCount,
+        uploadedPhotoCount: 0,
+      };
+    }
+
+    const uploadContextPromise = createValidatedPhotoUploadContext(firstItem.input);
+
     async function uploadNext() {
       while (nextIndex < pendingItems.length) {
-        const item = pendingItems[nextIndex];
+        const photoIndex = nextIndex;
+        const item = pendingItems[photoIndex];
         nextIndex += 1;
 
         try {
-          const result = await uploadPhotoAsset({
-            ...item.input,
-            onLifecycleEvent: (event) => {
-              item.input.onLifecycleEvent?.(event);
+          const uploadContext = await uploadContextPromise;
+          const result = await uploadPhotoAssetWithContext(
+            {
+              ...item.input,
+              onLifecycleEvent: (event) => {
+                item.input.onLifecycleEvent?.(event);
 
-              if (event === 'storage_object_deleted') {
-                rollbackDeleteCount += 1;
-              }
+                if (event === 'storage_object_deleted') {
+                  rollbackDeleteCount += 1;
+                }
+              },
             },
-          });
+            uploadContext,
+          );
 
           savedPlacePhotoResultsByIdentifier.set(
             `${operationKey}:${item.sourceIdentifier}`,
@@ -805,9 +869,10 @@ export function uploadPlacePhotos(items: UploadPlacePhotoItem[]) {
       }
     }
 
+    const workerCount = Math.min(PLACE_PHOTO_UPLOAD_CONCURRENCY, pendingItems.length);
     await Promise.all(
       Array.from(
-        { length: Math.min(3, pendingItems.length) },
+        { length: workerCount },
         () => uploadNext(),
       ),
     );
@@ -904,6 +969,12 @@ export function listPhotosByTrip(tripId: string) {
     .eq('trip_id', tripId)
     .is('deleted_at', null)
     .order('taken_at', { ascending: true, nullsFirst: false });
+}
+
+export async function fetchPhotoRowsByTripId(tripId: string): Promise<PhotoRow[]> {
+  const { data, error } = await listPhotosByTrip(tripId);
+  throwIfError(error);
+  return data ?? [];
 }
 
 export async function ensurePhotoCoversForTrip(

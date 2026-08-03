@@ -2,6 +2,7 @@
  * Home based on Figma Home_Component / node 1941:2308.
  */
 import { Ionicons } from '@expo/vector-icons';
+import { useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
@@ -53,21 +54,26 @@ import PlaceCreateModal, {
 import TodaySummary from '@/components/trip/TodaySummary';
 import { setActiveTraveling } from '@/constants/activeTravelSession';
 import { HOME_MOCK_DATA } from '@/constants/mockHome';
-import {
-  HOME_TIMELINE_ITEMS,
-  generateHomeTimelineItemsForDay,
-} from '@/constants/mockHomeTimeline';
 import type { DestinationOption } from '@/constants/mockTripDestinations';
 import { addSavedCompletedTrip } from '@/constants/savedMyPageTrips';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useCompleteTrip } from '@/hooks/useCompleteTrip';
 import { useCreatePlaceRecord } from '@/hooks/useCreatePlaceRecord';
 import { useCreateTrip } from '@/hooks/useCreateTrip';
+import { useDeletePlaceRecord } from '@/hooks/useDeletePlaceRecord';
 import { useActiveTrip, useMyTrips, useRecentTrips } from '@/hooks/useMyTrips';
+import { isSupabaseUuid } from '@/hooks/usePlaceDetailData';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
 import { useTripDays } from '@/hooks/useTripDays';
 import { useTripDayPlaces } from '@/hooks/useTripDayPlaces';
 import { useTripDayRecords } from '@/hooks/useTripDayRecords';
+import { useTripDayPhotos } from '@/hooks/useSupabasePhotos';
+import {
+  useTripPhotos,
+  useTripPlaces,
+  useTripRecords,
+} from '@/hooks/useTripTimelineData';
+import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
 import {
   useSyncActiveTripDestinations,
   useTripDestinations,
@@ -84,6 +90,16 @@ import {
   TripCreationStageError,
   type TripRow,
 } from '@/services/supabase/trips';
+import {
+  ensurePhotoCoversForTrip,
+  uploadPlacePhotos,
+  type PhotoRow,
+  type ResolvedPhotoRow,
+  type UploadPlacePhotoItem,
+} from '@/services/supabase/photos';
+import type { PlaceRow } from '@/services/supabase/places';
+import type { RecordRow } from '@/services/supabase/records';
+import { extractPhotoTakenAt } from '@/utils/placeEntryTime';
 import { mapSupabasePlacesToPlaceEntries } from '@/utils/supabasePlaceRecordMappers';
 import {
   getCurrentLocalDateKey,
@@ -235,15 +251,6 @@ interface ActiveTripState {
 
 type EditableTimelineItem = TodayTimelineItem & {
   dayDateKey?: string;
-  hidden?: boolean;
-  records?: PlaceRecord[];
-  memoEntries?: string[];
-  addedPhotoUris?: string[];
-};
-
-type TripDay = {
-  dayNumber: number;
-  dateKey: string;
 };
 
 type TripTotalStats = {
@@ -257,28 +264,17 @@ type DayScheduleSummary = {
   placeCount: number;
 };
 
-type PlaceRecord = {
-  id: string;
-  tripId: string;
-  dayId: string;
-  placeId: string;
-  text?: string;
-  photoIds?: string[];
-  createdAt: string;
-  updatedAt?: string;
-};
-
 function mapSupabasePlacesToHomeTimelineItems({
   fallbackCityLabel,
-  fallbackImageSource,
   places,
+  photos,
   records,
   tripDayDates,
 }: {
   fallbackCityLabel: string;
-  fallbackImageSource: TodayTimelineItem['imageSource'];
-  places: Parameters<typeof mapSupabasePlacesToPlaceEntries>[0];
-  records: Parameters<typeof mapSupabasePlacesToPlaceEntries>[1];
+  places: PlaceRow[];
+  photos: ResolvedPhotoRow[];
+  records: RecordRow[];
   tripDayDates: Map<string, string>;
 }): EditableTimelineItem[] {
   const recordsByPlaceId = records.reduce((map, record) => {
@@ -288,34 +284,33 @@ function mapSupabasePlacesToHomeTimelineItems({
     return map;
   }, new Map<string, typeof records>());
 
-  return mapSupabasePlacesToPlaceEntries(places, records).map((entry) => {
+  const sortedPlaces = [...places].sort((first, second) => {
+    const firstRecordVisitedAt = recordsByPlaceId.get(first.id)?.[0]?.visited_at;
+    const secondRecordVisitedAt = recordsByPlaceId.get(second.id)?.[0]?.visited_at;
+    const firstSortValue = first.visited_at ?? firstRecordVisitedAt ?? first.created_at;
+    const secondSortValue = second.visited_at ?? secondRecordVisitedAt ?? second.created_at;
+    const dateCompare = firstSortValue.localeCompare(secondSortValue);
+
+    return dateCompare !== 0 ? dateCompare : first.id.localeCompare(second.id);
+  });
+
+  return mapSupabasePlacesToPlaceEntries(sortedPlaces, records, undefined, photos).map((entry) => {
     const placeRecords = recordsByPlaceId.get(entry.placeId ?? entry.id) ?? [];
-    const recordTexts = placeRecords
-      .map((record) => record.text?.trim())
-      .filter((text): text is string => Boolean(text));
 
     return {
+      dataSource: entry.dataSource,
       id: entry.placeId ?? entry.id,
       dayDateKey: entry.tripDayId ? tripDayDates.get(entry.tripDayId) : undefined,
+      placeId: entry.placeId ?? entry.id,
+      tripDayId: entry.tripDayId,
+      tripId: entry.tripId,
       timeLabel: entry.time ?? '',
       placeName: entry.placeName ?? entry.place,
       categoryLabel: entry.category ?? '직접 추가',
       cityLabel: entry.cityName ?? entry.city ?? fallbackCityLabel,
       memoCount: entry.recordCount ?? placeRecords.length,
       photoCount: entry.photoCount ?? 0,
-      imageSource: fallbackImageSource,
-      records: placeRecords.length > 0
-        ? placeRecords.map((record) => ({
-            id: record.id,
-            tripId: record.trip_id,
-            dayId: record.trip_day_id ?? entry.tripDayId ?? '',
-            placeId: record.place_id,
-            text: record.text?.trim() || undefined,
-            createdAt: record.created_at,
-            updatedAt: record.updated_at,
-          }))
-        : undefined,
-      memoEntries: recordTexts.length > 0 ? recordTexts : undefined,
+      imageSource: entry.photoUris?.[0] ? { uri: entry.photoUris[0] } : undefined,
     };
   });
 }
@@ -450,16 +445,6 @@ function createDestinationId(prefix: string, displayName: string): string {
     .replace(/[^\w-]/g, '');
 
   return `${prefix}-${normalizedName || 'unknown'}`;
-}
-
-function createPlaceId(prefix: string, dateKey: string, placeName: string, timestamp: number): string {
-  const normalizedPlaceName = placeName
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^\w-]/g, '');
-
-  return `${prefix}-${dateKey}-${normalizedPlaceName || 'place'}-${timestamp}`;
 }
 
 function createUnknownDestination(): DestinationOption {
@@ -685,33 +670,6 @@ function toPlaceEntryDayOption(day: {
   };
 }
 
-function formatTimelineFallbackTimeLabel(date = new Date()): string {
-  const hours = date.getHours();
-  const minutes = date.getMinutes();
-  const period = hours >= 12 ? 'PM' : 'AM';
-  const hour12 = hours % 12 || 12;
-
-  if (minutes === 0) {
-    return `${hour12} ${period}`;
-  }
-
-  return `${hour12}:${`${minutes}`.padStart(2, '0')} ${period}`;
-}
-
-function getTimelineTimeSortMinutes(timeLabel: string): number {
-  const match = timeLabel.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
-  if (!match) return Number.MAX_SAFE_INTEGER;
-
-  const rawHour = Number(match[1]);
-  const minute = Number(match[2] ?? 0);
-  const period = match[3].toUpperCase();
-  const hour = period === 'PM'
-    ? rawHour === 12 ? 12 : rawHour + 12
-    : rawHour === 12 ? 0 : rawHour;
-
-  return hour * 60 + minute;
-}
-
 function addDaysToDateKey(dateKey: string, dayOffset: number): string {
   const date = parseDateKey(dateKey);
   date.setDate(date.getDate() + dayOffset);
@@ -726,74 +684,31 @@ function isSameDateKey(firstDateKey: string, secondDateKey: string): boolean {
   return firstDateKey === secondDateKey;
 }
 
-function getTimelineRecordCount(item: EditableTimelineItem): number {
-  if (item.records && item.records.length > 0) {
-    return item.records.length;
-  }
-
-  if (item.memoEntries && item.memoEntries.length > 0) {
-    return item.memoEntries.length;
-  }
-
-  return item.memoCount;
-}
-
 function getTripTotalStats(
-  timelineItems: EditableTimelineItem[],
-  tripDays: TripDay[],
+  places: PlaceRow[],
+  records: RecordRow[],
+  photos: PhotoRow[],
 ): TripTotalStats {
-  const tripDayKeys = new Set(tripDays.map((day) => day.dateKey));
-
-  return timelineItems.reduce<TripTotalStats>(
-    (stats, item) => {
-      if (item.hidden) {
-        return stats;
-      }
-
-      if (item.dayDateKey && !tripDayKeys.has(item.dayDateKey)) {
-        return stats;
-      }
-
-      return {
-        photoCount: stats.photoCount + item.photoCount,
-        placeCount: stats.placeCount + 1,
-        recordCount: stats.recordCount + getTimelineRecordCount(item),
-      };
-    },
-    {
-      photoCount: 0,
-      placeCount: 0,
-      recordCount: 0,
-    },
-  );
+  return {
+    photoCount: photos.length,
+    placeCount: places.length,
+    recordCount: records.length,
+  };
 }
 
 function getDayScheduleSummary(
-  timelineItems: EditableTimelineItem[],
-  dateKey: string,
-  fallbackDateKey: string,
+  tripDayId: string | undefined,
+  places: PlaceRow[],
+  photos: PhotoRow[],
 ): DayScheduleSummary {
-  return timelineItems.reduce<DayScheduleSummary>(
-    (summary, item) => {
-      if (item.hidden) {
-        return summary;
-      }
+  if (!tripDayId) {
+    return { photoCount: 0, placeCount: 0 };
+  }
 
-      const itemDateKey = item.dayDateKey ?? fallbackDateKey;
-      if (itemDateKey !== dateKey) {
-        return summary;
-      }
-
-      return {
-        photoCount: summary.photoCount + item.photoCount,
-        placeCount: summary.placeCount + 1,
-      };
-    },
-    {
-      photoCount: 0,
-      placeCount: 0,
-    },
-  );
+  return {
+    photoCount: photos.filter((photo) => photo.trip_day_id === tripDayId).length,
+    placeCount: places.filter((place) => place.trip_day_id === tripDayId).length,
+  };
 }
 
 function formatSheetDateLabel(dateKey: string): string {
@@ -983,26 +898,34 @@ function createActiveTripStateFromSupabaseTrip(trip: TripRow): ActiveTripState {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     photoImportPreview?: string;
     action?: string;
     actionId?: string;
   }>();
-  const { canUseSupabaseUserData } = useAuth();
+  const {
+    canUseSupabaseUserData,
+    isDevBypass,
+    isLoading: isAuthLoading,
+    user,
+  } = useAuth();
   const createTripMutation = useCreateTrip();
   const createPlaceRecordMutation = useCreatePlaceRecord();
+  const deletePlaceRecordMutation = useDeletePlaceRecord();
   const completeTripMutation = useCompleteTrip();
   const updateDateRangeMutation = useUpdateActiveTripDateRange();
   const syncDestinationsMutation = useSyncActiveTripDestinations();
   const {
     data: supabaseActiveTrip,
+    isError: isActiveTripError,
     isFetched: isActiveTripFetched,
     refetch: refetchActiveTrip,
   } = useActiveTrip();
   const { data: supabaseTrips } = useMyTrips();
   const { data: supabaseRecentTrips } = useRecentTrips(3);
-  const { currentTrip, todaySummary } = HOME_MOCK_DATA;
+  const { currentTrip } = HOME_MOCK_DATA;
   const {
     status: photoImportStatus,
     progress: photoImportProgress,
@@ -1023,6 +946,8 @@ export default function HomeScreen() {
   );
   const [isTraveling, setIsTraveling] = React.useState(false);
   const [activeTrip, setActiveTrip] = React.useState(INITIAL_ACTIVE_TRIP);
+  const [resolvedHomeModeKey, setResolvedHomeModeKey] = React.useState<string | null>(null);
+  const [failedHomeModeKey, setFailedHomeModeKey] = React.useState<string | null>(null);
   const [isTravelStatusSheetVisible, setTravelStatusSheetVisible] = React.useState(false);
   const [isDatePickerVisible, setDatePickerVisible] = React.useState(false);
   const [isDestinationSearchVisible, setDestinationSearchVisible] = React.useState(false);
@@ -1041,8 +966,6 @@ export default function HomeScreen() {
     React.useState(false);
   const [pendingTravelStatusAction, setPendingTravelStatusAction] =
     React.useState<PendingTravelStatusAction>(null);
-  const [timelineItems, setTimelineItems] =
-    React.useState<EditableTimelineItem[]>(HOME_TIMELINE_ITEMS);
   const [selectedTripDayIndex, setSelectedTripDayIndex] = React.useState(
     Math.max(0, INITIAL_ACTIVE_TRIP.dayNumber - 1),
   );
@@ -1060,6 +983,19 @@ export default function HomeScreen() {
   const headerLocationRequestIdRef = React.useRef(0);
   const headerLocationRequestInFlightRef = React.useRef(false);
   const lastHeaderLocationRequestAtRef = React.useRef(0);
+  const isTimelineDeleteAlertOpenRef = React.useRef(false);
+  const deletingTimelinePlaceIdRef = React.useRef<string | null>(null);
+  const homeModeKey = React.useMemo(() => {
+    if (isAuthLoading) {
+      return null;
+    }
+
+    if (canUseSupabaseUserData && user?.id) {
+      return `supabase:${user.id}`;
+    }
+
+    return isDevBypass ? 'dev-bypass' : 'anonymous';
+  }, [canUseSupabaseUserData, isAuthLoading, isDevBypass, user?.id]);
   const homeActiveTrip = React.useMemo(
     () =>
       supabaseActiveTrip &&
@@ -1076,6 +1012,18 @@ export default function HomeScreen() {
     isLoading: isSupabaseTripDaysLoading,
   } = useTripDays(activeTripId);
   const { data: supabaseTripDestinations } = useTripDestinations(activeTripId);
+  const {
+    data: supabaseTripPlaces,
+    refetch: refetchSupabaseTripPlaces,
+  } = useTripPlaces(activeTripId);
+  const {
+    data: supabaseTripRecords,
+    refetch: refetchSupabaseTripRecords,
+  } = useTripRecords(activeTripId);
+  const {
+    data: supabaseTripPhotos,
+    refetch: refetchSupabaseTripPhotos,
+  } = useTripPhotos(activeTripId);
 
   const updateDeviceHeaderLocation = React.useCallback(async ({
     force = false,
@@ -1215,19 +1163,52 @@ export default function HomeScreen() {
   }, [isTraveling, params.action, params.actionId]);
 
   React.useEffect(() => {
-    setActiveTraveling(isTraveling);
-  }, [isTraveling]);
-
-  React.useEffect(() => {
-    if (!canUseSupabaseUserData || !isActiveTripFetched) {
+    if (!homeModeKey || resolvedHomeModeKey !== homeModeKey) {
       return;
     }
 
+    setActiveTraveling(isTraveling);
+  }, [homeModeKey, isTraveling, resolvedHomeModeKey]);
+
+  React.useEffect(() => {
+    if (isAuthLoading || !homeModeKey) {
+      return;
+    }
+
+    if (!canUseSupabaseUserData) {
+      const shouldClearSupabaseHome =
+        !isDevBypass || resolvedHomeModeKey?.startsWith('supabase:');
+
+      if (shouldClearSupabaseHome) {
+        setTravelStatusSheetVisible(false);
+        setEndTripConfirmVisible(false);
+        setPendingTravelStatusAction(null);
+        setIsTraveling(false);
+      }
+
+      setFailedHomeModeKey(null);
+      setResolvedHomeModeKey(homeModeKey);
+      return;
+    }
+
+    if (!isActiveTripFetched) {
+      return;
+    }
+
+    if (isActiveTripError) {
+      setFailedHomeModeKey(homeModeKey);
+      return;
+    }
+
+    const isInitialResolution = resolvedHomeModeKey !== homeModeKey;
+
     if (!homeActiveTrip) {
       if (
-        isCompletingTripRef.current
-        || isEndTripCompleteVisible
-        || isPlaceCreateModalVisible
+        !isInitialResolution && (
+          isCompletingTripRef.current
+          || isEndTripCompleteVisible
+          || isPlaceCreateModalVisible
+        )
       ) {
         return;
       }
@@ -1236,6 +1217,8 @@ export default function HomeScreen() {
       setEndTripConfirmVisible(false);
       setPendingTravelStatusAction(null);
       setIsTraveling(false);
+      setFailedHomeModeKey(null);
+      setResolvedHomeModeKey(homeModeKey);
       return;
     }
 
@@ -1256,12 +1239,19 @@ export default function HomeScreen() {
       };
     });
     setIsTraveling(true);
+    setFailedHomeModeKey(null);
+    setResolvedHomeModeKey(homeModeKey);
   }, [
     canUseSupabaseUserData,
+    homeModeKey,
     homeActiveTrip,
+    isActiveTripError,
     isActiveTripFetched,
+    isAuthLoading,
+    isDevBypass,
     isEndTripCompleteVisible,
     isPlaceCreateModalVisible,
+    resolvedHomeModeKey,
   ]);
 
   React.useEffect(() => {
@@ -1540,7 +1530,7 @@ export default function HomeScreen() {
     [supabaseActiveTripDays],
   );
   const tripDays = React.useMemo(
-    () => canUseSupabaseUserData && activeSupabaseTripDays.length
+    () => canUseSupabaseUserData
       ? activeSupabaseTripDays.map((day) => ({
           dayNumber: day.day_index,
           dateKey: day.date,
@@ -1562,12 +1552,22 @@ export default function HomeScreen() {
   const selectedRouteDayIndex = selectedSupabaseTripDay?.day_index ?? selectedTripDayIndex + 1;
   const {
     data: selectedSupabaseTripDayPlaces,
+    isError: isSelectedSupabaseTripDayPlacesError,
+    isLoading: isSelectedSupabaseTripDayPlacesLoading,
     refetch: refetchSelectedSupabaseTripDayPlaces,
   } = useTripDayPlaces(selectedRouteTripDayId);
   const {
     data: selectedSupabaseTripDayRecords,
+    isError: isSelectedSupabaseTripDayRecordsError,
+    isLoading: isSelectedSupabaseTripDayRecordsLoading,
     refetch: refetchSelectedSupabaseTripDayRecords,
   } = useTripDayRecords(selectedRouteTripDayId);
+  const {
+    data: selectedSupabaseTripDayPhotos,
+    isError: isSelectedSupabaseTripDayPhotosError,
+    isLoading: isSelectedSupabaseTripDayPhotosLoading,
+    refetch: refetchSelectedSupabaseTripDayPhotos,
+  } = useTripDayPhotos(selectedRouteTripDayId);
   const todayDateKey = getTodayDateKey();
   const manualEntryTripDay = React.useMemo(
     () =>
@@ -1590,8 +1590,8 @@ export default function HomeScreen() {
     () =>
       mapSupabasePlacesToHomeTimelineItems({
         fallbackCityLabel: activeTrip.destination.displayName,
-        fallbackImageSource: currentTrip.heroImage,
         places: selectedSupabaseTripDayPlaces ?? [],
+        photos: selectedSupabaseTripDayPhotos ?? [],
         records: selectedSupabaseTripDayRecords ?? [],
         tripDayDates: new Map(
           activeSupabaseTripDays.map((day) => [day.id, day.date]),
@@ -1600,35 +1600,30 @@ export default function HomeScreen() {
     [
       activeSupabaseTripDays,
       activeTrip.destination.displayName,
-      currentTrip.heroImage,
       selectedSupabaseTripDayPlaces,
+      selectedSupabaseTripDayPhotos,
       selectedSupabaseTripDayRecords,
     ],
   );
   const visibleTimelineItems = React.useMemo(
     () => canUseSupabaseUserData && selectedRouteTripDayId
       ? supabaseTimelineItems.filter((item) => item.dayDateKey === selectedDateKey)
-      : generateHomeTimelineItemsForDay({
-          selectedDateKey,
-          // TODO: Pass the selected day's real photo metadata once EXIF/GPS import is connected.
-          photos: [],
-          fallbackItems: timelineItems.filter((item) => !item.hidden),
-        }),
+      : [],
     [
       canUseSupabaseUserData,
       selectedDateKey,
       selectedRouteTripDayId,
       supabaseTimelineItems,
-      timelineItems,
     ],
   );
-  const recordedPhotoCount = visibleTimelineItems.reduce(
-    (sum, item) => sum + item.photoCount,
-    0,
-  );
+  const recordedPhotoCount = selectedSupabaseTripDayPhotos?.length ?? 0;
   const tripTotalStats = React.useMemo(
-    () => getTripTotalStats(timelineItems, tripDays),
-    [timelineItems, tripDays],
+    () => getTripTotalStats(
+      supabaseTripPlaces ?? [],
+      supabaseTripRecords ?? [],
+      supabaseTripPhotos ?? [],
+    ),
+    [supabaseTripPhotos, supabaseTripPlaces, supabaseTripRecords],
   );
   const isSelectedTripDayToday = isSameDateKey(selectedDateKey, todayDateKey);
   const selectedTimelineTitle = isSelectedTripDayToday
@@ -1636,15 +1631,24 @@ export default function HomeScreen() {
     : `${selectedTripDayIndex + 1}일차 타임라인`;
   const selectedSummaryDateLabel = formatHeroDateLabel(selectedDateKey);
   const selectedSummary = {
-    distanceKm: visibleTimelineItems.length > 0 ? todaySummary.distanceKm : 0,
+    distanceKm: 0,
     placeCount: visibleTimelineItems.length,
     photoCount: recordedPhotoCount,
   };
+  const isSelectedTimelineLoading = canUseSupabaseUserData && Boolean(activeTripId) && (
+    isSupabaseTripDaysLoading ||
+    (Boolean(selectedRouteTripDayId) && (
+      isSelectedSupabaseTripDayPlacesLoading ||
+      isSelectedSupabaseTripDayRecordsLoading ||
+      isSelectedSupabaseTripDayPhotosLoading
+    ))
+  );
+  const isSelectedTimelineError =
+    isSelectedSupabaseTripDayPlacesError ||
+    isSelectedSupabaseTripDayRecordsError ||
+    isSelectedSupabaseTripDayPhotosError;
 
   const handlePressTimelinePlace = React.useCallback((item: TodayTimelineItem) => {
-    const timelineItem = item as EditableTimelineItem;
-    const firstRecord = timelineItem.records?.[0];
-
     router.push({
       pathname: '/place-detail',
       params: {
@@ -1653,20 +1657,11 @@ export default function HomeScreen() {
         tripDayId: selectedRouteTripDayId,
         date: selectedDateKey,
         dayIndex: String(selectedRouteDayIndex),
-        placeId: item.id,
+        placeId: item.placeId ?? item.id,
         entryPoint: 'activeTripTimeline',
-        placeName: item.placeName,
-        cityName: item.cityLabel,
-        countryName: activeTrip.destination.countryName,
-        categoryLabel: item.categoryLabel,
-        dateLabel: selectedSummaryDateLabel,
-        timeLabel: item.timeLabel,
-        recordText: firstRecord?.text,
-        photoUris: JSON.stringify(timelineItem.addedPhotoUris ?? []),
       },
     });
   }, [
-    activeTrip.destination.countryName,
     activeTrip.destination.id,
     activeTripId,
     router,
@@ -1674,7 +1669,85 @@ export default function HomeScreen() {
     selectedRouteDayId,
     selectedRouteDayIndex,
     selectedRouteTripDayId,
-    selectedSummaryDateLabel,
+  ]);
+
+  const handleLongPressTimelinePlace = React.useCallback((item: TodayTimelineItem) => {
+    const placeId = item.placeId;
+    const tripDayId = item.tripDayId;
+    const tripId = item.tripId;
+    const isCurrentSupabasePlace =
+      canUseSupabaseUserData &&
+      item.dataSource === 'supabase' &&
+      isSupabaseUuid(placeId) &&
+      isSupabaseUuid(tripDayId) &&
+      isSupabaseUuid(tripId) &&
+      tripId === activeTripId &&
+      activeSupabaseTripDays.some((day) => day.id === tripDayId && day.deleted_at === null);
+
+    if (
+      !isCurrentSupabasePlace ||
+      !placeId ||
+      !tripDayId ||
+      !tripId ||
+      isTimelineDeleteAlertOpenRef.current ||
+      deletingTimelinePlaceIdRef.current !== null ||
+      deletePlaceRecordMutation.isPending
+    ) {
+      return;
+    }
+
+    isTimelineDeleteAlertOpenRef.current = true;
+    const clearAlertState = () => {
+      isTimelineDeleteAlertOpenRef.current = false;
+    };
+
+    Alert.alert(
+      '장소를 삭제할까요?',
+      `‘${item.placeName}’의 기록과 사진도 함께 삭제돼요.`,
+      [
+        {
+          text: '취소',
+          style: 'cancel',
+          onPress: clearAlertState,
+        },
+        {
+          text: '삭제',
+          style: 'destructive',
+          onPress: () => {
+            clearAlertState();
+            deletingTimelinePlaceIdRef.current = placeId;
+
+            void deletePlaceRecordMutation.mutateAsync({
+              placeId,
+              tripDayId,
+              tripId,
+            }).catch((error: unknown) => {
+              console.warn('[home timeline] delete place failed', {
+                message: error instanceof Error ? error.message : String(error),
+                stage: 'delete_place_record',
+              });
+              Alert.alert(
+                '장소를 삭제하지 못했어요',
+                '잠시 후 다시 시도해주세요.',
+              );
+            }).finally(() => {
+              if (deletingTimelinePlaceIdRef.current === placeId) {
+                deletingTimelinePlaceIdRef.current = null;
+              }
+            });
+          },
+        },
+      ],
+      {
+        cancelable: true,
+        onDismiss: clearAlertState,
+      },
+    );
+  }, [
+    activeSupabaseTripDays,
+    activeTripId,
+    canUseSupabaseUserData,
+    deletePlaceRecordMutation,
   ]);
 
   React.useEffect(() => {
@@ -1694,9 +1767,13 @@ export default function HomeScreen() {
 
     try {
       if (canUseSupabaseUserData && selectedRouteTripDayId) {
-        await Promise.all([
+        await Promise.allSettled([
           refetchSelectedSupabaseTripDayPlaces(),
           refetchSelectedSupabaseTripDayRecords(),
+          refetchSelectedSupabaseTripDayPhotos(),
+          refetchSupabaseTripPlaces(),
+          refetchSupabaseTripRecords(),
+          refetchSupabaseTripPhotos(),
         ]);
       }
     } finally {
@@ -1706,6 +1783,10 @@ export default function HomeScreen() {
     canUseSupabaseUserData,
     refetchSelectedSupabaseTripDayPlaces,
     refetchSelectedSupabaseTripDayRecords,
+    refetchSelectedSupabaseTripDayPhotos,
+    refetchSupabaseTripPhotos,
+    refetchSupabaseTripPlaces,
+    refetchSupabaseTripRecords,
     selectedRouteTripDayId,
   ]);
 
@@ -1779,11 +1860,6 @@ export default function HomeScreen() {
   }, []);
 
   const handleSubmitManualPlace = React.useCallback(async (input: PlaceCreateInput) => {
-    const createdAt = Date.now();
-    const photoCount = (input.photoUris?.length ?? 0) + (input.photoSources?.length ?? 0);
-    const firstPhotoUri = input.photoUris?.[0];
-    const firstPhotoSource = input.photoSources?.[0];
-    const placeName = input.placeName ?? input.place;
     const submittedSupabaseTripDay = input.dayId
       ? activeSupabaseTripDays.find((day) => day.id === input.dayId)
       : undefined;
@@ -1797,87 +1873,132 @@ export default function HomeScreen() {
       throw new Error('Unable to find the active trip day for manual place creation.');
     }
 
-    const canPersistToSupabase =
-      canUseSupabaseUserData &&
-      Boolean(activeTripId) &&
-      Boolean(submittedSupabaseTripDay);
-    const submittedDateKey = submittedSupabaseTripDay?.date ?? input.dateKey ?? selectedDateKey;
-    const submittedDayId = submittedSupabaseTripDay?.id ?? input.dayId ?? selectedRouteDayId;
-    let placeId = createPlaceId('manual', submittedDateKey, placeName, createdAt);
-    let recordId = `manual-record-${createdAt}`;
-    let recordCreatedAt = new Date().toISOString();
-    let recordText = input.text?.trim() || undefined;
+    if (!canUseSupabaseUserData || !activeTripId || !submittedSupabaseTripDay) {
+      throw new Error('A Supabase trip day is required for manual place creation.');
+    }
 
-    if (canPersistToSupabase && activeTripId && submittedSupabaseTripDay) {
-      try {
-        const result = await createPlaceRecordMutation.mutateAsync({
-          ...input,
+    let result: Awaited<ReturnType<typeof createPlaceRecordMutation.mutateAsync>>;
+
+    try {
+      result = await createPlaceRecordMutation.mutateAsync({
+        ...input,
+        tripDayId: submittedSupabaseTripDay.id,
+        tripId: activeTripId,
+      });
+    } catch (error) {
+      console.warn('[home] create manual place failed', error);
+      Alert.alert(
+        '\uC7A5\uC18C\uB97C \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+        '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+      );
+      throw error;
+    }
+
+    const uploadItems = (input.photoAssets ?? []).map((asset): UploadPlacePhotoItem => {
+      const takenAt = extractPhotoTakenAt(asset);
+
+      return {
+        input: {
+          exif: asset.exif,
+          fileName: asset.fileName,
+          fileSize: asset.fileSize,
+          height: asset.height,
+          localUri: asset.uri,
+          mimeType: asset.mimeType,
+          placeId: result.place.id,
+          takenAt: takenAt?.toISOString(),
           tripDayId: submittedSupabaseTripDay.id,
           tripId: activeTripId,
-        });
+          width: asset.width,
+        },
+        sourceIdentifier: asset.assetId?.trim() || [
+          asset.uri,
+          asset.fileSize ?? '',
+          asset.width,
+          asset.height,
+        ].join(':'),
+      };
+    });
+    let failedPhotoCount = 0;
+    let uploadedPhotoCount = 0;
 
-        placeId = result.place.id;
-        recordId = result.record?.id ?? recordId;
-        recordCreatedAt = result.record?.created_at ?? recordCreatedAt;
-        recordText = result.record?.text?.trim() || recordText;
+    if (uploadItems.length > 0) {
+      try {
+        const uploadResult = await uploadPlacePhotos(uploadItems);
+        failedPhotoCount = uploadResult.failedItems.length;
+        uploadedPhotoCount = uploadResult.uploadedPhotoCount;
       } catch (error) {
-        console.warn('[home] create manual place failed', error);
-        Alert.alert(
-          '\uC7A5\uC18C\uB97C \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
-          '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
-        );
-        throw error;
+        failedPhotoCount = uploadItems.length;
+        console.warn('[home] manual place photo upload failed', error);
       }
     }
 
-    // TODO: Use selected photos' metadata to derive timeLabel and location group.
-    // TODO: Use placeId as the source of truth for timeline-to-place-detail navigation.
-    const newTimelineItem: EditableTimelineItem = {
-      id: placeId,
-      dayDateKey: submittedDateKey,
-      timeLabel: input.time ?? formatTimelineFallbackTimeLabel(),
-      placeName,
-      categoryLabel: input.category ?? '직접 추가',
-      cityLabel: input.cityName ?? input.city ?? activeTrip.destination.displayName,
-      memoCount: recordText ? 1 : 0,
-      photoCount,
-      imageSource: firstPhotoSource ?? (firstPhotoUri ? { uri: firstPhotoUri } : currentTrip.heroImage),
-      records: recordText
-        ? [
-            {
-              id: recordId,
-              tripId: activeTripId ?? activeTrip.destination.id,
-              dayId: submittedDayId,
-              placeId,
-              text: recordText,
-              photoIds: input.photoUris,
-              createdAt: recordCreatedAt,
-            },
-          ]
-        : undefined,
-      memoEntries: recordText ? [recordText] : undefined,
-      addedPhotoUris: input.photoUris,
-    };
+    if (uploadedPhotoCount > 0) {
+      try {
+        await ensurePhotoCoversForTrip(activeTripId);
+      } catch (error) {
+        console.warn('[home] manual place photo cover refresh failed', error);
+      }
+    }
 
-    setTimelineItems((current) =>
-      [...current, newTimelineItem].sort((a, b) => {
-        const dayCompare = (a.dayDateKey ?? '').localeCompare(b.dayDateKey ?? '');
-        if (dayCompare !== 0) return dayCompare;
-
-        return getTimelineTimeSortMinutes(a.timeLabel) - getTimelineTimeSortMinutes(b.timeLabel);
+    await Promise.allSettled([
+      queryClient.invalidateQueries({
+        queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, submittedSupabaseTripDay.id),
       }),
-    );
+      queryClient.invalidateQueries({
+        queryKey: supabaseQueryKeys.tripDayRecords(user?.id, submittedSupabaseTripDay.id),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: supabaseQueryKeys.tripDayPhotos(user?.id, submittedSupabaseTripDay.id),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: supabaseQueryKeys.placePhotos(user?.id, result.place.id),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: supabaseQueryKeys.tripPlaces(user?.id, activeTripId),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: supabaseQueryKeys.tripRecords(user?.id, activeTripId),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: supabaseQueryKeys.tripPhotos(user?.id, activeTripId),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: supabaseQueryKeys.tripDays(user?.id, activeTripId),
+      }),
+      ...(uploadedPhotoCount > 0
+        ? [
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.activeTrip(user?.id),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDetail(user?.id, activeTripId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.myTrips(user?.id),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.recentTripsRoot(user?.id),
+          }),
+        ]
+        : []),
+    ]);
+
     setPlaceCreateModalVisible(false);
+
+    if (failedPhotoCount > 0) {
+      Alert.alert(
+        '\uC7A5\uC18C\uC640 \uAE30\uB85D\uC740 \uC800\uC7A5\uB410\uC5B4\uC694',
+        '\uC77C\uBD80 \uC0AC\uC9C4\uC740 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694. \uC7A5\uC18C \uC0C1\uC138\uC5D0\uC11C \uB2E4\uC2DC \uCD94\uAC00\uD574\uC8FC\uC138\uC694.',
+      );
+    }
   }, [
-    activeTrip.destination.displayName,
-    activeTrip.destination.id,
     activeTripId,
     activeSupabaseTripDays,
     canUseSupabaseUserData,
     createPlaceRecordMutation,
-    currentTrip.heroImage,
-    selectedDateKey,
-    selectedRouteDayId,
+    queryClient,
+    user?.id,
   ]);
 
   const handleConfirmEndTrip = React.useCallback(async () => {
@@ -2281,6 +2402,19 @@ export default function HomeScreen() {
       hasDismissedPhotoImportCompleteModal ||
       hasDeferredPhotoImportResults ||
       hasOpenedPhotoImportResults);
+  const isInitialHomeModeError = Boolean(
+    homeModeKey &&
+    failedHomeModeKey === homeModeKey &&
+    resolvedHomeModeKey !== homeModeKey,
+  );
+  const isInitialHomeModePending =
+    isAuthLoading ||
+    !homeModeKey ||
+    (resolvedHomeModeKey !== homeModeKey && !isInitialHomeModeError);
+  const handleRetryInitialHomeMode = React.useCallback(() => {
+    setFailedHomeModeKey(null);
+    void refetchActiveTrip();
+  }, [refetchActiveTrip]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -2293,6 +2427,33 @@ export default function HomeScreen() {
       setStatusBarBackgroundColor('transparent');
     }, [isTraveling]),
   );
+
+  if (isInitialHomeModePending) {
+    return (
+      <View style={styles.initialHomeMode}>
+        <StatusBar style="dark" backgroundColor={WARM_WHITE} translucent={false} />
+      </View>
+    );
+  }
+
+  if (isInitialHomeModeError) {
+    return (
+      <View style={styles.initialHomeMode}>
+        <StatusBar style="dark" backgroundColor={WARM_WHITE} translucent={false} />
+        <Text style={styles.initialHomeModeErrorTitle}>홈을 불러오지 못했어요</Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={handleRetryInitialHomeMode}
+          style={({ pressed }) => [
+            styles.initialHomeModeRetryButton,
+            pressed && styles.initialHomeModeRetryButtonPressed,
+          ]}
+        >
+          <Text style={styles.initialHomeModeRetryText}>다시 시도</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   if (!isTraveling) {
     return (
@@ -2410,9 +2571,13 @@ export default function HomeScreen() {
           items={visibleTimelineItems}
           title={selectedTimelineTitle}
           isSelectedToday={isSelectedTripDayToday}
+          isLoading={isSelectedTimelineLoading}
+          isError={isSelectedTimelineError}
+          onLongPressItem={canUseSupabaseUserData ? handleLongPressTimelinePlace : undefined}
           onPressItem={handlePressTimelinePlace}
           onPressViewAll={openScheduleSheet}
           onPressAddManually={handleOpenManualPlaceCreate}
+          onRetry={handleRefreshTravelHome}
           refreshControl={
             <RefreshControl
               refreshing={isTravelHomeRefreshing}
@@ -2432,6 +2597,10 @@ export default function HomeScreen() {
         dayOptions={manualEntryDayOptions}
         selectedDayId={manualEntryTripDay?.id}
         requireTripDay={canUseSupabaseUserData && Boolean(activeTripId)}
+        showCategoryField={false}
+        showOptionalRecordSection
+        submittingLabel="사진을 저장하고 있어요"
+        titleLabel="장소 추가"
         tripDestinationName={activeTrip.destination.displayName}
         tripDestinationCountry={activeTrip.destination.countryName}
         tripLatitude={activeTrip.latitude}
@@ -2472,10 +2641,13 @@ export default function HomeScreen() {
             >
               {tripDays.map((day, index) => {
                 const isSelected = index === selectedTripDayIndex;
+                const supabaseDay = activeSupabaseTripDays.find(
+                  (tripDay) => tripDay.date === day.dateKey,
+                );
                 const daySummary = getDayScheduleSummary(
-                  timelineItems,
-                  day.dateKey,
-                  activeTrip.startDate,
+                  supabaseDay?.id,
+                  supabaseTripPlaces ?? [],
+                  supabaseTripPhotos ?? [],
                 );
                 const weekdayLabel = WEEKDAY_LABELS[parseDateKey(day.dateKey).getDay()];
                 const dateLabel = formatSheetDateLabel(day.dateKey);
@@ -2652,6 +2824,28 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: WARM_WHITE,
+  },
+  initialHomeMode: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.lg,
+    backgroundColor: WARM_WHITE,
+  },
+  initialHomeModeErrorTitle: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+  },
+  initialHomeModeRetryButton: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+  },
+  initialHomeModeRetryButtonPressed: {
+    opacity: 0.64,
+  },
+  initialHomeModeRetryText: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.black,
   },
   travelHomeContent: {
     flex: 1,
