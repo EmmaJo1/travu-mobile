@@ -1,4 +1,6 @@
 export const supabaseQueryKeys = {
+  archivedTravelMoments: (userId?: string | null) =>
+    ['supabase', 'travel-moments', 'archived', userId ?? 'no-user'] as const,
   activeTrip: (userId?: string | null) => ['supabase', 'trips', 'active', userId ?? 'no-user'] as const,
   myProfile: (userId?: string | null) => ['supabase', 'users', 'profile', userId ?? 'no-user'] as const,
   myTrips: (userId?: string | null) => ['supabase', 'trips', 'mine', userId ?? 'no-user'] as const,

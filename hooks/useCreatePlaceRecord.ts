@@ -105,6 +105,9 @@ export function useCreatePlaceRecord() {
 
       void Promise.all([
         queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.archivedTravelMoments(userId),
+        }),
+        queryClient.invalidateQueries({
           queryKey: placesQueryKey,
         }),
         queryClient.invalidateQueries({

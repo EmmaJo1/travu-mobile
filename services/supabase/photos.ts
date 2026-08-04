@@ -290,7 +290,7 @@ async function resolvePhotoRows(
 }
 
 async function fetchResolvedPhotos(
-  column: 'place_id' | 'trip_day_id',
+  column: 'place_id' | 'trip_day_id' | 'trip_id',
   id: string,
   screen: PhotoQueryScreen,
 ) {
@@ -960,6 +960,13 @@ export function fetchPhotosByTripDayId(
   screen: PhotoQueryScreen = 'saved_day_archive_detail',
 ) {
   return fetchResolvedPhotos('trip_day_id', tripDayId, screen);
+}
+
+export function fetchPhotosByTripId(
+  tripId: string,
+  screen: PhotoQueryScreen = 'saved_trip_cover',
+) {
+  return fetchResolvedPhotos('trip_id', tripId, screen);
 }
 
 export function listPhotosByTrip(tripId: string) {

@@ -125,6 +125,9 @@ export function useDeletePlaceRecord() {
 
       void Promise.all([
         queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.archivedTravelMoments(userId),
+        }),
+        queryClient.invalidateQueries({
           queryKey: supabaseQueryKeys.tripDayPlaces(userId, input.tripDayId),
         }),
         queryClient.invalidateQueries({

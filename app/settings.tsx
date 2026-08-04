@@ -17,6 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Text from '@/components/common/AppText';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import { Colors, Spacing, Typography } from '@/constants/theme';
+import { useAuth } from '@/providers/AuthProvider';
 
 type PermissionStatusLabel = '허용됨' | '제한됨' | '허용 안 됨' | '확인 필요';
 
@@ -112,6 +113,8 @@ function getLocationPermissionLabel(
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const { signOut } = useAuth();
+  const isSigningOutRef = React.useRef(false);
   const [photoPermissionLabel, setPhotoPermissionLabel] =
     React.useState<PermissionStatusLabel>('확인 필요');
   const [locationPermissionLabel, setLocationPermissionLabel] =
@@ -173,6 +176,45 @@ export default function SettingsScreen() {
     router.push('/legal/terms-of-service' as Href);
   }, [router]);
 
+  const handleSignOut = React.useCallback(() => {
+    if (isSigningOutRef.current) {
+      return;
+    }
+
+    Alert.alert(
+      '로그아웃할까요?',
+      '이 기기의 로그인 세션이 종료됩니다.',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '로그아웃',
+          style: 'destructive',
+          onPress: () => {
+            if (isSigningOutRef.current) {
+              return;
+            }
+
+            isSigningOutRef.current = true;
+
+            void (async () => {
+              try {
+                await signOut();
+              } catch (error) {
+                console.warn('[settings] sign out failed', error);
+                Alert.alert(
+                  '로그아웃하지 못했어요',
+                  '잠시 후 다시 시도해주세요.',
+                );
+              } finally {
+                isSigningOutRef.current = false;
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [signOut]);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader
@@ -195,7 +237,7 @@ export default function SettingsScreen() {
           <View style={styles.divider} />
           <SettingRow
             label="로그아웃"
-            onPress={() => showLaterAlert('로그아웃 기능은 추후 연결 예정입니다.')}
+            onPress={handleSignOut}
           />
           <View style={styles.divider} />
           <SettingRow

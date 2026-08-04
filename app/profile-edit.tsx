@@ -21,9 +21,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import AppTextInput from '@/components/common/AppTextInput';
 import Text from '@/components/common/AppText';
-import { MOCK_MY_PAGE_PROFILE } from '@/constants/mockMyPageProfile';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
+import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
+import { queryClient } from '@/lib/queryClient';
+import { useAuth } from '@/providers/AuthProvider';
 import { useUserProfile, type UserProfile } from '@/providers/UserProfileProvider';
+import {
+  getOwnedAvatarStoragePath,
+  removeMyProfileImage,
+  uploadMyProfileImage,
+} from '@/services/supabase/profileImages';
+import { upsertUserProfile } from '@/services/supabase/users';
 
 const TRAVEL_STYLE_OPTIONS = [
   'Photo walk',
@@ -107,9 +115,36 @@ function getBasedInSubtitle(place: BasedInPlace) {
   return place.region ? `${place.region}, ${place.country}` : place.country;
 }
 
+function normalizeOptionalText(value?: string | null) {
+  return value?.trim() ?? '';
+}
+
+function normalizeTravelStyles(values: string[]) {
+  return [...new Set(values.map(normalizeOptionalText).filter(Boolean))];
+}
+
+function normalizeBasedInPlace(place?: BasedInPlace) {
+  if (!place) {
+    return null;
+  }
+
+  return {
+    city: normalizeOptionalText(place.city),
+    country: normalizeOptionalText(place.country),
+    countryCode: normalizeOptionalText(place.countryCode),
+    displayName: normalizeOptionalText(place.displayName),
+    latitude: place.latitude ?? null,
+    longitude: place.longitude ?? null,
+    placeId: normalizeOptionalText(place.placeId),
+    region: normalizeOptionalText(place.region),
+  };
+}
+
 export default function ProfileEditScreen() {
   const router = useRouter();
+  const { setProfileSnapshot, user } = useAuth();
   const { profile, updateProfile } = useUserProfile();
+  const initialProfileRef = React.useRef(profile);
   const [name, setName] = React.useState(profile.name);
   const [basedIn, setBasedIn] = React.useState(profile.basedIn);
   const [basedInPlace, setBasedInPlace] = React.useState(profile.basedInPlace);
@@ -117,9 +152,31 @@ export default function ProfileEditScreen() {
   const [bio, setBio] = React.useState(profile.bio);
   const [travelStyles, setTravelStyles] = React.useState<string[]>(profile.travelStyles);
   const [profileImageUri, setProfileImageUri] = React.useState(profile.profileImageUri);
-  const avatarSource = profileImageUri
-    ? { uri: profileImageUri }
-    : MOCK_MY_PAGE_PROFILE.profileImage;
+  const [selectedProfileImage, setSelectedProfileImage] = React.useState<{
+    fileName?: string | null;
+    mimeType?: string | null;
+    uri: string;
+  } | null>(null);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const isSavingRef = React.useRef(false);
+  const avatarSource = profileImageUri ? { uri: profileImageUri } : undefined;
+  const hasChanges = React.useMemo(() => {
+    const initialProfile = initialProfileRef.current;
+    const textFieldsChanged =
+      normalizeOptionalText(name) !== normalizeOptionalText(initialProfile.name)
+      || normalizeOptionalText(bio) !== normalizeOptionalText(initialProfile.bio)
+      || normalizeOptionalText(basedIn) !== normalizeOptionalText(initialProfile.basedIn);
+    const stylesChanged = JSON.stringify(normalizeTravelStyles(travelStyles))
+      !== JSON.stringify(normalizeTravelStyles(initialProfile.travelStyles));
+    const basedInPlaceChanged = JSON.stringify(normalizeBasedInPlace(basedInPlace))
+      !== JSON.stringify(normalizeBasedInPlace(initialProfile.basedInPlace));
+    const imageChanged = Boolean(
+      selectedProfileImage
+      && selectedProfileImage.uri !== normalizeOptionalText(initialProfile.profileImageUri),
+    );
+
+    return textFieldsChanged || stylesChanged || basedInPlaceChanged || imageChanged;
+  }, [basedIn, basedInPlace, bio, name, selectedProfileImage, travelStyles]);
 
   const toggleTravelStyle = React.useCallback((style: string) => {
     setTravelStyles((currentStyles) => (
@@ -155,6 +212,11 @@ export default function ProfileEditScreen() {
       const selectedUri = result.assets[0]?.uri;
       if (selectedUri) {
         setProfileImageUri(selectedUri);
+        setSelectedProfileImage({
+          fileName: result.assets[0]?.fileName,
+          mimeType: result.assets[0]?.mimeType,
+          uri: selectedUri,
+        });
       }
     } catch (error) {
       console.warn('Profile image selection failed:', error);
@@ -165,17 +227,103 @@ export default function ProfileEditScreen() {
     }
   }, []);
 
-  const handleSaveProfile = React.useCallback(() => {
-    updateProfile({
-      name: name.trim() || MOCK_MY_PAGE_PROFILE.userName,
-      basedIn: basedIn.trim(),
-      basedInPlace,
-      bio: bio.trim() || MOCK_MY_PAGE_PROFILE.tagline,
-      travelStyles,
-      profileImageUri,
-    });
-    router.back();
-  }, [basedIn, basedInPlace, bio, name, profileImageUri, router, travelStyles, updateProfile]);
+  const handleSaveProfile = React.useCallback(async () => {
+    if (!user?.id || !hasChanges || isSavingRef.current) {
+      return;
+    }
+
+    const nextName = name.trim();
+
+    if (!nextName) {
+      Alert.alert('이름을 입력해주세요');
+      return;
+    }
+
+    isSavingRef.current = true;
+    setIsSaving(true);
+    let uploadedImage: Awaited<ReturnType<typeof uploadMyProfileImage>> | null = null;
+    let didPersistProfile = false;
+
+    try {
+      if (selectedProfileImage) {
+        uploadedImage = await uploadMyProfileImage({
+          fileName: selectedProfileImage.fileName,
+          localUri: selectedProfileImage.uri,
+          mimeType: selectedProfileImage.mimeType,
+        });
+      }
+
+      const nextBasedIn = basedIn.trim();
+      const nextBio = bio.trim();
+      const nextProfileImageUri = uploadedImage?.publicUrl ?? profile.profileImageUri ?? null;
+      const savedProfile = await upsertUserProfile({
+        id: user.id,
+        based_in: nextBasedIn || null,
+        based_in_city: basedInPlace?.city ?? null,
+        based_in_country: basedInPlace?.country ?? null,
+        based_in_country_code: basedInPlace?.countryCode ?? null,
+        based_in_google_place_id: basedInPlace?.placeId ?? null,
+        based_in_latitude: basedInPlace?.latitude ?? null,
+        based_in_longitude: basedInPlace?.longitude ?? null,
+        bio: nextBio || null,
+        name: nextName,
+        profile_image_url: nextProfileImageUri,
+        travel_styles: travelStyles,
+        updated_at: new Date().toISOString(),
+      });
+      didPersistProfile = true;
+
+      queryClient.setQueryData(supabaseQueryKeys.myProfile(user.id), savedProfile);
+      setProfileSnapshot(savedProfile);
+      updateProfile({
+        name: nextName,
+        basedIn: nextBasedIn,
+        basedInPlace,
+        bio: nextBio,
+        travelStyles,
+        profileImageUri: nextProfileImageUri ?? undefined,
+      });
+
+      const previousStoragePath = getOwnedAvatarStoragePath(profile.profileImageUri);
+      if (
+        uploadedImage &&
+        previousStoragePath &&
+        previousStoragePath !== uploadedImage.storagePath
+      ) {
+        removeMyProfileImage(previousStoragePath).catch((error) => {
+          console.warn('[profile image] previous image cleanup failed', error);
+        });
+      }
+
+      router.back();
+    } catch (error) {
+      if (uploadedImage && !didPersistProfile) {
+        await removeMyProfileImage(uploadedImage.storagePath).catch(() => undefined);
+      }
+
+      console.warn('[profile] save failed', error);
+      Alert.alert(
+        '\uD504\uB85C\uD544\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+        '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+      );
+    } finally {
+      isSavingRef.current = false;
+      setIsSaving(false);
+    }
+  }, [
+    basedIn,
+    basedInPlace,
+    bio,
+    hasChanges,
+    name,
+    profile.profileImageUri,
+    router,
+    selectedProfileImage,
+    setProfileSnapshot,
+    travelStyles,
+    updateProfile,
+    user?.id,
+  ]);
 
   const handleSelectBasedIn = React.useCallback((place: BasedInPlace) => {
     setBasedIn(place.displayName);
@@ -198,11 +346,17 @@ export default function ProfileEditScreen() {
         <Text style={styles.headerTitle}>{'\uD504\uB85C\uD544 \uD3B8\uC9D1'}</Text>
         <Pressable
           accessibilityRole="button"
+          disabled={!hasChanges || isSaving}
           hitSlop={10}
-          onPress={handleSaveProfile}
+          onPress={() => void handleSaveProfile()}
           style={styles.headerSide}
         >
-          <Text style={styles.saveText}>{'\uC800\uC7A5'}</Text>
+          <Text style={[
+            styles.saveText,
+            (!hasChanges || isSaving) && styles.saveTextDisabled,
+          ]}>
+            {isSaving ? '저장 중' : '\uC800\uC7A5'}
+          </Text>
         </Pressable>
       </View>
 
@@ -217,7 +371,11 @@ export default function ProfileEditScreen() {
         >
           <View style={styles.avatarSection}>
             <View style={styles.avatarWrap}>
-              <Image source={avatarSource} style={styles.avatar} resizeMode="cover" />
+              {avatarSource ? (
+                <Image source={avatarSource} style={styles.avatar} resizeMode="cover" />
+              ) : (
+                <View style={styles.avatar} />
+              )}
               <Pressable
                 accessibilityRole="button"
                 hitSlop={8}
@@ -564,6 +722,9 @@ const styles = StyleSheet.create({
     ...Typography.body1Regular,
     color: Colors.foundation.black,
     alignSelf: 'flex-end',
+  },
+  saveTextDisabled: {
+    color: Colors.foundation.grey400,
   },
   keyboardAvoider: {
     flex: 1,

@@ -21,7 +21,7 @@ export interface MyPageTrip {
   visitedCountries: string[];
   /** 여행 기간 (예: "2025.8.25-9.1") — 연도 그룹은 시작 연도 기준으로 파생 */
   dateRangeLabel: string;
-  coverImage: ImageSourcePropType;
+  coverImage?: ImageSourcePropType;
   daysCount: number;
   photoCount: number;
 }

@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { Tables, TablesInsert, TablesUpdate } from '@/types/supabase';
+import { getCurrentLocalDateKey } from '@/utils/tripActivity';
 
 export type TripDayRow = Tables<'trip_days'>;
 export type TripRow = Tables<'trips'>;
@@ -16,6 +17,12 @@ export type UpdateActiveTripDateRangeResult = {
   tripDays: TripDayRow[];
 };
 
+export type EnsureTripDaysThroughDateResult = {
+  createdCount: number;
+  restoredCount: number;
+  tripDays: TripDayRow[];
+};
+
 export class TripDateRangeHasDataError extends Error {
   blockedDates: string[];
 
@@ -27,6 +34,10 @@ export class TripDateRangeHasDataError extends Error {
 }
 
 const DAY_MS = 86_400_000;
+const ensureTripDaysRequests = new Map<
+  string,
+  Promise<EnsureTripDaysThroughDateResult>
+>();
 
 function throwIfError(error: Error | null) {
   if (error) {
@@ -69,6 +80,15 @@ function utcTimeToDateKey(time: number) {
   const month = String(date.getUTCMonth() + 1).padStart(2, '0');
   const day = String(date.getUTCDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return Boolean(
+    error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    error.code === '23505',
+  );
 }
 
 export function buildTripDaysForRange(tripId: string, startDate: string, endDate: string) {
@@ -144,6 +164,153 @@ export async function createTripDaysForRange(
 
   throwIfError(error);
   return data ?? [];
+}
+
+async function ensureTripDaysThroughDateRequest(
+  tripId: string,
+  targetLocalDate: string,
+): Promise<EnsureTripDaysThroughDateResult> {
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  throwIfError(authError);
+
+  if (!authData.user) {
+    throw new Error('A Supabase session is required to synchronize trip days.');
+  }
+
+  const { data: trip, error: tripError } = await supabase
+    .from('trips')
+    .select('*')
+    .eq('id', tripId)
+    .eq('user_id', authData.user.id)
+    .eq('status', 'active')
+    .is('deleted_at', null)
+    .maybeSingle();
+  throwIfError(tripError);
+
+  if (!trip?.start_date) {
+    return { createdCount: 0, restoredCount: 0, tripDays: await fetchTripDays(tripId) };
+  }
+
+  const targetTime = dateKeyToUtcTime(targetLocalDate);
+  const startTime = dateKeyToUtcTime(trip.start_date);
+
+  if (
+    targetTime < startTime ||
+    (!trip.is_end_date_undecided && (
+      !trip.end_date || targetTime > dateKeyToUtcTime(trip.end_date)
+    ))
+  ) {
+    return { createdCount: 0, restoredCount: 0, tripDays: await fetchTripDays(tripId) };
+  }
+
+  const desiredTripDays = buildTripDaysForRange(
+    trip.id,
+    trip.start_date,
+    !trip.is_end_date_undecided &&
+    trip.end_date &&
+    dateKeyToUtcTime(trip.end_date) < targetTime
+      ? trip.end_date
+      : targetLocalDate,
+  );
+  const { data: allTripDays, error: allTripDaysError } = await supabase
+    .from('trip_days')
+    .select('*')
+    .eq('trip_id', trip.id)
+    .order('date', { ascending: true });
+  throwIfError(allTripDaysError);
+
+  const activeDates = new Set(
+    (allTripDays ?? [])
+      .filter((day) => day.deleted_at === null)
+      .map((day) => day.date),
+  );
+  const deletedByDate = new Map<string, TripDayRow>();
+
+  for (const day of allTripDays ?? []) {
+    if (day.deleted_at && !deletedByDate.has(day.date)) {
+      deletedByDate.set(day.date, day);
+    }
+  }
+
+  let createdCount = 0;
+  let restoredCount = 0;
+
+  for (const desiredDay of desiredTripDays) {
+    if (activeDates.has(desiredDay.date)) {
+      continue;
+    }
+
+    const deletedDay = deletedByDate.get(desiredDay.date);
+
+    if (deletedDay) {
+      const { error } = await supabase
+        .from('trip_days')
+        .update({
+          day_index: desiredDay.day_index,
+          deleted_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', deletedDay.id);
+
+      if (!error) {
+        restoredCount += 1;
+        activeDates.add(desiredDay.date);
+        continue;
+      }
+
+      if (!isUniqueViolation(error)) {
+        throw error;
+      }
+    } else {
+      const { error } = await supabase.from('trip_days').insert(desiredDay);
+
+      if (!error) {
+        createdCount += 1;
+        activeDates.add(desiredDay.date);
+        continue;
+      }
+
+      if (!isUniqueViolation(error)) {
+        throw error;
+      }
+    }
+
+    const concurrentDay = await fetchTripDayByDate(trip.id, desiredDay.date);
+
+    if (!concurrentDay) {
+      throw new Error(`Trip day synchronization did not resolve ${desiredDay.date}.`);
+    }
+
+    activeDates.add(desiredDay.date);
+  }
+
+  return {
+    createdCount,
+    restoredCount,
+    tripDays: await fetchTripDays(trip.id),
+  };
+}
+
+export function ensureTripDaysThroughDate(
+  tripId: string,
+  targetLocalDate = getCurrentLocalDateKey(),
+): Promise<EnsureTripDaysThroughDateResult> {
+  const requestKey = `${tripId}:${targetLocalDate}`;
+  const existingRequest = ensureTripDaysRequests.get(requestKey);
+
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const request = ensureTripDaysThroughDateRequest(tripId, targetLocalDate)
+    .finally(() => {
+      if (ensureTripDaysRequests.get(requestKey) === request) {
+        ensureTripDaysRequests.delete(requestKey);
+      }
+    });
+
+  ensureTripDaysRequests.set(requestKey, request);
+  return request;
 }
 
 export function updateTripDay(tripDayId: string, patch: TablesUpdate<'trip_days'>) {

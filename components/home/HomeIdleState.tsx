@@ -110,6 +110,7 @@ interface HomeIdleStateProps {
   onCloseImportCompleteModal?: () => void;
   onPressViewImportResults?: () => void;
   supabaseRecentTrips?: IdleRecentTrip[];
+  supabasePastMoments?: IdlePastMoment[];
   supabaseSummaryTrips?: HomeSummaryTripInput[];
 }
 
@@ -128,6 +129,7 @@ export default function HomeIdleState({
   onCloseImportCompleteModal,
   onPressViewImportResults,
   supabaseRecentTrips,
+  supabasePastMoments,
   supabaseSummaryTrips,
 }: HomeIdleStateProps) {
   const router = useRouter();
@@ -170,8 +172,11 @@ export default function HomeIdleState({
   );
 
   const pastMoments = React.useMemo(
-    () => getTravelMoments(MOCK_PAST_MOMENTS, recentTripIds),
-    [recentTripIds],
+    () => getTravelMoments(
+      supabasePastMoments !== undefined ? supabasePastMoments : MOCK_PAST_MOMENTS,
+      recentTripIds,
+    ),
+    [recentTripIds, supabasePastMoments],
   );
 
   const handleSaveDetectedTrip = React.useCallback((trip: DetectedTrip) => {

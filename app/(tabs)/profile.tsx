@@ -10,7 +10,6 @@ import ProfileSummary from '@/components/mypage/ProfileSummary';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import DaySelectorSheet from '@/components/record/DaySelectorSheet';
 import TripListCardList from '@/components/trip/TripListCardList';
-import { MOCK_MY_PAGE_PROFILE } from '@/constants/mockMyPageProfile';
 import {
     MOCK_MY_PAGE_TRIPS,
     TRAVEL_SORT_LABELS,
@@ -96,7 +95,12 @@ export default function ProfileScreen() {
   const savedTrips = useSavedMyPageTrips();
   const { profile } = useUserProfile();
   const { canUseSupabaseUserData, user } = useAuth();
-  const { data: supabaseTrips } = useMyTrips();
+  const {
+    data: supabaseTrips,
+    isError: isSupabaseTripsError,
+    isLoading: isSupabaseTripsLoading,
+    refetch: refetchSupabaseTrips,
+  } = useMyTrips();
   const deleteTripMutation = useDeleteTrip();
   const supabaseTripIds = useMemo(
     () => new Set((supabaseTrips ?? []).map((trip) => trip.id)),
@@ -204,7 +208,6 @@ export default function ProfileScreen() {
             <ProfileSummary
               userName={profile.name}
               profileUri={profile.profileImageUri}
-              profileImage={profile.profileImageUri ? undefined : MOCK_MY_PAGE_PROFILE.profileImage}
               cityCount={profileStats.uniqueCityCount}
               countryCount={profileStats.uniqueCountryCount}
               tripCount={profileStats.totalTrips}
@@ -230,6 +233,7 @@ export default function ProfileScreen() {
                 <View style={styles.tripListHeader}>
                   <Text style={styles.tripListTitle}>여행 리스트</Text>
                   <Pressable
+                    disabled={groupedTrips.length === 0}
                     onPress={() => setSortSheetVisible(true)}
                     style={({ pressed }) => [styles.sortTrigger, pressed && styles.sortTriggerPressed]}
                     accessibilityRole="button"
@@ -247,7 +251,32 @@ export default function ProfileScreen() {
                 </View>
 
                 <View style={styles.tripList}>
-                  {groupedTrips.map(({ year, trips: yearTrips }) => (
+                  {canUseSupabaseUserData && isSupabaseTripsLoading ? (
+                    <View style={styles.tripListState}>
+                      <Text style={styles.tripListStateTitle}>여행을 불러오는 중이에요</Text>
+                    </View>
+                  ) : canUseSupabaseUserData && isSupabaseTripsError ? (
+                    <View style={styles.tripListState}>
+                      <Text style={styles.tripListStateTitle}>여행을 불러오지 못했어요</Text>
+                      <Text style={styles.tripListStateDescription}>
+                        네트워크 상태를 확인한 뒤 다시 시도해주세요.
+                      </Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => void refetchSupabaseTrips()}
+                        style={styles.tripListRetryButton}
+                      >
+                        <Text style={styles.tripListRetryText}>다시 시도</Text>
+                      </Pressable>
+                    </View>
+                  ) : groupedTrips.length === 0 ? (
+                    <View style={styles.tripListState}>
+                      <Text style={styles.tripListStateTitle}>아직 완료한 여행이 없어요</Text>
+                      <Text style={styles.tripListStateDescription}>
+                        여행을 완료하면 이곳에 차곡차곡 모여요.
+                      </Text>
+                    </View>
+                  ) : groupedTrips.map(({ year, trips: yearTrips }) => (
                     <View key={year} style={styles.yearSection}>
                       <View style={styles.yearHeader}>
                         <Text style={styles.yearLabel}>{year}</Text>
@@ -395,5 +424,31 @@ const styles = StyleSheet.create({
   sortTriggerIcon: {
     width: 8,
     height: 8,
+  },
+  tripListState: {
+    minHeight: 160,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.xl,
+  },
+  tripListStateTitle: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+  },
+  tripListStateDescription: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+    textAlign: 'center',
+  },
+  tripListRetryButton: {
+    marginTop: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+  },
+  tripListRetryText: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.black,
   },
 });

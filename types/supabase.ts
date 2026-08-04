@@ -35,6 +35,10 @@ export interface Database {
           bio: string | null;
           travel_styles: string[];
           profile_image_url: string | null;
+          onboarding_status: 'pending' | 'completed' | 'skipped';
+          onboarding_completed_at: string | null;
+          terms_accepted_at: string | null;
+          privacy_accepted_at: string | null;
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
@@ -52,6 +56,10 @@ export interface Database {
           bio?: string | null;
           travel_styles?: string[];
           profile_image_url?: string | null;
+          onboarding_status?: 'pending' | 'completed' | 'skipped';
+          onboarding_completed_at?: string | null;
+          terms_accepted_at?: string | null;
+          privacy_accepted_at?: string | null;
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;

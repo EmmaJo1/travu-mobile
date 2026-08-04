@@ -133,7 +133,11 @@ const MASK_GRADIENT_COLORS = [
   'rgba(255,255,255,0)',
 ] as const;
 
-function resolveImageUri(source: ImageSourcePropType): string | undefined {
+function resolveImageUri(source?: ImageSourcePropType): string | undefined {
+  if (!source) {
+    return undefined;
+  }
+
   return typeof RNImage.resolveAssetSource === 'function'
     ? RNImage.resolveAssetSource(source)?.uri
     : undefined;
@@ -153,11 +157,15 @@ function ArchiveBlurBackground({
   width,
   height,
 }: {
-  source: ImageSourcePropType;
+  source?: ImageSourcePropType;
   width: number;
   height: number;
 }) {
   const uri = resolveImageUri(source);
+
+  if (!source) {
+    return <View style={[styles.blurRegion, { width, height }]} />;
+  }
 
   if (Platform.OS === 'web') {
     if (!uri) {
@@ -441,6 +449,15 @@ function getInclusiveArchiveDays(startDate: string, endDate: string) {
 
 function parseArchiveDateRangeKeys(dateRangeLabel?: string) {
   const normalized = dateRangeLabel?.replace(/\s+/g, '') ?? '';
+  const singleDateMatch = normalized.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})$/);
+
+  if (singleDateMatch) {
+    const dateKey = `${singleDateMatch[1]}-${String(singleDateMatch[2]).padStart(2, '0')}-${String(
+      singleDateMatch[3],
+    ).padStart(2, '0')}`;
+    return { startDate: dateKey, endDate: dateKey };
+  }
+
   const match = normalized.match(
     /^(\d{4})\.(\d{1,2})\.(\d{1,2})-(?:(\d{4})\.)?(\d{1,2})\.(\d{1,2})$/,
   );
@@ -835,11 +852,11 @@ export default function DayArchiveDetailScreen() {
   const activeTrip = useMemo(
     () => {
       const sourceTrip = isSupabaseArchiveTrip
-        ? supabaseTrip ? mapSupabaseTripToMyPageTrip(supabaseTrip) : undefined
+        ? supabaseTrip ? mapSupabaseTripToMyPageTrip(supabaseTrip, supabaseTripDays) : undefined
         : fallbackTrip;
       return sourceTrip ? { ...sourceTrip, ...localTripPatch } : undefined;
     },
-    [fallbackTrip, isSupabaseArchiveTrip, localTripPatch, supabaseTrip],
+    [fallbackTrip, isSupabaseArchiveTrip, localTripPatch, supabaseTrip, supabaseTripDays],
   );
   const detail = useMemo(() => createArchiveDetailFromTrip(activeTrip), [activeTrip]);
   const supabaseDayOptions = useMemo(
@@ -1442,7 +1459,7 @@ export default function DayArchiveDetailScreen() {
 
   if (
     isSupabaseArchiveTrip &&
-    (isSupabaseTripError || isSupabaseTripDaysError || !supabaseTrip)
+    (isSupabaseTripError || isSupabaseTripDaysError || !supabaseTrip || supabaseTrip.status !== 'archived')
   ) {
     return (
       <ArchiveEmptyState
@@ -1536,12 +1553,16 @@ export default function DayArchiveDetailScreen() {
             ]}
           >
             <Text style={styles.frameDate}>{detail.dateRangeLabel}</Text>
-            <Image
-              source={detail.photoFrameImage}
-              style={styles.frameImage}
-              contentFit="cover"
-              contentPosition="center"
-            />
+            {detail.photoFrameImage ? (
+              <Image
+                source={detail.photoFrameImage}
+                style={styles.frameImage}
+                contentFit="cover"
+                contentPosition="center"
+              />
+            ) : (
+              <View style={[styles.frameImage, styles.frameImageFallback]} />
+            )}
           </View>
 
           <View
@@ -1890,6 +1911,9 @@ const styles = StyleSheet.create({
     left: FRAME_IMAGE_LEFT,
     width: FRAME_IMAGE_WIDTH,
     height: FRAME_IMAGE_HEIGHT,
+  },
+  frameImageFallback: {
+    backgroundColor: Colors.foundation.grey100,
   },
   parisTitleWrap: {
     position: 'absolute',

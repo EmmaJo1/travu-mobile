@@ -21,6 +21,7 @@ export function useDeleteTrip() {
 
       void Promise.all([
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.activeTrip(userId) }),
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.archivedTravelMoments(userId) }),
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.myTrips(userId) }),
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.recentTripsRoot(userId) }),
       ]).catch((error: unknown) => {

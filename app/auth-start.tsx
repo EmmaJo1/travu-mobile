@@ -18,7 +18,6 @@
  */
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
-import { type Href, router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert, Animated, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -30,9 +29,10 @@ import SheetActionButton from '@/components/common/SheetActionButton';
 import { LEGAL_DOCUMENTS } from '@/constants/legalDocuments';
 import { Colors, FontFamily, Typography } from '@/constants/theme';
 import { useAuth } from '@/providers/AuthProvider';
+import { acceptRequiredLegalDocuments } from '@/services/supabase/users';
 
 type SheetType = 'none' | 'terms' | 'privacy' | 'consent';
-type PendingAuthProvider = 'google' | 'apple' | null;
+type AuthProviderName = 'google' | 'apple';
 
 /** 공식 Google G 로고 — 18×18 viewBox 기반 4색 SVG 경로 */
 function GoogleLogo() {
@@ -148,12 +148,13 @@ function SheetModal({
   if (!isOpen && !presented) return null;
 
   const isTall = sheet === 'terms' || sheet === 'privacy';
+  const handleDismissRequest = sheet === 'consent' ? onClose : onBackToConsent;
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+    <Modal visible transparent animationType="none" onRequestClose={handleDismissRequest}>
       <View style={styles.modalWrapper}>
         <Animated.View style={[styles.dimmedBase, { opacity: dimOpacity }]}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+          <Pressable style={StyleSheet.absoluteFill} onPress={handleDismissRequest} />
         </Animated.View>
 
         <Animated.View
@@ -269,39 +270,109 @@ function DetailContent({ title, body, onClose }: { title: string; body: string; 
 
 export default function AuthStartScreen() {
   const insets = useSafeAreaInsets();
-  const { signInWithApple, signInWithGoogle } = useAuth();
+  const {
+    isAuthenticated,
+    profile,
+    profileStatus,
+    setProfileSnapshot,
+    signInWithApple,
+    signInWithGoogle,
+    signOut,
+  } = useAuth();
   const [sheet, setSheet] = useState<SheetType>('none');
-  const [agreedTerms, setAgreedTerms] = useState(true);
-  const [agreedPrivacy, setAgreedPrivacy] = useState(true);
-  const [pendingAuthProvider, setPendingAuthProvider] = useState<PendingAuthProvider>(null);
+  const [agreedTerms, setAgreedTerms] = useState(false);
+  const [agreedPrivacy, setAgreedPrivacy] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = useRef(false);
+  const isMountedRef = useRef(true);
+  const isConsentDismissalPendingRef = useRef(false);
 
   const canProceed = agreedTerms && agreedPrivacy;
 
-  const openConsentSheet = (provider: Exclude<PendingAuthProvider, null>) => {
-    if (isSubmitting) return;
+  useEffect(() => () => {
+    isMountedRef.current = false;
+  }, []);
 
-    setPendingAuthProvider(provider);
-    setSheet('consent');
+  useEffect(() => {
+    const shouldShowConsent = isAuthenticated
+      && profileStatus === 'resolved'
+      && profile?.onboarding_status === 'pending'
+      && !(profile.terms_accepted_at && profile.privacy_accepted_at);
+
+    if (shouldShowConsent && !isConsentDismissalPendingRef.current) {
+      setAgreedTerms(false);
+      setAgreedPrivacy(false);
+      setSheet('consent');
+    }
+  }, [isAuthenticated, profile, profileStatus]);
+
+  const beginSubmitting = () => {
+    if (isSubmittingRef.current) {
+      return false;
+    }
+
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+    return true;
   };
 
-  const closeSheet = () => {
+  const finishSubmitting = () => {
+    isSubmittingRef.current = false;
+    if (isMountedRef.current) {
+      setIsSubmitting(false);
+    }
+  };
+
+  const closeConsentSheet = () => {
+    if (!beginSubmitting()) {
+      return;
+    }
+
+    isConsentDismissalPendingRef.current = true;
     setSheet('none');
-    setPendingAuthProvider(null);
+    setAgreedTerms(false);
+    setAgreedPrivacy(false);
+
+    void signOut().catch((error: unknown) => {
+      console.warn('[auth-start] sign out after consent dismissal failed', error);
+      if (isMountedRef.current) {
+        isConsentDismissalPendingRef.current = false;
+        setSheet('consent');
+        Alert.alert(
+          '로그인 상태를 정리하지 못했어요',
+          '잠시 후 다시 시도해주세요.',
+        );
+      }
+    }).finally(finishSubmitting);
   };
 
   const handleAgree = async () => {
-    if (!canProceed) return;
-    if (!pendingAuthProvider || isSubmittingRef.current) return;
+    if (!canProceed || profile?.onboarding_status !== 'pending' || !beginSubmitting()) {
+      return;
+    }
 
-    const provider = pendingAuthProvider;
-    isSubmittingRef.current = true;
-    setIsSubmitting(true);
+    try {
+      const nextProfile = await acceptRequiredLegalDocuments();
+      setProfileSnapshot(nextProfile);
+      setSheet('none');
+    } catch (error) {
+      console.warn('[auth-start] legal consent save failed', error);
+      Alert.alert(
+        '약관 동의를 저장하지 못했어요',
+        '잠시 후 다시 시도해주세요.',
+      );
+    } finally {
+      finishSubmitting();
+    }
+  };
+
+  const handleProviderSignIn = async (provider: AuthProviderName) => {
+    if (!beginSubmitting()) {
+      return;
+    }
 
     try {
       if (provider === 'apple' && Constants.appOwnership === 'expo') {
-        setSheet('none');
         Alert.alert(
           '개발 빌드가 필요해요',
           'Apple 로그인은 development build에서 테스트할 수 있어요.',
@@ -309,23 +380,21 @@ export default function AuthStartScreen() {
         return;
       }
 
-      setSheet('none');
-      const didSignIn = provider === 'google'
+      const result = provider === 'google'
         ? await signInWithGoogle()
         : await signInWithApple();
 
-      if (didSignIn) {
-        router.replace('/onboarding' as Href);
+      if (result.status !== 'authenticated') {
+        return;
       }
-    } catch {
+    } catch (error) {
+      console.warn(`[auth-start] ${provider} sign in failed`, error);
       Alert.alert(
         '\uB85C\uADF8\uC778\uC744 \uC644\uB8CC\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694.',
         '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
       );
     } finally {
-      isSubmittingRef.current = false;
-      setPendingAuthProvider(null);
-      setIsSubmitting(false);
+      finishSubmitting();
     }
   };
 
@@ -345,7 +414,8 @@ export default function AuthStartScreen() {
           <TouchableOpacity
             style={[styles.socialBtn, styles.appleBtn]}
             activeOpacity={0.85}
-            onPress={() => openConsentSheet('apple')}
+            disabled={isSubmitting}
+            onPress={() => void handleProviderSignIn('apple')}
           >
             <Ionicons name="logo-apple" size={24} color="#FFFFFF" style={styles.appleIcon} />
             <Text style={[styles.socialLabel, styles.appleBtnLabel]}>Apple로 시작하기</Text>
@@ -354,7 +424,8 @@ export default function AuthStartScreen() {
           <TouchableOpacity
             style={[styles.socialBtn, styles.googleBtn]}
             activeOpacity={0.85}
-            onPress={() => openConsentSheet('google')}
+            disabled={isSubmitting}
+            onPress={() => void handleProviderSignIn('google')}
           >
             <View style={styles.googleIcon}>
               <GoogleLogo />
@@ -367,7 +438,7 @@ export default function AuthStartScreen() {
       {/* ── 단일 Modal — 모든 시트를 하나의 Modal 안에서 처리 ── */}
       <SheetModal
         sheet={sheet}
-        onClose={closeSheet}
+        onClose={closeConsentSheet}
         onOpenTerms={() => setSheet('terms')}
         onOpenPrivacy={() => setSheet('privacy')}
         onBackToConsent={() => setSheet('consent')}
@@ -376,7 +447,7 @@ export default function AuthStartScreen() {
         agreedPrivacy={agreedPrivacy}
         onToggleTerms={() => setAgreedTerms(v => !v)}
         onTogglePrivacy={() => setAgreedPrivacy(v => !v)}
-        canProceed={canProceed}
+        canProceed={canProceed && !isSubmitting}
         paddingBottom={insets.bottom + 16}
       />
     </SafeAreaView>

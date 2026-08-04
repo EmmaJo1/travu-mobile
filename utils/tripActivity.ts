@@ -34,6 +34,14 @@ export function getCurrentLocalDateKey(date = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
+export function getTripDayDisplayLabel(
+  dateKey: string,
+  dayIndex: number,
+  currentLocalDateKey = getCurrentLocalDateKey(),
+): string {
+  return dateKey === currentLocalDateKey ? 'Today' : `Day ${dayIndex}`;
+}
+
 function getDateKeyOrdinal(value: string): number | null {
   const match = value.match(DATE_KEY_PATTERN);
 

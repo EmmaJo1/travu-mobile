@@ -58,6 +58,7 @@ import type { DestinationOption } from '@/constants/mockTripDestinations';
 import { addSavedCompletedTrip } from '@/constants/savedMyPageTrips';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useCompleteTrip } from '@/hooks/useCompleteTrip';
+import { useArchivedTravelMoments } from '@/hooks/useArchivedTravelMoments';
 import { useCreatePlaceRecord } from '@/hooks/useCreatePlaceRecord';
 import { useCreateTrip } from '@/hooks/useCreateTrip';
 import { useDeletePlaceRecord } from '@/hooks/useDeletePlaceRecord';
@@ -80,7 +81,10 @@ import {
 } from '@/hooks/useTripDestinations';
 import { useUpdateActiveTripDateRange } from '@/hooks/useUpdateActiveTripDateRange';
 import { useAuth } from '@/providers/AuthProvider';
-import { TripDateRangeHasDataError } from '@/services/supabase/tripDays';
+import {
+  ensureTripDaysThroughDate,
+  TripDateRangeHasDataError,
+} from '@/services/supabase/tripDays';
 import type {
   TripDestinationInput,
   TripDestinationRow,
@@ -103,6 +107,7 @@ import { extractPhotoTakenAt } from '@/utils/placeEntryTime';
 import { mapSupabasePlacesToPlaceEntries } from '@/utils/supabasePlaceRecordMappers';
 import {
   getCurrentLocalDateKey,
+  getTripDayDisplayLabel,
   isTripActiveForHome,
 } from '@/utils/tripActivity';
 import {
@@ -925,6 +930,7 @@ export default function HomeScreen() {
   } = useActiveTrip();
   const { data: supabaseTrips } = useMyTrips();
   const { data: supabaseRecentTrips } = useRecentTrips(3);
+  const { data: supabasePastMoments } = useArchivedTravelMoments();
   const { currentTrip } = HOME_MOCK_DATA;
   const {
     status: photoImportStatus,
@@ -969,6 +975,8 @@ export default function HomeScreen() {
   const [selectedTripDayIndex, setSelectedTripDayIndex] = React.useState(
     Math.max(0, INITIAL_ACTIVE_TRIP.dayNumber - 1),
   );
+  const explicitlySelectedTripDayDateRef = React.useRef<string | null>(null);
+  const selectedTripIdRef = React.useRef<string | undefined>(undefined);
   const [isTravelHomeRefreshing, setTravelHomeRefreshing] = React.useState(false);
   const [isScheduleSheetVisible, setScheduleSheetVisible] = React.useState(false);
   const scheduleSheetTranslateY = React.useRef(
@@ -1098,10 +1106,57 @@ export default function HomeScreen() {
     }
   }, []);
 
+  const synchronizeActiveTripDays = React.useCallback(async (
+    tripId: string,
+    targetLocalDate: string,
+  ) => {
+    if (!canUseSupabaseUserData || !user?.id) {
+      return;
+    }
+
+    try {
+      const result = await ensureTripDaysThroughDate(tripId, targetLocalDate);
+
+      if (result.createdCount === 0 && result.restoredCount === 0) {
+        return;
+      }
+
+      queryClient.setQueryData(
+        supabaseQueryKeys.tripDays(user.id, tripId),
+        result.tripDays,
+      );
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.activeTrip(user.id) }),
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.tripDays(user.id, tripId) }),
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.tripDetail(user.id, tripId) }),
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.tripPlaces(user.id, tripId) }),
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.tripRecords(user.id, tripId) }),
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.tripPhotos(user.id, tripId) }),
+        queryClient.invalidateQueries({
+          queryKey: ['supabase', 'places', 'trip-day', user.id],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['supabase', 'records', 'trip-day', user.id],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['supabase', 'photos', 'trip-day', user.id],
+        }),
+      ]);
+    } catch (error) {
+      console.warn('Failed to synchronize active trip days.', error);
+    }
+  }, [canUseSupabaseUserData, queryClient, user?.id]);
+
   const refreshHomeTripActivity = React.useCallback(() => {
-    setCurrentLocalDateKey(getCurrentLocalDateKey());
-    void refetchActiveTrip();
-  }, [refetchActiveTrip]);
+    const nextLocalDateKey = getCurrentLocalDateKey();
+    setCurrentLocalDateKey(nextLocalDateKey);
+    void refetchActiveTrip().then(({ data: refreshedTrip }) => {
+      if (refreshedTrip && isTripActiveForHome(refreshedTrip, nextLocalDateKey)) {
+        void synchronizeActiveTripDays(refreshedTrip.id, nextLocalDateKey);
+      }
+    });
+  }, [refetchActiveTrip, synchronizeActiveTripDays]);
 
   React.useEffect(() => {
     updateDeviceHeaderLocation({ force: true, reason: 'initial' });
@@ -1128,6 +1183,14 @@ export default function HomeScreen() {
       return undefined;
     }, [refreshHomeTripActivity, updateDeviceHeaderLocation]),
   );
+
+  React.useEffect(() => {
+    if (!homeActiveTrip) {
+      return;
+    }
+
+    void synchronizeActiveTripDays(homeActiveTrip.id, currentLocalDateKey);
+  }, [currentLocalDateKey, homeActiveTrip, synchronizeActiveTripDays]);
 
   React.useEffect(() => {
     if (params.photoImportPreview !== 'analyzing') {
@@ -1568,7 +1631,7 @@ export default function HomeScreen() {
     isLoading: isSelectedSupabaseTripDayPhotosLoading,
     refetch: refetchSelectedSupabaseTripDayPhotos,
   } = useTripDayPhotos(selectedRouteTripDayId);
-  const todayDateKey = getTodayDateKey();
+  const todayDateKey = currentLocalDateKey;
   const manualEntryTripDay = React.useMemo(
     () =>
       activeSupabaseTripDays.find((day) => day.date === selectedTripDayAtIndex?.dateKey) ??
@@ -1582,7 +1645,7 @@ export default function HomeScreen() {
   const tripDayLabels = React.useMemo(
     () =>
       tripDays.map((day) =>
-        isSameDateKey(day.dateKey, todayDateKey) ? 'TODAY' : `DAY ${day.dayNumber}`,
+        getTripDayDisplayLabel(day.dateKey, day.dayNumber, todayDateKey),
       ),
     [todayDateKey, tripDays],
   );
@@ -1751,16 +1814,46 @@ export default function HomeScreen() {
   ]);
 
   React.useEffect(() => {
-    setSelectedTripDayIndex((prev) => Math.min(prev, Math.max(0, tripDays.length - 1)));
-  }, [tripDays.length]);
+    if (selectedTripIdRef.current !== activeTripId) {
+      selectedTripIdRef.current = activeTripId;
+      explicitlySelectedTripDayDateRef.current = null;
+    }
+
+    const explicitDate = explicitlySelectedTripDayDateRef.current;
+    const explicitIndex = explicitDate
+      ? tripDays.findIndex((day) => day.dateKey === explicitDate)
+      : -1;
+    const todayIndex = tripDays.findIndex((day) => day.dateKey === todayDateKey);
+    const nextIndex = explicitIndex >= 0
+      ? explicitIndex
+      : todayIndex >= 0
+        ? todayIndex
+        : 0;
+
+    if (explicitDate && explicitIndex < 0) {
+      explicitlySelectedTripDayDateRef.current = null;
+    }
+
+    setSelectedTripDayIndex((currentIndex) =>
+      currentIndex === nextIndex ? currentIndex : nextIndex,
+    );
+  }, [activeTripId, todayDateKey, tripDays]);
 
   const handleSelectPreviousTripDay = React.useCallback(() => {
-    setSelectedTripDayIndex((prev) => Math.max(0, prev - 1));
-  }, []);
+    setSelectedTripDayIndex((prev) => {
+      const nextIndex = Math.max(0, prev - 1);
+      explicitlySelectedTripDayDateRef.current = tripDays[nextIndex]?.dateKey ?? null;
+      return nextIndex;
+    });
+  }, [tripDays]);
 
   const handleSelectNextTripDay = React.useCallback(() => {
-    setSelectedTripDayIndex((prev) => Math.min(Math.max(0, tripDays.length - 1), prev + 1));
-  }, [tripDays.length]);
+    setSelectedTripDayIndex((prev) => {
+      const nextIndex = Math.min(Math.max(0, tripDays.length - 1), prev + 1);
+      explicitlySelectedTripDayDateRef.current = tripDays[nextIndex]?.dateKey ?? null;
+      return nextIndex;
+    });
+  }, [tripDays]);
 
   const handleRefreshTravelHome = React.useCallback(async () => {
     setTravelHomeRefreshing(true);
@@ -2008,7 +2101,7 @@ export default function HomeScreen() {
 
     isCompletingTripRef.current = true;
     const destinationName = getEnglishLocationLabel(activeTrip.destination);
-    const completedEndDate = activeTrip.endDate ?? getTodayDateKey();
+    let completedEndDate = getTodayDateKey();
     const visitedCities = getUniqueTravelValues(
       activeTrip.visitedDestinations
         .filter((destination) => destination.type !== 'country')
@@ -2021,7 +2114,8 @@ export default function HomeScreen() {
 
     try {
       if (canUseSupabaseUserData) {
-        await completeTripMutation.mutateAsync();
+        const completedTrip = await completeTripMutation.mutateAsync();
+        completedEndDate = completedTrip.end_date ?? completedEndDate;
       } else {
         addSavedCompletedTrip({
           id: `${activeTrip.destination.id}-${activeTrip.startDate}-${completedEndDate}`,
@@ -2039,7 +2133,10 @@ export default function HomeScreen() {
 
       setActiveTrip((prev) => ({
         ...prev,
+        endDate: completedEndDate,
+        isEndDateUndecided: false,
         isRecording: false,
+        openEnded: false,
       }));
       setEndTripConfirmVisible(false);
       setTravelStatusSheetVisible(false);
@@ -2066,8 +2163,16 @@ export default function HomeScreen() {
   const handleViewCompletedTrip = React.useCallback(() => {
     setEndTripCompleteVisible(false);
     setIsTraveling(false);
+    if (activeTrip.tripId) {
+      router.push({
+        pathname: '/day-archive-detail',
+        params: { tripId: activeTrip.tripId },
+      } as Href);
+      return;
+    }
+
     router.push('/day-archive-detail' as Href);
-  }, [router]);
+  }, [activeTrip.tripId, router]);
 
   const handleCancelDatePicker = React.useCallback(() => {
     if (tripEditRequestInFlightRef.current) {
@@ -2381,10 +2486,22 @@ export default function HomeScreen() {
     [canUseSupabaseUserData, supabaseRecentTrips],
   );
   const idleSummaryTrips = React.useMemo(
-    () => canUseSupabaseUserData
-      ? mapSupabaseTripsToHomeSummaryTrips(supabaseTrips ?? [])
-      : undefined,
-    [canUseSupabaseUserData, supabaseTrips],
+    () => {
+      if (!canUseSupabaseUserData) {
+        return undefined;
+      }
+
+      const archivedTrips = supabaseTrips ?? [];
+      const summaryTrips = supabaseActiveTrip
+        ? [
+            supabaseActiveTrip,
+            ...archivedTrips.filter((trip) => trip.id !== supabaseActiveTrip.id),
+          ]
+        : archivedTrips;
+
+      return mapSupabaseTripsToHomeSummaryTrips(summaryTrips);
+    },
+    [canUseSupabaseUserData, supabaseActiveTrip, supabaseTrips],
   );
   const shouldShowPhotoTripDetectionProgressCard =
     !hasSavedPhotoImportResults &&
@@ -2473,6 +2590,7 @@ export default function HomeScreen() {
           onCloseImportCompleteModal={handleClosePhotoImportCompleteModal}
           onPressViewImportResults={handlePressViewCompletedImportResults}
           supabaseRecentTrips={idleRecentTrips}
+          supabasePastMoments={canUseSupabaseUserData ? supabasePastMoments ?? [] : undefined}
           supabaseSummaryTrips={idleSummaryTrips}
         />
         <PhotoImportSavedModal
@@ -2652,12 +2770,18 @@ export default function HomeScreen() {
                 const weekdayLabel = WEEKDAY_LABELS[parseDateKey(day.dateKey).getDay()];
                 const dateLabel = formatSheetDateLabel(day.dateKey);
                 const isTodayDate = isSameDateKey(day.dateKey, todayDateKey);
+                const dayDisplayLabel = getTripDayDisplayLabel(
+                  day.dateKey,
+                  day.dayNumber,
+                  todayDateKey,
+                );
 
                 return (
                   <Pressable
                     accessibilityRole="button"
                     key={day.dateKey}
                     onPress={() => {
+                      explicitlySelectedTripDayDateRef.current = day.dateKey;
                       setSelectedTripDayIndex(index);
                       closeScheduleSheet();
                     }}
@@ -2674,7 +2798,7 @@ export default function HomeScreen() {
                           isSelected && styles.scheduleDayTitleSelected,
                         ]}
                       >
-                        {day.dayNumber}일차
+                        {dayDisplayLabel}
                       </Text>
 
                       <Text

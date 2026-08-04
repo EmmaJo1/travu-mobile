@@ -35,7 +35,7 @@ export interface ArchiveDetailData {
   dateRangeLabel: string;
   heroTitle: string;
   /** User-editable hero photo. The blurred backdrop reuses this same image. */
-  photoFrameImage: ImageSourcePropType;
+  photoFrameImage?: ImageSourcePropType;
   selectedDay: {
     dayNumber: number;
     dateLabel: string;

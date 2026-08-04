@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
   Alert,
+  ActivityIndicator,
   Animated,
   Easing,
   Image,
@@ -797,7 +798,9 @@ export default function PlaceDetailScreen() {
   const shouldUseSupabasePlaceDetail = isSupabaseUuid(routePlaceId);
   const {
     data: supabasePlaceDetailData,
+    isError: isSupabasePlaceDetailError,
     isFetched: hasFetchedSupabasePlaceDetail,
+    isPending: isSupabasePlaceDetailPending,
     refetch: refetchPlaceDetailData,
   } =
     usePlaceDetailData(routePlaceId);
@@ -911,7 +914,7 @@ export default function PlaceDetailScreen() {
   detailSyncSnapshotRef.current = detailSyncSnapshot;
   const detailSyncKey = detailSyncSnapshot.key;
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const snapshot = detailSyncSnapshotRef.current;
 
     setPlaceInfo((current) => (
@@ -1249,6 +1252,52 @@ export default function PlaceDetailScreen() {
     shouldUseSupabasePlaceDetail,
   ]);
 
+  const isInitialSupabasePlaceDetailLoading = shouldUseSupabasePlaceDetail
+    && !initialDetail
+    && !isSupabasePlaceDetailError
+    && (isSupabasePlaceDetailPending || !hasFetchedSupabasePlaceDetail);
+
+  if (isInitialSupabasePlaceDetailLoading) {
+    return (
+      <SafeAreaView style={styles.root}>
+        <StatusBar style="dark" />
+        <View style={styles.header}>
+          <Pressable accessibilityRole="button" hitSlop={10} onPress={() => router.back()} style={styles.headerButton}>
+            <Feather name="chevron-left" size={28} color={Colors.foundation.black} />
+          </Pressable>
+        </View>
+        <View style={styles.emptyState}>
+          <ActivityIndicator color={Colors.foundation.black} />
+          <Text style={styles.emptyDescription}>{'장소 정보를 불러오는 중이에요'}</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (shouldUseSupabasePlaceDetail && !initialDetail && isSupabasePlaceDetailError) {
+    return (
+      <SafeAreaView style={styles.root}>
+        <StatusBar style="dark" />
+        <View style={styles.header}>
+          <Pressable accessibilityRole="button" hitSlop={10} onPress={() => router.back()} style={styles.headerButton}>
+            <Feather name="chevron-left" size={28} color={Colors.foundation.black} />
+          </Pressable>
+        </View>
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyTitle}>{'장소 정보를 불러오지 못했어요'}</Text>
+          <Text style={styles.emptyDescription}>{'네트워크 상태를 확인한 뒤 다시 시도해주세요.'}</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void refetchPlaceDetailData()}
+            style={styles.photoStatusAction}
+          >
+            <Text style={styles.photoStatusActionText}>{'다시 시도'}</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   if (!initialDetail) {
     return (
       <SafeAreaView style={styles.root}>
@@ -1393,6 +1442,9 @@ export default function PlaceDetailScreen() {
       const uploadContext = items[0]?.input;
       if (uploadContext) {
         await Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.archivedTravelMoments(user?.id),
+          }),
           queryClient.invalidateQueries({
             queryKey: supabaseQueryKeys.tripDayPhotos(user?.id, uploadContext.tripDayId),
           }),
@@ -1921,6 +1973,9 @@ export default function PlaceDetailScreen() {
 
         void Promise.all([
           queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.archivedTravelMoments(user?.id),
+          }),
+          queryClient.invalidateQueries({
             queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, previousTripDayId),
           }),
           queryClient.invalidateQueries({
@@ -2033,6 +2088,9 @@ export default function PlaceDetailScreen() {
       ),
     ];
     const invalidations = [
+      queryClient.invalidateQueries({
+        queryKey: supabaseQueryKeys.archivedTravelMoments(user?.id),
+      }),
       queryClient.invalidateQueries({
         queryKey: supabaseQueryKeys.myTrips(user?.id),
       }),
@@ -2410,7 +2468,14 @@ export default function PlaceDetailScreen() {
           </View>
 
           <View>
-            {sortedRecords.map((record, index) => {
+            {sortedRecords.length === 0 ? (
+              <View style={styles.recordsEmptyState}>
+                <Text style={styles.recordsEmptyTitle}>아직 작성한 기록이 없어요</Text>
+                <Text style={styles.recordsEmptyDescription}>
+                  기억하고 싶은 순간을 기록으로 남겨보세요.
+                </Text>
+              </View>
+            ) : sortedRecords.map((record, index) => {
               const recordPhoto = record.photoIds?.[0]
                 ? photos.find((photo) => photo.id === record.photoIds?.[0])
                 : undefined;
@@ -4481,6 +4546,23 @@ const styles = StyleSheet.create({
     color: Colors.foundation.black,
   },
   emptyDescription: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+    textAlign: 'center',
+  },
+  recordsEmptyState: {
+    minHeight: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+    paddingHorizontal: Spacing.xl,
+  },
+  recordsEmptyTitle: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+  },
+  recordsEmptyDescription: {
     ...Typography.body2Regular,
     color: Colors.foundation.grey600,
     textAlign: 'center',

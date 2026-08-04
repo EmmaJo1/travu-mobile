@@ -1,6 +1,5 @@
 import React from 'react';
 
-import { MOCK_MY_PAGE_PROFILE } from '@/constants/mockMyPageProfile';
 import { useAuth } from '@/providers/AuthProvider';
 
 export type UserProfile = {
@@ -22,9 +21,9 @@ export type UserProfile = {
 };
 
 const DEFAULT_PROFILE: UserProfile = {
-  name: MOCK_MY_PAGE_PROFILE.userName,
-  basedIn: MOCK_MY_PAGE_PROFILE.basedIn,
-  bio: MOCK_MY_PAGE_PROFILE.tagline,
+  name: '',
+  basedIn: '',
+  bio: '',
   travelStyles: [],
 };
 
@@ -39,8 +38,13 @@ export function UserProfileProvider({ children }: { children: React.ReactNode })
   const [profile, setProfile] = React.useState<UserProfile>(DEFAULT_PROFILE);
   const { profile: authProfile } = useAuth();
 
+  React.useEffect(() => {
+    if (!authProfile) {
+      setProfile(DEFAULT_PROFILE);
+    }
+  }, [authProfile]);
+
   const updateProfile = React.useCallback((nextProfile: UserProfile) => {
-    // TODO: Replace this in-memory update with Supabase or durable local persistence.
     setProfile(nextProfile);
   }, []);
 
@@ -51,7 +55,7 @@ export function UserProfileProvider({ children }: { children: React.ReactNode })
 
     return {
       name: authProfile.name || profile.name,
-      basedIn: authProfile.based_in || profile.basedIn,
+      basedIn: authProfile.based_in ?? '',
       basedInPlace: authProfile.based_in
         ? {
             displayName: authProfile.based_in,
@@ -63,11 +67,9 @@ export function UserProfileProvider({ children }: { children: React.ReactNode })
             placeId: authProfile.based_in_google_place_id ?? undefined,
           }
         : profile.basedInPlace,
-      bio: authProfile.bio || profile.bio,
-      travelStyles: authProfile.travel_styles.length > 0
-        ? authProfile.travel_styles
-        : profile.travelStyles,
-      profileImageUri: authProfile.profile_image_url || profile.profileImageUri,
+      bio: authProfile.bio ?? '',
+      travelStyles: authProfile.travel_styles,
+      profileImageUri: authProfile.profile_image_url ?? undefined,
     };
   }, [authProfile, profile]);
 

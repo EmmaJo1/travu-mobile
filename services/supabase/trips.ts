@@ -1,6 +1,9 @@
 import { supabase } from '@/lib/supabase';
 import type { Tables, TablesInsert, TablesUpdate } from '@/types/supabase';
-import { createTripDaysForRange } from '@/services/supabase/tripDays';
+import {
+  createTripDaysForRange,
+  updateActiveTripDateRange,
+} from '@/services/supabase/tripDays';
 import {
   syncActiveTripDestinations,
   type TripDestinationInput,
@@ -138,6 +141,7 @@ export function listTripsByUser(userId: string) {
     .from('trips')
     .select('*')
     .eq('user_id', userId)
+    .eq('status', 'archived')
     .is('deleted_at', null)
     .order('start_date', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false });
@@ -235,12 +239,30 @@ export async function completeActiveTrip(): Promise<TripRow> {
     throw new Error('A Supabase session is required to complete a trip.');
   }
 
+  const persistedActiveTrips = await fetchPersistedActiveTripsByUser(authData.user.id);
+  const activeTrip = persistedActiveTrips[0];
+
+  if (!activeTrip) {
+    throw new Error('No active trip was found to complete.');
+  }
+
+  const currentLocalDateKey = getCurrentLocalDateKey();
+  const startDate = activeTrip.start_date ?? currentLocalDateKey;
+  const endDate = startDate > currentLocalDateKey ? startDate : currentLocalDateKey;
+  const synchronized = await updateActiveTripDateRange({
+    endDate,
+    isEndDateUndecided: false,
+    startDate,
+    tripId: activeTrip.id,
+  });
+
   const { data, error } = await supabase
     .from('trips')
     .update({
       status: 'archived',
       updated_at: new Date().toISOString(),
     })
+    .eq('id', synchronized.trip.id)
     .eq('user_id', authData.user.id)
     .eq('status', 'active')
     .is('deleted_at', null)
@@ -250,7 +272,7 @@ export async function completeActiveTrip(): Promise<TripRow> {
   throwIfError(error);
 
   if (!data) {
-    throw new Error('No active trip was found to complete.');
+    throw new Error('The active trip was not archived after its date range was finalized.');
   }
 
   return data;
@@ -268,6 +290,7 @@ export async function fetchRecentTrips(limit = 12): Promise<TripRow[]> {
     .from('trips')
     .select('*')
     .eq('user_id', authData.user.id)
+    .eq('status', 'archived')
     .is('deleted_at', null)
     .order('start_date', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
