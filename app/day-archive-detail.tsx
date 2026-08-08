@@ -6,6 +6,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Feather } from '@expo/vector-icons';
+import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import React, { useMemo, useRef, useState } from 'react';
@@ -43,6 +44,7 @@ import type { DestinationOption } from '@/constants/mockTripDestinations';
 import {
   ARCHIVE_DAY_OPTIONS,
   MOCK_ARCHIVE_DETAIL,
+  type ArchiveDetailData,
   type ArchiveDetailPlace,
   formatArchiveDayLabel,
   toPlaceEntries,
@@ -63,12 +65,17 @@ import { useTripDetail } from '@/hooks/useTripDetail';
 import { useAuth } from '@/providers/AuthProvider';
 import { useCreatePlaceRecord } from '@/hooks/useCreatePlaceRecord';
 import { useDeletePlaceRecord } from '@/hooks/useDeletePlaceRecord';
+import { useDeleteTrip } from '@/hooks/useDeleteTrip';
 import { useTripDayPlaces } from '@/hooks/useTripDayPlaces';
 import { useTripDayRecords } from '@/hooks/useTripDayRecords';
-import { useTripDayPhotos } from '@/hooks/useSupabasePhotos';
+import { useResolvedTripPhotos, useTripDayPhotos } from '@/hooks/useSupabasePhotos';
+import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
+import { useTripPlaces } from '@/hooks/useTripTimelineData';
 import { useUpdatePlaceRecord } from '@/hooks/useUpdatePlaceRecord';
 import { isSupabaseUuid } from '@/hooks/usePlaceDetailData';
 import type { TripDayRow } from '@/services/supabase/tripDays';
+import { setTripCoverPhoto } from '@/services/supabase/photos';
+import type { TripRow } from '@/services/supabase/trips';
 import { mapSupabasePlacesToPlaceEntries } from '@/utils/supabasePlaceRecordMappers';
 import { mapSupabaseTripToMyPageTrip } from '@/utils/supabaseTripMappers';
 
@@ -322,6 +329,7 @@ function createArchivePlaceEntry(input: PlaceCreateInput): ArchiveDetailPlace {
 
 interface ArchiveCoverPhotoOption {
   id: string;
+  photoId?: string;
   placeName: string;
   source: ImageSourcePropType;
 }
@@ -374,24 +382,29 @@ function resolveArchiveHeroTitle(trip?: MyPageTrip) {
   return (englishTitle ?? 'TRAVEL').trim().toUpperCase();
 }
 
-function createArchiveDetailFromTrip(trip?: MyPageTrip) {
+function createArchiveDetailFromTrip(trip?: MyPageTrip): ArchiveDetailData {
   if (!trip) {
     return MOCK_ARCHIVE_DETAIL;
   }
 
   return {
-    ...MOCK_ARCHIVE_DETAIL,
     id: trip.id,
     city: trip.city,
     country: trip.country,
     dateRangeLabel: trip.dateRangeLabel,
     heroTitle: resolveArchiveHeroTitle(trip),
     photoFrameImage: trip.coverImage,
+    selectedDay: {
+      dayNumber: 1,
+      dateLabel: trip.dateRangeLabel,
+    },
     stats: {
-      ...MOCK_ARCHIVE_DETAIL.stats,
       daysCount: trip.daysCount,
       photoCount: trip.photoCount,
+      placeCount: 0,
+      distanceKm: 0,
     },
+    places: [],
   };
 }
 
@@ -779,10 +792,14 @@ function ArchiveHeaderMenu({
 }
 
 function ArchiveEmptyState({
+  actionLabel,
   description,
+  onAction,
   title,
 }: {
+  actionLabel?: string;
   description: string;
+  onAction?: () => void;
   title: string;
 }) {
   const router = useRouter();
@@ -809,6 +826,9 @@ function ArchiveEmptyState({
       <View style={styles.archiveEmptyState}>
         <Text style={styles.archiveEmptyTitle}>{title}</Text>
         <Text style={styles.archiveEmptyDescription}>{description}</Text>
+        {actionLabel && onAction ? (
+          <PrimaryButton label={actionLabel} onPress={onAction} style={styles.archiveEmptyAction} />
+        ) : null}
       </View>
     </SafeAreaView>
   );
@@ -816,6 +836,7 @@ function ArchiveEmptyState({
 
 export default function DayArchiveDetailScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { dayId, dayNumber, tripId } = useLocalSearchParams<{
     tripId?: string;
     dayId?: string;
@@ -824,25 +845,29 @@ export default function DayArchiveDetailScreen() {
   }>();
   const { width: screenWidth } = useWindowDimensions();
   const savedTrips = useSavedMyPageTrips();
-  const { canUseSupabaseUserData } = useAuth();
+  const { canUseSupabaseUserData, user } = useAuth();
   const routeTripId = getArchiveDetailTripId(tripId);
   const isSupabaseArchiveTrip = isSupabaseUuid(routeTripId);
+  const shouldRejectLegacyArchiveRoute = canUseSupabaseUserData && !isSupabaseArchiveTrip;
   const supabaseRouteTripId = isSupabaseArchiveTrip ? routeTripId : undefined;
   const {
     data: supabaseTrip,
     isError: isSupabaseTripError,
     isFetched: hasFetchedSupabaseTrip,
+    refetch: refetchSupabaseTrip,
   } = useTripDetail(supabaseRouteTripId);
   const {
     data: supabaseTripDays,
     isError: isSupabaseTripDaysError,
     isFetched: hasFetchedSupabaseTripDays,
+    refetch: refetchSupabaseTripDays,
   } = useTripDays(supabaseRouteTripId);
   const createPlaceRecordMutation = useCreatePlaceRecord();
   const updatePlaceRecordMutation = useUpdatePlaceRecord();
   const deletePlaceRecordMutation = useDeletePlaceRecord();
+  const deleteTripMutation = useDeleteTrip();
   const tripFromSaved = savedTrips.find((trip) => trip.id === routeTripId);
-  const fallbackTrip = isSupabaseArchiveTrip
+  const fallbackTrip = isSupabaseArchiveTrip || shouldRejectLegacyArchiveRoute
     ? undefined
     : tripFromSaved ??
       MOCK_MY_PAGE_TRIPS.find((trip) => trip.id === routeTripId) ??
@@ -899,6 +924,7 @@ export default function DayArchiveDetailScreen() {
   const [editingArchiveEntry, setEditingArchiveEntry] = useState<PlaceEntry | null>(null);
   const [isCoverPhotoPickerVisible, setCoverPhotoPickerVisible] = useState(false);
   const [coverPhotoPickerKey, setCoverPhotoPickerKey] = useState(0);
+  const [isUpdatingTripCoverPhoto, setUpdatingTripCoverPhoto] = useState(false);
   const [isFixedHeaderVisible, setFixedHeaderVisible] = useState(false);
   const [isHeaderMenuVisible, setHeaderMenuVisible] = useState(false);
   const [isScrollEnabled, setScrollEnabled] = useState(true);
@@ -963,6 +989,14 @@ export default function DayArchiveDetailScreen() {
     isPending: isSupabasePhotosPending,
     refetch: refetchSupabasePhotos,
   } = useTripDayPhotos(selectedSupabaseTripDayId);
+  const { data: supabaseTripPlaces } = useTripPlaces(
+    supabaseRouteTripId,
+    isCoverPhotoPickerVisible,
+  );
+  const { data: supabaseTripPhotos } = useResolvedTripPhotos(
+    supabaseRouteTripId,
+    isCoverPhotoPickerVisible,
+  );
   const visibleArchivePlaces = useMemo(
     () =>
       [...detail.places, ...(addedPlacesByDay[selectedDay.id] ?? [])].filter(
@@ -1003,65 +1037,89 @@ export default function DayArchiveDetailScreen() {
     isSupabasePlacesSuccess &&
     (supabasePlaces?.length ?? 0) === 0;
 
-  React.useEffect(() => {
-    if (!__DEV__ || !isSupabaseArchiveTrip) {
-      return;
+  const coverPhotoOptions = useMemo(() => {
+    if (!isSupabaseArchiveTrip) {
+      return createArchiveCoverPhotoOptions(visibleArchivePlaces);
     }
 
-    console.info('[day-archive-detail] saved trip detail fetched', {
-      savedTripDetailFetchedDayCount: supabaseTripDays?.length ?? 0,
-      savedTripDetailFetchedPlaceCount: supabasePlaces?.length ?? 0,
-      savedTripDetailTripId: routeTripId,
-      selectedSupabaseTripDayId,
-    });
+    const activeTripDaysById = new Map(
+      (supabaseTripDays ?? []).map((day) => [day.id, day]),
+    );
+    const activePlacesById = new Map(
+      (supabaseTripPlaces ?? []).map((place) => [place.id, place]),
+    );
+
+    return (supabaseTripPhotos ?? [])
+      .filter(
+        (photo) =>
+          photo.deleted_at === null &&
+          photo.displayUrlStatus === 'ready' &&
+          Boolean(photo.displayUrl) &&
+          Boolean(photo.trip_day_id && activeTripDaysById.has(photo.trip_day_id)) &&
+          Boolean(photo.place_id && activePlacesById.has(photo.place_id)),
+      )
+      .sort((left, right) => {
+        const leftDay = left.trip_day_id
+          ? activeTripDaysById.get(left.trip_day_id)
+          : undefined;
+        const rightDay = right.trip_day_id
+          ? activeTripDaysById.get(right.trip_day_id)
+          : undefined;
+        const dayComparison =
+          (leftDay?.date ?? '').localeCompare(rightDay?.date ?? '') ||
+          (leftDay?.day_index ?? 0) - (rightDay?.day_index ?? 0);
+
+        if (dayComparison !== 0) {
+          return dayComparison;
+        }
+
+        const leftPlace = left.place_id ? activePlacesById.get(left.place_id) : undefined;
+        const rightPlace = right.place_id ? activePlacesById.get(right.place_id) : undefined;
+        const placeComparison =
+          (leftPlace?.visited_at ?? leftPlace?.created_at ?? '').localeCompare(
+            rightPlace?.visited_at ?? rightPlace?.created_at ?? '',
+          ) || (leftPlace?.id ?? '').localeCompare(rightPlace?.id ?? '');
+
+        if (placeComparison !== 0) {
+          return placeComparison;
+        }
+
+        return (
+          (left.taken_at ?? left.created_at).localeCompare(
+            right.taken_at ?? right.created_at,
+          ) || left.id.localeCompare(right.id)
+        );
+      })
+      .map((photo) => ({
+        id: photo.id,
+        photoId: photo.id,
+        placeName: photo.place_id
+          ? activePlacesById.get(photo.place_id)?.name ?? ''
+          : '',
+        source: { uri: photo.displayUrl as string },
+      }));
   }, [
     isSupabaseArchiveTrip,
-    routeTripId,
-    selectedSupabaseTripDayId,
-    supabasePlaces?.length,
-    supabaseTripDays?.length,
+    supabaseTripDays,
+    supabaseTripPhotos,
+    supabaseTripPlaces,
+    visibleArchivePlaces,
   ]);
-
-  const coverPhotoOptions = useMemo(
-    () => createArchiveCoverPhotoOptions(visibleArchivePlaces),
-    [visibleArchivePlaces],
+  const supabaseTripCoverImage = useMemo(
+    () => supabaseTrip?.cover_display_url
+      ? { uri: supabaseTrip.cover_display_url }
+      : undefined,
+    [supabaseTrip?.cover_display_url],
   );
+  const displayedPhotoFrameImage = isSupabaseArchiveTrip
+    ? supabaseTripCoverImage
+    : detail.photoFrameImage;
   const currentCoverUri = useMemo(
-    () => resolveImageUri(detail.photoFrameImage),
-    [detail.photoFrameImage],
+    () => resolveImageUri(displayedPhotoFrameImage),
+    [displayedPhotoFrameImage],
   );
 
   const photoFrameLeft = (screenWidth - PHOTO_FRAME_WIDTH) / 2;
-
-  React.useEffect(() => {
-    if (!__DEV__) {
-      return;
-    }
-
-    console.log('[day-archive-detail route day]', {
-      dayId,
-      dayNumber,
-      isSupabaseArchiveTrip,
-      routeTripId,
-      selectedDayId: selectedDay.id,
-      selectedRouteDate,
-      selectedRouteDayId,
-      selectedRouteDayIndex,
-      selectedSupabaseTripDayId,
-      supabaseTripDays: supabaseTripDays?.length ?? 0,
-    });
-  }, [
-    dayId,
-    dayNumber,
-    isSupabaseArchiveTrip,
-    routeTripId,
-    selectedDay.id,
-    selectedRouteDate,
-    selectedRouteDayId,
-    selectedRouteDayIndex,
-    selectedSupabaseTripDayId,
-    supabaseTripDays?.length,
-  ]);
 
   React.useEffect(() => {
     if (dayOptions.length === 0) {
@@ -1265,11 +1323,82 @@ export default function DayArchiveDetailScreen() {
   }, []);
 
   const handleSelectCoverPhoto = React.useCallback(
-    (source: ImageSourcePropType) => {
-      updateArchiveTrip({ coverImage: source });
-      closeCoverPhotoPicker();
+    async (option: ArchiveCoverPhotoOption) => {
+      if (!isSupabaseArchiveTrip) {
+        updateArchiveTrip({ coverImage: option.source });
+        closeCoverPhotoPicker();
+        return;
+      }
+
+      if (!routeTripId || !option.photoId || isUpdatingTripCoverPhoto) {
+        return;
+      }
+
+      setUpdatingTripCoverPhoto(true);
+
+      try {
+        const result = await setTripCoverPhoto(
+          routeTripId,
+          option.photoId,
+        );
+        const coverDisplayUrl = resolveImageUri(option.source) ?? null;
+        const updateTripCover = (trip: TripRow): TripRow =>
+          trip.id === result.tripId
+            ? {
+              ...trip,
+              book_cover_display_url: coverDisplayUrl,
+              book_cover_photo_id: result.coverPhotoId,
+              cover_display_url: coverDisplayUrl,
+              cover_photo_id: result.coverPhotoId,
+            }
+            : trip;
+
+        queryClient.setQueryData<TripRow>(
+          supabaseQueryKeys.tripDetail(user?.id, routeTripId),
+          (current) => current ? updateTripCover(current) : current,
+        );
+        queryClient.setQueryData<TripRow[]>(
+          supabaseQueryKeys.myTrips(user?.id),
+          (current) => current?.map(updateTripCover),
+        );
+        queryClient.setQueriesData<TripRow[]>(
+          { queryKey: supabaseQueryKeys.recentTripsRoot(user?.id) },
+          (current) => current?.map(updateTripCover),
+        );
+        closeCoverPhotoPicker();
+
+        void Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDetail(user?.id, routeTripId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.myTrips(user?.id),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.recentTripsRoot(user?.id),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.archivedTravelMoments(user?.id),
+          }),
+        ]).catch((error: unknown) => {
+          console.warn('[day-archive-detail] invalidate after cover update failed', error);
+        });
+      } catch (error) {
+        console.warn('[day-archive-detail] update cover photo failed', error);
+        Alert.alert('대표사진을 변경하지 못했어요', '잠시 후 다시 시도해주세요.');
+      } finally {
+        setUpdatingTripCoverPhoto(false);
+      }
     },
-    [closeCoverPhotoPicker, updateArchiveTrip],
+    [
+      closeCoverPhotoPicker,
+      isSupabaseArchiveTrip,
+      isUpdatingTripCoverPhoto,
+      queryClient,
+      routeTripId,
+      updateArchiveTrip,
+      user?.id,
+    ],
   );
 
   const handleSaveTripInfo = React.useCallback(
@@ -1379,20 +1508,37 @@ export default function DayArchiveDetailScreen() {
   );
 
   const handleDeleteTrip = React.useCallback(() => {
+    if (deleteTripMutation.isPending) {
+      return;
+    }
+
     Alert.alert(LABEL_DELETE_TRIP_TITLE, LABEL_DELETE_TRIP_MESSAGE, [
       { style: 'cancel', text: LABEL_CANCEL },
       {
         style: 'destructive',
         text: '\uC0AD\uC81C',
         onPress: () => {
-          if (activeTrip) {
-            removeSavedMyPageTrip(activeTrip.id);
-          }
-          router.back();
+          void (async () => {
+            try {
+              if (isSupabaseArchiveTrip && routeTripId) {
+                await deleteTripMutation.mutateAsync(routeTripId);
+              } else if (activeTrip) {
+                removeSavedMyPageTrip(activeTrip.id);
+              }
+
+              router.back();
+            } catch (error) {
+              console.warn('[day-archive-detail] delete trip failed', error);
+              Alert.alert(
+                '\uC5EC\uD589\uC744 \uC0AD\uC81C\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+                '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.',
+              );
+            }
+          })();
         },
       },
     ]);
-  }, [activeTrip, router]);
+  }, [activeTrip, deleteTripMutation, isSupabaseArchiveTrip, routeTripId, router]);
 
   const showArchiveQuickAction = (label: string) => {
     Alert.alert(label, '\uC774 \uAE30\uB2A5\uC740 \uC5EC\uD589 \uD3B8\uC9D1 \uD50C\uB85C\uC6B0\uB85C \uC5F0\uACB0\uB420 \uC608\uC815\uC785\uB2C8\uB2E4.');
@@ -1421,6 +1567,11 @@ export default function DayArchiveDetailScreen() {
     }
 
     if (actionId === 'info') {
+      if (isSupabaseArchiveTrip) {
+        showArchiveQuickAction('\uC5EC\uD589 \uC815\uBCF4 \uC218\uC815');
+        return;
+      }
+
       setTripInfoEditorVisible(true);
       return;
     }
@@ -1433,6 +1584,15 @@ export default function DayArchiveDetailScreen() {
     const action = ARCHIVE_HEADER_ACTIONS.find((item) => item.id === actionId);
     showArchiveQuickAction(action?.label ?? '');
   };
+
+  if (shouldRejectLegacyArchiveRoute) {
+    return (
+      <ArchiveEmptyState
+        title={'\uC5EC\uD589\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC5B4\uC694'}
+        description={'\uC774\uC804 \uD654\uBA74\uC73C\uB85C \uB3CC\uC544\uAC00 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.'}
+      />
+    );
+  }
 
   if (isSupabaseArchiveTrip && !canUseSupabaseUserData) {
     return (
@@ -1459,7 +1619,23 @@ export default function DayArchiveDetailScreen() {
 
   if (
     isSupabaseArchiveTrip &&
-    (isSupabaseTripError || isSupabaseTripDaysError || !supabaseTrip || supabaseTrip.status !== 'archived')
+    (isSupabaseTripError || isSupabaseTripDaysError)
+  ) {
+    return (
+      <ArchiveEmptyState
+        actionLabel={'\uB2E4\uC2DC \uC2DC\uB3C4'}
+        title={'\uC5EC\uD589\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694'}
+        description={'\uB124\uD2B8\uC6CC\uD06C \uC0C1\uD0DC\uB97C \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.'}
+        onAction={() => {
+          void Promise.all([refetchSupabaseTrip(), refetchSupabaseTripDays()]);
+        }}
+      />
+    );
+  }
+
+  if (
+    isSupabaseArchiveTrip &&
+    (!supabaseTrip || supabaseTrip.status !== 'archived')
   ) {
     return (
       <ArchiveEmptyState
@@ -1541,7 +1717,7 @@ export default function DayArchiveDetailScreen() {
       >
         <View style={styles.heroArea}>
           <ArchiveBlurBackground
-            source={detail.photoFrameImage}
+            source={displayedPhotoFrameImage}
             width={screenWidth}
             height={BLUR_HEIGHT}
           />
@@ -1553,9 +1729,9 @@ export default function DayArchiveDetailScreen() {
             ]}
           >
             <Text style={styles.frameDate}>{detail.dateRangeLabel}</Text>
-            {detail.photoFrameImage ? (
+            {displayedPhotoFrameImage ? (
               <Image
-                source={detail.photoFrameImage}
+                source={displayedPhotoFrameImage}
                 style={styles.frameImage}
                 contentFit="cover"
                 contentPosition="center"
@@ -1761,7 +1937,10 @@ export default function DayArchiveDetailScreen() {
                     <Pressable
                       key={photo.id}
                       accessibilityRole="button"
-                      onPress={() => handleSelectCoverPhoto(photo.source)}
+                      disabled={isUpdatingTripCoverPhoto}
+                      onPress={() => {
+                        void handleSelectCoverPhoto(photo);
+                      }}
                       style={styles.coverPickerPhoto}
                     >
                       <Image
@@ -1911,6 +2090,9 @@ const styles = StyleSheet.create({
     left: FRAME_IMAGE_LEFT,
     width: FRAME_IMAGE_WIDTH,
     height: FRAME_IMAGE_HEIGHT,
+  },
+  archiveEmptyAction: {
+    marginTop: Spacing.lg,
   },
   frameImageFallback: {
     backgroundColor: Colors.foundation.grey100,

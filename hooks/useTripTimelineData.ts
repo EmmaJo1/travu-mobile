@@ -7,11 +7,11 @@ import { fetchPhotoRowsByTripId } from '@/services/supabase/photos';
 import { fetchPlacesByTripId } from '@/services/supabase/places';
 import { fetchRecordsByTripId } from '@/services/supabase/records';
 
-export function useTripPlaces(tripId?: string | null) {
+export function useTripPlaces(tripId?: string | null, enabled = true) {
   const { canUseSupabaseUserData, user } = useAuth();
 
   return useQuery({
-    enabled: canUseSupabaseUserData && isSupabaseUuid(tripId),
+    enabled: enabled && canUseSupabaseUserData && isSupabaseUuid(tripId),
     queryFn: () => fetchPlacesByTripId(tripId as string),
     queryKey: supabaseQueryKeys.tripPlaces(user?.id, tripId),
   });

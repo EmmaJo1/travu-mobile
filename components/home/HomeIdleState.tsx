@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
+  ActivityIndicator,
   Image,
   Platform,
   Pressable,
@@ -11,6 +12,7 @@ import {
   ScrollView,
   StyleSheet,
   View,
+  type ImageSourcePropType,
 } from 'react-native';
 
 import Text from '@/components/common/AppText';
@@ -21,7 +23,6 @@ import PhotoImportResultsCard from '@/components/home/PhotoImportResultsCard';
 import PhotoTripDetectionProgressCard from '@/components/home/PhotoTripDetectionProgressCard';
 import RecentTripsSection from '@/components/home/RecentTripsSection';
 import PhotoImportCompleteModal from '@/components/onboarding/PhotoImportCompleteModal';
-import { FIGMA_IMAGES } from '@/constants/figmaImages';
 import {
   getPendingDetectedTrip,
   getRecentTrips,
@@ -96,6 +97,7 @@ type MonthlySummaryDateRange = {
 };
 
 interface HomeIdleStateProps {
+  heroImage: ImageSourcePropType;
   onPressStartTrip?: () => void;
   headerTop?: number;
   headerLocationLabel: string;
@@ -112,9 +114,14 @@ interface HomeIdleStateProps {
   supabaseRecentTrips?: IdleRecentTrip[];
   supabasePastMoments?: IdlePastMoment[];
   supabaseSummaryTrips?: HomeSummaryTripInput[];
+  isSupplementalDataLoading?: boolean;
+  isSupplementalDataError?: boolean;
+  onRetrySupplementalData?: () => Promise<void> | void;
+  onRefresh?: () => Promise<void> | void;
 }
 
 export default function HomeIdleState({
+  heroImage,
   onPressStartTrip,
   headerTop = 0,
   headerLocationLabel,
@@ -131,6 +138,10 @@ export default function HomeIdleState({
   supabaseRecentTrips,
   supabasePastMoments,
   supabaseSummaryTrips,
+  isSupplementalDataLoading = false,
+  isSupplementalDataError = false,
+  onRetrySupplementalData,
+  onRefresh,
 }: HomeIdleStateProps) {
   const router = useRouter();
   const savedMyPageTrips = useSavedMyPageTrips();
@@ -186,13 +197,15 @@ export default function HomeIdleState({
     );
   }, []);
 
-  const handleRefresh = React.useCallback(() => {
+  const handleRefresh = React.useCallback(async () => {
     setRefreshing(true);
 
-    requestAnimationFrame(() => {
+    try {
+      await onRefresh?.();
+    } finally {
       setRefreshing(false);
-    });
-  }, []);
+    }
+  }, [onRefresh]);
 
   const handlePressRecentTrip = React.useCallback((tripId: string) => {
     router.push({
@@ -238,7 +251,7 @@ export default function HomeIdleState({
       <View style={styles.fixedHeroArea}>
         <View style={styles.hero}>
           <Image
-            source={FIGMA_IMAGES.home.idleHeroParis}
+            source={heroImage}
             style={styles.heroImage}
             resizeMode="cover"
           />
@@ -275,7 +288,7 @@ export default function HomeIdleState({
               onPress={onPressStartTrip}
             >
               <Image
-                source={FIGMA_IMAGES.home.idleHeroParis}
+                source={heroImage}
                 style={styles.startButtonBackdropImage}
                 resizeMode="cover"
                 blurRadius={14}
@@ -369,6 +382,29 @@ export default function HomeIdleState({
               onSave={handleSaveDetectedTrip}
               onPressTrip={handlePressDetectedTrip}
             />
+          ) : null}
+
+          {!isFirstUserEmptyState &&
+          recentTrips.length === 0 &&
+          pastMoments.length === 0 &&
+          isSupplementalDataLoading ? (
+            <View style={styles.supplementalState}>
+              <ActivityIndicator color={Colors.foundation.black} />
+              <Text style={styles.supplementalStateText}>여행 기록을 불러오는 중이에요</Text>
+            </View>
+          ) : null}
+
+          {!isFirstUserEmptyState &&
+          recentTrips.length === 0 &&
+          pastMoments.length === 0 &&
+          !isSupplementalDataLoading &&
+          isSupplementalDataError ? (
+            <View style={styles.supplementalState}>
+              <Text style={styles.supplementalStateText}>여행 기록을 불러오지 못했어요</Text>
+              <Pressable accessibilityRole="button" onPress={onRetrySupplementalData}>
+                <Text style={styles.supplementalRetryText}>다시 시도</Text>
+              </Pressable>
+            </View>
           ) : null}
 
           {!isFirstUserEmptyState && (recentTrips.length > 0 || pastMoments.length > 0) ? (
@@ -887,5 +923,18 @@ const styles = StyleSheet.create({
   },
   recentTripsWithoutDetected: {
     marginTop: 0,
+  },
+  supplementalState: {
+    alignItems: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing['2xl'],
+  },
+  supplementalStateText: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey700,
+  },
+  supplementalRetryText: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.black,
   },
 });

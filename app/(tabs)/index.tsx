@@ -28,6 +28,7 @@ import {
   ScrollView,
   StyleSheet,
   View,
+  type ImageSourcePropType,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -53,6 +54,7 @@ import PlaceCreateModal, {
 } from '@/components/record/PlaceCreateModal';
 import TodaySummary from '@/components/trip/TodaySummary';
 import { setActiveTraveling } from '@/constants/activeTravelSession';
+import { resolveDestinationHero } from '@/constants/destinationHeroes';
 import { HOME_MOCK_DATA } from '@/constants/mockHome';
 import type { DestinationOption } from '@/constants/mockTripDestinations';
 import { addSavedCompletedTrip } from '@/constants/savedMyPageTrips';
@@ -116,10 +118,6 @@ import {
 } from '@/utils/supabaseTripMappers';
 
 const HERO_HEIGHT = 336;
-const HERO_IMAGE_FRAME_TOP = -139;
-const HERO_IMAGE_FRAME_HEIGHT = 508;
-const HERO_IMAGE_TOP = 8;
-const HERO_IMAGE_HEIGHT = 492;
 const HEADER_HEIGHT = 52;
 const HEADER_DIM_HEIGHT = 129;
 const HERO_MASK_TOP = 180;
@@ -914,6 +912,7 @@ export default function HomeScreen() {
     canUseSupabaseUserData,
     isDevBypass,
     isLoading: isAuthLoading,
+    profile: authProfile,
     user,
   } = useAuth();
   const createTripMutation = useCreateTrip();
@@ -928,9 +927,22 @@ export default function HomeScreen() {
     isFetched: isActiveTripFetched,
     refetch: refetchActiveTrip,
   } = useActiveTrip();
-  const { data: supabaseTrips } = useMyTrips();
-  const { data: supabaseRecentTrips } = useRecentTrips(3);
-  const { data: supabasePastMoments } = useArchivedTravelMoments();
+  const {
+    data: supabaseTrips,
+    refetch: refetchSupabaseTrips,
+  } = useMyTrips();
+  const {
+    data: supabaseRecentTrips,
+    isError: isSupabaseRecentTripsError,
+    isLoading: isSupabaseRecentTripsLoading,
+    refetch: refetchSupabaseRecentTrips,
+  } = useRecentTrips(3);
+  const {
+    data: supabasePastMoments,
+    isError: isSupabasePastMomentsError,
+    isLoading: isSupabasePastMomentsLoading,
+    refetch: refetchSupabasePastMoments,
+  } = useArchivedTravelMoments();
   const { currentTrip } = HOME_MOCK_DATA;
   const {
     status: photoImportStatus,
@@ -1032,6 +1044,74 @@ export default function HomeScreen() {
     data: supabaseTripPhotos,
     refetch: refetchSupabaseTripPhotos,
   } = useTripPhotos(activeTripId);
+  const supabasePrimaryDestination = React.useMemo(
+    () =>
+      supabaseTripDestinations?.find((destination) => destination.is_primary) ??
+      supabaseTripDestinations?.[0],
+    [supabaseTripDestinations],
+  );
+  const activeTripHeroImage = React.useMemo<ImageSourcePropType>(() => {
+    return resolveDestinationHero({
+      context: 'active-trip',
+      destination: activeTrip.destination,
+      regionName:
+        supabasePrimaryDestination?.name_ko ??
+        supabasePrimaryDestination?.name ??
+        activeTrip.destination.displayName,
+      countryName:
+        supabasePrimaryDestination?.country_ko ??
+        supabasePrimaryDestination?.country ??
+        homeActiveTrip?.destination_country ??
+        homeActiveTrip?.destination_country_ko,
+    });
+  }, [
+    activeTrip.destination,
+    homeActiveTrip?.destination_country,
+    homeActiveTrip?.destination_country_ko,
+    supabasePrimaryDestination?.country,
+    supabasePrimaryDestination?.country_ko,
+    supabasePrimaryDestination?.name,
+    supabasePrimaryDestination?.name_ko,
+  ]);
+  const hasStoredLivingRegion = Boolean(authProfile?.based_in?.trim());
+  const idleHomeHeroImage = React.useMemo<ImageSourcePropType>(() => {
+    return resolveDestinationHero({
+      context: 'daily-home',
+      regionName: hasStoredLivingRegion
+        ? authProfile?.based_in_city ?? authProfile?.based_in
+        : null,
+      countryCode: hasStoredLivingRegion
+        ? authProfile?.based_in_country_code
+        : null,
+      countryName: hasStoredLivingRegion
+        ? authProfile?.based_in_country
+        : null,
+    });
+  }, [
+    authProfile?.based_in,
+    authProfile?.based_in_city,
+    authProfile?.based_in_country,
+    authProfile?.based_in_country_code,
+    hasStoredLivingRegion,
+  ]);
+  const refetchIdleHomeData = React.useCallback(async () => {
+    if (!canUseSupabaseUserData) {
+      return;
+    }
+
+    await Promise.all([
+      refetchActiveTrip(),
+      refetchSupabaseTrips(),
+      refetchSupabaseRecentTrips(),
+      refetchSupabasePastMoments(),
+    ]);
+  }, [
+    canUseSupabaseUserData,
+    refetchActiveTrip,
+    refetchSupabasePastMoments,
+    refetchSupabaseRecentTrips,
+    refetchSupabaseTrips,
+  ]);
 
   const updateDeviceHeaderLocation = React.useCallback(async ({
     force = false,
@@ -2576,6 +2656,7 @@ export default function HomeScreen() {
     return (
       <>
         <HomeIdleState
+          heroImage={idleHomeHeroImage}
           onPressStartTrip={handlePressStartTripFromIdle}
           headerTop={homeHeaderTop}
           headerLocationLabel={renderedHeaderLocationLabel}
@@ -2592,6 +2673,16 @@ export default function HomeScreen() {
           supabaseRecentTrips={idleRecentTrips}
           supabasePastMoments={canUseSupabaseUserData ? supabasePastMoments ?? [] : undefined}
           supabaseSummaryTrips={idleSummaryTrips}
+          isSupplementalDataLoading={
+            canUseSupabaseUserData &&
+            (isSupabaseRecentTripsLoading || isSupabasePastMomentsLoading)
+          }
+          isSupplementalDataError={
+            canUseSupabaseUserData &&
+            (isSupabaseRecentTripsError || isSupabasePastMomentsError)
+          }
+          onRetrySupplementalData={refetchIdleHomeData}
+          onRefresh={refetchIdleHomeData}
         />
         <PhotoImportSavedModal
           visible={lastSavedTripCount > 0}
@@ -2622,11 +2713,13 @@ export default function HomeScreen() {
       <View style={styles.travelHomeContent}>
         <View style={styles.hero}>
           <View style={styles.heroImageFrame}>
-            <Image
-              source={currentTrip.heroImage}
-              style={styles.heroImage}
-              resizeMode="cover"
-            />
+            {activeTripHeroImage ? (
+              <Image
+                source={activeTripHeroImage}
+                style={styles.heroImage}
+                resizeMode="cover"
+              />
+            ) : null}
           </View>
 
           <LinearGradient
@@ -2659,7 +2752,7 @@ export default function HomeScreen() {
               </View>
 
               <TravelStatusButton
-                backdropImage={currentTrip.heroImage}
+                backdropImage={activeTripHeroImage}
                 label={statusButtonLabel}
                 dotColor={statusDotColor}
                 onPress={handlePressTravelStatus}
@@ -2981,20 +3074,13 @@ const styles = StyleSheet.create({
     backgroundColor: WARM_WHITE,
   },
   heroImageFrame: {
-    position: 'absolute',
-    top: HERO_IMAGE_FRAME_TOP,
-    left: 0,
-    right: 0,
-    height: HERO_IMAGE_FRAME_HEIGHT,
+    ...StyleSheet.absoluteFillObject,
     overflow: 'hidden',
   },
   heroImage: {
-    position: 'absolute',
-    top: HERO_IMAGE_TOP,
-    left: 0,
-    right: 0,
+    ...StyleSheet.absoluteFillObject,
     width: '100%',
-    height: HERO_IMAGE_HEIGHT,
+    height: '100%',
   },
   heroMask: {
     position: 'absolute',

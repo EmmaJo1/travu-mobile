@@ -82,6 +82,8 @@ export function mapSupabaseTripToMyPageTrip(
   const city = getDisplayCity(trip);
   const country = getDisplayCountry(trip);
   const safeTitle = getTripBookTitle(trip);
+  const coverImageUrl =
+    normalizeText(trip.book_cover_display_url) || normalizeText(trip.cover_display_url);
 
   return {
     id: trip.id,
@@ -95,8 +97,8 @@ export function mapSupabaseTripToMyPageTrip(
       endDate: trip.end_date,
       startDate: trip.start_date,
     }, tripDays),
-    coverImage: trip.cover_display_url
-      ? { uri: trip.cover_display_url }
+    coverImage: coverImageUrl
+      ? { uri: coverImageUrl }
       : undefined,
     daysCount: tripDays?.length ?? getInclusiveDayCount(trip.start_date, trip.end_date),
     photoCount: trip.active_photo_count ?? 0,

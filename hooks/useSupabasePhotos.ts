@@ -6,6 +6,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import {
   fetchPhotosByPlaceId,
   fetchPhotosByTripDayId,
+  fetchPhotosByTripId,
 } from '@/services/supabase/photos';
 
 export function usePlacePhotos(placeId?: string | null) {
@@ -25,5 +26,15 @@ export function useTripDayPhotos(tripDayId?: string | null) {
     enabled: canUseSupabaseUserData && isSupabaseUuid(tripDayId),
     queryFn: () => fetchPhotosByTripDayId(tripDayId as string),
     queryKey: supabaseQueryKeys.tripDayPhotos(user?.id, tripDayId),
+  });
+}
+
+export function useResolvedTripPhotos(tripId?: string | null, enabled = true) {
+  const { canUseSupabaseUserData, user } = useAuth();
+
+  return useQuery({
+    enabled: enabled && canUseSupabaseUserData && isSupabaseUuid(tripId),
+    queryFn: () => fetchPhotosByTripId(tripId as string),
+    queryKey: supabaseQueryKeys.tripCoverCandidates(user?.id, tripId),
   });
 }

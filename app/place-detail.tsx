@@ -48,6 +48,10 @@ import {
 } from '@/services/placeDetailDeletionRegistry';
 import { MOCK_ARCHIVE_DETAIL } from '@/constants/mockArchiveDetail';
 import { RECORD_DAY_ENTRIES } from '@/constants/mockRecordDayDetail';
+import {
+  getPlaceCategoryLabel,
+  normalizePlaceCategoryValue,
+} from '@/constants/placeCategories';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 import {
   buildVisitedAtIso,
@@ -75,6 +79,7 @@ import {
 } from '@/services/supabase/records';
 import {
   softDeletePhotos,
+  setPlaceCoverPhoto,
   uploadPlacePhotos,
   type DeletePhotosResult,
   type UploadPlacePhotoItem,
@@ -217,7 +222,8 @@ function getKoreanCategoryLabel(value?: string) {
     return '';
   }
 
-  return (key && KOREAN_CATEGORY_LABELS[key])
+  return getPlaceCategoryLabel(trimmedValue)
+    || (key && KOREAN_CATEGORY_LABELS[key])
     || (containsKorean(trimmedValue) ? trimmedValue : '장소');
 }
 
@@ -442,7 +448,8 @@ function createSupabasePlaceDetail(
   const displayableRecords = placeRecords.filter(hasDisplayableRecordContent);
 
   return {
-    categoryLabel: getParamValue(params.categoryLabel),
+    categoryLabel: getPlaceCategoryLabel(place.category)
+      || getParamValue(params.categoryLabel),
     cityName: place.city ?? getParamValue(params.cityName) ?? '',
     countryName: place.country ?? getParamValue(params.countryName) ?? '',
     dateLabel: visitedAt ?? getParamValue(params.dateLabel) ?? '',
@@ -740,7 +747,7 @@ export default function PlaceDetailScreen() {
   const params = useLocalSearchParams<PlaceDetailRouteParams>();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { canUseSupabaseUserData, user } = useAuth();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const screenWidth = Math.max(320, width);
@@ -796,6 +803,11 @@ export default function PlaceDetailScreen() {
     ],
   );
   const shouldUseSupabasePlaceDetail = isSupabaseUuid(routePlaceId);
+  const isRouteBackedDetectedPlace =
+    routeEntryPoint === 'recordDayDetail' &&
+    Boolean(routePlaceId) &&
+    Boolean(routePlaceName) &&
+    !shouldUseSupabasePlaceDetail;
   const {
     data: supabasePlaceDetailData,
     isError: isSupabasePlaceDetailError,
@@ -831,6 +843,14 @@ export default function PlaceDetailScreen() {
         return undefined;
       }
 
+      if (isRouteBackedDetectedPlace) {
+        return createRecordDayFallbackDetail(stableParams);
+      }
+
+      if (canUseSupabaseUserData) {
+        return undefined;
+      }
+
       return (
         isPlaceDetailDeleted(routePlaceId)
         ? undefined
@@ -839,7 +859,9 @@ export default function PlaceDetailScreen() {
       );
     },
     [
+      canUseSupabaseUserData,
       hasFetchedSupabasePlaceDetail,
+      isRouteBackedDetectedPlace,
       routeDayId,
       routePlaceId,
       routeTripId,
@@ -864,6 +886,7 @@ export default function PlaceDetailScreen() {
   const [heroIndex, setHeroIndex] = React.useState(0);
   const [isMoreOpen, setMoreOpen] = React.useState(false);
   const [viewerIndex, setViewerIndex] = React.useState(0);
+  const [isUpdatingCoverPhoto, setUpdatingCoverPhoto] = React.useState(false);
   const [viewerPhotoIds, setViewerPhotoIds] = React.useState<string[] | null>(null);
   const [isViewerViewOnly, setViewerViewOnly] = React.useState(false);
   const [isViewerOpen, setViewerOpen] = React.useState(false);
@@ -1903,7 +1926,7 @@ export default function PlaceDetailScreen() {
       countryName: input.countryName ?? placeInfo.countryName,
       dateLabel: nextDateLabel,
       timeLabel: input.time ?? placeInfo.timeLabel,
-      categoryLabel: input.category ?? placeInfo.categoryLabel,
+      categoryLabel: normalizePlaceCategoryValue(input.category) ?? placeInfo.categoryLabel,
     };
 
     if (shouldUseSupabasePlaceDetail) {
@@ -1911,6 +1934,7 @@ export default function PlaceDetailScreen() {
         const previousTripDayId = initialDetail.dayId || routeDayId || '';
         const nextTripDayId = input.dayId ?? previousTripDayId;
         const patch: UpdatePlacePatch = {
+          category: normalizePlaceCategoryValue(input.category) ?? null,
           city: nextPlaceInfo.cityName || null,
           country: nextPlaceInfo.countryName || null,
           name: nextPlaceInfo.placeName.trim() || placeInfo.placeName,
@@ -2036,18 +2060,86 @@ export default function PlaceDetailScreen() {
     setGridOpen(true);
   };
 
-  const handleSetCoverPhoto = (photoIndex: number) => {
-    const targetPhoto = viewerPhotos[photoIndex];
+  const handleSetCoverPhoto = async (photoId?: string) => {
+    if (!photoId || isUpdatingCoverPhoto) {
+      return;
+    }
+
+    const targetPhoto = photos.find((photo) => photo.id === photoId);
+
     if (!targetPhoto) {
       return;
     }
 
-    setPhotos((currentPhotos) => [
-      targetPhoto,
-      ...currentPhotos.filter((photo) => photo.id !== targetPhoto.id),
-    ]);
-    setHeroIndex(0);
-    setViewerIndex(0);
+    if (!shouldUseSupabasePlaceDetail) {
+      setPhotos((currentPhotos) => [
+        targetPhoto,
+        ...currentPhotos.filter((photo) => photo.id !== targetPhoto.id),
+      ]);
+      setHeroIndex(0);
+      setViewerIndex(0);
+      setGridOpen(false);
+      setGridSelectionPurpose('recordCreate');
+      return;
+    }
+
+    setUpdatingCoverPhoto(true);
+
+    try {
+      const result = await setPlaceCoverPhoto(initialDetail.placeId, photoId);
+      const reorderPhotos = (currentPhotos: PlaceDetailPhoto[] = []) => [
+        ...currentPhotos.filter((photo) => photo.id === result.coverPhotoId),
+        ...currentPhotos.filter((photo) => photo.id !== result.coverPhotoId),
+      ];
+
+      setPhotos(reorderPhotos);
+      setHeroIndex(0);
+      setViewerIndex(0);
+      setGridOpen(false);
+      setGridSelectionPurpose('recordCreate');
+      queryClient.setQueryData(
+        supabaseQueryKeys.placePhotos(user?.id, initialDetail.placeId),
+        (current: PlaceDetailPhoto[] | undefined) => reorderPhotos(current),
+      );
+      queryClient.setQueryData(
+        supabaseQueryKeys.placeDetail(user?.id, initialDetail.placeId),
+        (current: { place: PlaceRow | null; records: RecordWithPhotos[] } | undefined) =>
+          current?.place
+            ? {
+              ...current,
+              place: { ...current.place, cover_photo_id: result.coverPhotoId },
+            }
+            : current,
+      );
+
+      void Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.placePhotos(user?.id, initialDetail.placeId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.placeDetail(user?.id, initialDetail.placeId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, initialDetail.dayId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripPlaces(user?.id, initialDetail.tripId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.archivedTravelMoments(user?.id),
+        }),
+      ]).catch((error: unknown) => {
+        console.warn('[place-detail] invalidate after cover update failed', error);
+      });
+    } catch (error) {
+      console.warn('[place-detail] update cover photo failed', error);
+      Alert.alert(
+        '대표사진을 변경하지 못했어요',
+        '잠시 후 다시 시도해주세요.',
+      );
+    } finally {
+      setUpdatingCoverPhoto(false);
+    }
   };
 
   const removeDeletedPhotosFromScreen = (photoIds: string[]) => {
@@ -2126,15 +2218,7 @@ export default function PlaceDetailScreen() {
       ]),
     ];
 
-    const settledInvalidations = await Promise.allSettled(invalidations);
-
-    if (__DEV__) {
-      console.info('[photo delete] query refresh completed', {
-        queryInvalidated: settledInvalidations.every(
-          (item) => item.status === 'fulfilled',
-        ),
-      });
-    }
+    await Promise.allSettled(invalidations);
   };
 
   const runSupabasePhotoDelete = async (photoIds: string[]) => {
@@ -2183,19 +2267,7 @@ export default function PlaceDetailScreen() {
         );
       }
 
-      if (__DEV__) {
-        console.info('[photo delete] batch resolved', {
-          batchDeleteResolved: true,
-          failedCount: retryPhotoIds.length,
-          successCount: deletedPhotoIds.length,
-        });
-      }
     } catch {
-      if (__DEV__) {
-        console.info('[photo delete] batch rejected', {
-          batchDeleteRejected: true,
-        });
-      }
       Alert.alert(
         '\uC0AC\uC9C4\uC744 \uC0AD\uC81C\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
         '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
@@ -2252,13 +2324,6 @@ export default function PlaceDetailScreen() {
 
     if (targetPhotoIds.length === 0) {
       return;
-    }
-
-    if (__DEV__) {
-      console.info('[photo delete] batch invoked', {
-        batchDeleteInvoked: true,
-        selectedPhotoIdCount: targetPhotoIds.length,
-      });
     }
 
     if (shouldUseSupabasePlaceDetail) {
@@ -2527,9 +2592,7 @@ export default function PlaceDetailScreen() {
         onRequestDeletePhotos={requestDeleteGridPhotos}
         onPressPhoto={(index) => {
           if (gridSelectionPurpose === 'coverSelect') {
-            handleSetCoverPhoto(index);
-            setGridOpen(false);
-            setGridSelectionPurpose('recordCreate');
+            void handleSetCoverPhoto(photos[index]?.id);
             return;
           }
 
@@ -2578,7 +2641,7 @@ export default function PlaceDetailScreen() {
             key: 'cover',
             icon: 'image-outline',
             label: '\uB300\uD45C\uC0AC\uC9C4 \uBCC0\uACBD',
-            onPress: (index) => handleSetCoverPhoto(index),
+            onPress: (index) => void handleSetCoverPhoto(viewerPhotos[index]?.id),
           },
           {
             key: 'info',
@@ -2635,9 +2698,7 @@ export default function PlaceDetailScreen() {
             icon: 'image-outline',
             label: '\uB300\uD45C\uC0AC\uC9C4 \uBCC0\uACBD',
             onPress: (index) => {
-              const targetPhoto = viewerPhotos[index];
-              const photoIndex = photos.findIndex((photo) => photo.id === targetPhoto?.id);
-              handleSetCoverPhoto(photoIndex);
+              void handleSetCoverPhoto(viewerPhotos[index]?.id);
             },
           },
           {
@@ -3046,8 +3107,6 @@ function PhotoGridModal({
   const dismissPendingRef = React.useRef(false);
   const onDidDismissRef = React.useRef(onDidDismiss);
   const previousClearSelectionSignalRef = React.useRef(clearSelectionSignal);
-  const gridContainerWidthRef = React.useRef(0);
-  const addTileLayoutRef = React.useRef({ height: 0, width: 0 });
   const photoGridContentWidth = Math.max(0, width - (Spacing.xl * 2));
   const photoGridTileSize = Math.floor(
     (
@@ -3068,19 +3127,6 @@ function PhotoGridModal({
   React.useEffect(() => {
     onDidDismissRef.current = onDidDismiss;
   }, [onDidDismiss]);
-
-  const logPhotoGridLayout = React.useCallback(() => {
-    if (!__DEV__) {
-      return;
-    }
-
-    console.info('[place photo grid] layout', {
-      addTileHeight: addTileLayoutRef.current.height,
-      addTileWidth: addTileLayoutRef.current.width,
-      gridContainerWidth: gridContainerWidthRef.current,
-      photoCount: photos.length,
-    });
-  }, [photos.length]);
 
   React.useEffect(() => {
     if (visible) {
@@ -3165,14 +3211,6 @@ function PhotoGridModal({
       return;
     }
 
-    if (__DEV__) {
-      console.info('[photo delete] multi delete pressed', {
-        confirmationShown: true,
-        multiDeletePressed: true,
-        selectedCount: selectedPhotoIds.length,
-        selectedPhotoIdCount: targetPhotoIds.length,
-      });
-    }
     setPendingDeletePhotoIds(targetPhotoIds);
   };
 
@@ -3259,21 +3297,10 @@ function PhotoGridModal({
             styles.photoGrid,
             { paddingBottom: showSelectionActionBar ? insets.bottom + 96 : Spacing.xl },
           ]}
-          onLayout={(event) => {
-            gridContainerWidthRef.current = event.nativeEvent.layout.width;
-            logPhotoGridLayout();
-          }}
         >
           {showsAddPhotoTile ? (
             <Pressable
               accessibilityRole="button"
-              onLayout={(event) => {
-                addTileLayoutRef.current = {
-                  height: event.nativeEvent.layout.height,
-                  width: event.nativeEvent.layout.width,
-                };
-                logPhotoGridLayout();
-              }}
               onPress={onAddPhoto}
               style={[styles.gridPhoto, photoGridTileStyle, styles.gridAddPhoto]}
             >
@@ -3380,13 +3407,6 @@ function PhotoGridModal({
                   disabled={isDeleting}
                   onPress={() => {
                     const targetPhotoIds = [...pendingDeletePhotoIds];
-
-                    if (__DEV__) {
-                      console.info('[photo delete] confirmation accepted', {
-                        confirmationAccepted: true,
-                        selectedPhotoIdCount: targetPhotoIds.length,
-                      });
-                    }
                     onRequestDeletePhotos(targetPhotoIds);
                   }}
                   style={[

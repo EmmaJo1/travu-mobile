@@ -139,6 +139,7 @@ export interface Database {
       };
       trip_days: {
         Row: {
+          cover_photo_id: string | null;
           id: string;
           trip_id: string;
           date: string;
@@ -148,6 +149,7 @@ export interface Database {
           deleted_at: string | null;
         };
         Insert: {
+          cover_photo_id?: string | null;
           id?: string;
           trip_id: string;
           date: string;
@@ -157,7 +159,15 @@ export interface Database {
           deleted_at?: string | null;
         };
         Update: Partial<Database['public']['Tables']['trip_days']['Insert']>;
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: 'trip_days_cover_photo_id_fkey';
+            columns: ['cover_photo_id'];
+            isOneToOne: false;
+            referencedRelation: 'photos';
+            referencedColumns: ['id'];
+          },
+        ];
       };
       trip_destinations: {
         Row: {
@@ -204,6 +214,7 @@ export interface Database {
           memo: string | null;
           address: string | null;
           city: string | null;
+          category: 'attraction' | 'restaurant' | 'cafe' | 'lodging' | 'shopping' | 'other' | null;
           country: string | null;
           city_ko: string | null;
           country_ko: string | null;
@@ -231,6 +242,7 @@ export interface Database {
           memo?: string | null;
           address?: string | null;
           city?: string | null;
+          category?: Database['public']['Tables']['places']['Row']['category'];
           country?: string | null;
           city_ko?: string | null;
           country_ko?: string | null;
@@ -386,6 +398,36 @@ export interface Database {
           trip_cover_photo_id: string | null;
           trip_id: string;
           updated_place_count: number;
+        }[];
+      };
+      set_place_cover_photo: {
+        Args: {
+          p_photo_id: string;
+          p_place_id: string;
+        };
+        Returns: {
+          cover_photo_id: string;
+          place_id: string;
+        }[];
+      };
+      set_trip_cover_photo: {
+        Args: {
+          p_photo_id: string;
+          p_trip_id: string;
+        };
+        Returns: {
+          cover_photo_id: string;
+          trip_id: string;
+        }[];
+      };
+      set_trip_day_cover_photo: {
+        Args: {
+          p_photo_id: string;
+          p_trip_day_id: string;
+        };
+        Returns: {
+          cover_photo_id: string;
+          trip_day_id: string;
         }[];
       };
       soft_delete_photo: {

@@ -46,12 +46,14 @@ export type PlaceSearchModalProps = PlaceSearchContext & {
   onClose: () => void;
   onBack?: () => void;
   title?: string;
+  showFixtureSuggestions?: boolean;
 };
 
 export type PlaceSearchContentProps = PlaceSearchContext & {
   selectedPlace?: PlaceOption | null;
   onSelectPlace: (place: PlaceOption) => void;
   autoFocus?: boolean;
+  showFixtureSuggestions?: boolean;
 };
 
 export type PlaceSearchResult = PlaceOption & {
@@ -353,6 +355,7 @@ export function PlaceSearchContent({
   selectedPlace,
   onSelectPlace,
   autoFocus = false,
+  showFixtureSuggestions = false,
 }: PlaceSearchContentProps) {
   const [searchText, setSearchText] = React.useState('');
 
@@ -369,13 +372,14 @@ export function PlaceSearchContent({
   );
 
   const trimmedSearchText = searchText.trim();
+  const canShowFixtureSuggestions = __DEV__ && showFixtureSuggestions;
   const recommendedPlaces = React.useMemo(
-    () => getRecommendedPlacesByTripContext(context),
-    [context],
+    () => canShowFixtureSuggestions ? getRecommendedPlacesByTripContext(context) : [],
+    [canShowFixtureSuggestions, context],
   );
   const searchResults = React.useMemo(
-    () => searchPlacesByTripContext(trimmedSearchText, context),
-    [context, trimmedSearchText],
+    () => canShowFixtureSuggestions ? searchPlacesByTripContext(trimmedSearchText, context) : [],
+    [canShowFixtureSuggestions, context, trimmedSearchText],
   );
   const selectedPlaceId = selectedPlace?.id ?? selectedPlace?.placeId;
   const hasSearchText = trimmedSearchText.length > 0;
@@ -440,19 +444,23 @@ export function PlaceSearchContent({
         ) : (
           <View style={styles.emptyState}>
             <Feather name="search" size={24} color={Colors.foundation.grey300} />
-            <Text style={styles.emptyTitle}>검색 결과가 없어요</Text>
+            <Text style={styles.emptyTitle}>
+              {hasSearchText ? '검색 결과가 없어요' : '장소명을 입력해 주세요'}
+            </Text>
             <Text style={styles.emptyDescription}>
               입력한 이름으로 장소를 직접 추가할 수 있어요
             </Text>
-            <Pressable
-              accessibilityRole="button"
-              style={styles.manualButton}
-              onPress={handleManualSelect}
-            >
-              <Text style={styles.manualButtonText}>
-                “{trimmedSearchText}” 직접 추가하기
-              </Text>
-            </Pressable>
+            {hasSearchText ? (
+              <Pressable
+                accessibilityRole="button"
+                style={styles.manualButton}
+                onPress={handleManualSelect}
+              >
+                <Text style={styles.manualButtonText}>
+                  “{trimmedSearchText}” 직접 추가하기
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         )}
       </ScrollView>
@@ -467,6 +475,7 @@ export default function PlaceSearchModal({
   onClose,
   onBack,
   title = '장소 검색',
+  showFixtureSuggestions = false,
   ...context
 }: PlaceSearchModalProps) {
   const handleSelectPlace = (place: PlaceOption) => {
@@ -510,6 +519,7 @@ export default function PlaceSearchModal({
             selectedPlace={selectedPlace}
             onSelectPlace={handleSelectPlace}
             autoFocus
+            showFixtureSuggestions={showFixtureSuggestions}
           />
         </KeyboardAvoidingView>
       </SafeAreaView>

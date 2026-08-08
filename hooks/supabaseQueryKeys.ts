@@ -28,6 +28,15 @@ export const supabaseQueryKeys = {
     ['supabase', 'records', 'trip', userId ?? 'no-user', tripId ?? 'no-trip'] as const,
   tripPhotos: (userId?: string | null, tripId?: string | null) =>
     ['supabase', 'photos', 'trip', userId ?? 'no-user', tripId ?? 'no-trip'] as const,
+  tripCoverCandidates: (userId?: string | null, tripId?: string | null) =>
+    [
+      'supabase',
+      'photos',
+      'trip',
+      userId ?? 'no-user',
+      tripId ?? 'no-trip',
+      'cover-candidates',
+    ] as const,
   placePhotos: (userId?: string | null, placeId?: string | null) =>
     ['supabase', 'photos', 'place', userId ?? 'no-user', placeId ?? 'no-place'] as const,
 };

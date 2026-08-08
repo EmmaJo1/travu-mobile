@@ -58,7 +58,6 @@ const EDGE_RESISTANCE = 0.32;
 const PAGE_MAX_WIDTH = 430;
 const DESIGN_WIDTH = 390;
 const DESIGN_HEIGHT = 844;
-const MOCK_SAVE_DELAY_MS = 650;
 const BACKGROUND = Colors.warm.white;
 const GREY_200 = '#C3C3C3';
 const GREY_700 = '#595959';
@@ -261,10 +260,7 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
     setIsSaving(true);
 
     try {
-      await Promise.all([
-        saveSelectedPhotoImportResults(selectedCandidateIds),
-        wait(MOCK_SAVE_DELAY_MS),
-      ]);
+      await saveSelectedPhotoImportResults(selectedCandidateIds);
       if (!(await persistOnboardingResult('completed'))) {
         setIsSaving(false);
         return;
@@ -1248,12 +1244,6 @@ function ResultTripCard({
       </Pressable>
     </Pressable>
   );
-}
-
-function wait(ms: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 function useDebouncedValue<T>(value: T, delayMs: number) {

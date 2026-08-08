@@ -100,8 +100,20 @@ export interface EnsuredTripPhotoCovers {
   updatedPlaceCount: number;
 }
 
+export interface SetPlaceCoverPhotoResult {
+  coverPhotoId: string;
+  placeId: string;
+}
+
+export interface SetTripCoverPhotoResult {
+  coverPhotoId: string;
+  tripId: string;
+}
+
 export type TripWithPhotoCover<T> = T & {
   active_photo_count?: number;
+  book_cover_display_url?: string | null;
+  book_cover_photo_id?: string | null;
   cover_display_url?: string | null;
 };
 
@@ -1006,6 +1018,50 @@ export async function ensurePhotoCoversForTrip(
   };
 }
 
+export async function setPlaceCoverPhoto(
+  placeId: string,
+  photoId: string,
+): Promise<SetPlaceCoverPhotoResult> {
+  const { data, error } = await supabase.rpc('set_place_cover_photo', {
+    p_photo_id: photoId,
+    p_place_id: placeId,
+  });
+
+  throwIfError(error);
+  const result = data?.[0];
+
+  if (!result?.cover_photo_id || !result.place_id) {
+    throw new Error('The place cover photo could not be updated.');
+  }
+
+  return {
+    coverPhotoId: result.cover_photo_id,
+    placeId: result.place_id,
+  };
+}
+
+export async function setTripCoverPhoto(
+  tripId: string,
+  photoId: string,
+): Promise<SetTripCoverPhotoResult> {
+  const { data, error } = await supabase.rpc('set_trip_cover_photo', {
+    p_photo_id: photoId,
+    p_trip_id: tripId,
+  });
+
+  throwIfError(error);
+  const result = data?.[0];
+
+  if (!result?.cover_photo_id || !result.trip_id) {
+    throw new Error('The trip cover photo could not be updated.');
+  }
+
+  return {
+    coverPhotoId: result.cover_photo_id,
+    tripId: result.trip_id,
+  };
+}
+
 export async function enrichTripsWithPhotoCovers<
   T extends { cover_photo_id: string | null; id: string },
 >(trips: T[]): Promise<TripWithPhotoCover<T>[]> {
@@ -1071,6 +1127,18 @@ export async function enrichTripsWithPhotoCovers<
   });
 }
 
+export async function enrichTripsWithBookCovers<
+  T extends { cover_photo_id: string | null; id: string },
+>(trips: T[]): Promise<TripWithPhotoCover<T>[]> {
+  const tripsWithPhotoCovers = await enrichTripsWithPhotoCovers(trips);
+
+  return tripsWithPhotoCovers.map((trip) => ({
+    ...trip,
+    book_cover_display_url: trip.cover_display_url ?? null,
+    book_cover_photo_id: trip.cover_photo_id,
+  }));
+}
+
 async function executePhotoDelete(photoId: string): Promise<DeletePhotoResult> {
   const userId = await getCurrentUserId();
   const { data, error } = await supabase
@@ -1096,6 +1164,15 @@ async function executePhotoDelete(photoId: string): Promise<DeletePhotoResult> {
     }
   }
 
+  let tripCoverPhotoId = data.trip_cover_photo_id;
+
+  try {
+    const ensuredCovers = await ensurePhotoCoversForTrip(data.trip_id);
+    tripCoverPhotoId = ensuredCovers.tripCoverPhotoId;
+  } catch (error) {
+    console.warn('[photo delete] trip cover reconciliation failed', error);
+  }
+
   return {
     alreadyDeleted: data.already_deleted,
     photoId: data.photo_id,
@@ -1105,7 +1182,7 @@ async function executePhotoDelete(photoId: string): Promise<DeletePhotoResult> {
     storageDeleteFailed: storageDeleteStatus === 'failed',
     storageDeleteStatus,
     storageDeleteSucceeded: storageDeleteStatus === 'deleted',
-    tripCoverPhotoId: data.trip_cover_photo_id,
+    tripCoverPhotoId,
     tripDayId: data.trip_day_id,
     tripId: data.trip_id,
   };

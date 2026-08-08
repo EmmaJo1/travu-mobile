@@ -23,6 +23,11 @@ import Text from '@/components/common/AppText';
 import { PlaceSearchContent, type PlaceOption } from '@/components/common/PlaceSearchModal';
 import ManualPlaceEntryView from '@/components/record/ManualPlaceEntryView';
 import TimeWheelPickerModal from '@/components/record/TimeWheelPickerModal';
+import {
+  getPlaceCategoryLabel,
+  normalizePlaceCategoryValue,
+  PLACE_CATEGORY_OPTIONS,
+} from '@/constants/placeCategories';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 import type { SelectedPlace } from '@/services/placeSearch/types';
 import {
@@ -199,7 +204,6 @@ type PickerPage =
 
 type CalendarView = 'days' | 'years' | 'months';
 
-const CATEGORIES = ['관광명소', '음식점', '카페', '숙소', '쇼핑', '기타'];
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'] as const;
 const CALENDAR_MONTHS = Array.from({ length: 12 }, (_, index) => index);
 const CALENDAR_SWIPE_THRESHOLD = 40;
@@ -364,8 +368,8 @@ export default function PlaceCreateModal({
   onDelete,
   initialValue,
   mode = 'create',
-  tripId = 'mock-trip',
-  dayId = 'mock-day',
+  tripId = '',
+  dayId = '',
   tripDestinationName,
   tripDestinationCountry,
   tripLatitude,
@@ -448,7 +452,7 @@ export default function PlaceCreateModal({
     setSelectedPlace(nextPlace);
     setPlace(nextPlace?.placeName ?? '');
     setTime(initialValue?.time ?? '');
-    setCategory(initialValue?.category ?? '');
+    setCategory(normalizePlaceCategoryValue(initialValue?.category) ?? '');
     setCity(nextPlace?.cityName ?? '');
     setText(initialValue?.text ?? '');
     setOptionalRecordExpanded(Boolean(initialValue?.text?.trim()));
@@ -473,7 +477,7 @@ export default function PlaceCreateModal({
       setSelectedPlace(nextPlace);
       setPlace(nextPlace?.placeName ?? '');
       setTime(initialValue?.time ?? '');
-      setCategory(initialValue?.category ?? '');
+      setCategory(normalizePlaceCategoryValue(initialValue?.category) ?? '');
       setCity(nextPlace?.cityName ?? '');
       setText(initialValue?.text ?? '');
       setOptionalRecordExpanded(Boolean(initialValue?.text?.trim()));
@@ -624,6 +628,18 @@ export default function PlaceCreateModal({
 
   const canSubmit =
     !isSubmitting &&
+    (mode !== 'edit' ||
+      (selectedPlace?.placeName ?? place).trim() !==
+        (initialValue?.placeName ?? initialValue?.place ?? '').trim() ||
+      time.trim() !== (initialValue?.time ?? '').trim() ||
+      category !== (normalizePlaceCategoryValue(initialValue?.category) ?? '') ||
+      city.trim() !== (initialValue?.cityName ?? initialValue?.city ?? '').trim() ||
+      text.trim() !== (initialValue?.text ?? '').trim() ||
+      selectedDay?.id !== (initialValue?.dayId ?? selectedDayId) ||
+      photoUris.join('|') !== (initialValue?.photoUris ?? []).join('|') ||
+      photoSources.length !== (initialValue?.photoSources ?? []).length ||
+      photoAssets.map((asset) => asset.uri).join('|') !==
+        (initialValue?.photoAssets ?? []).map((asset) => asset.uri).join('|')) &&
     (selectedPlace?.placeName ?? place).trim().length > 0 &&
     (availableDayOptions.length === 0 || Boolean(selectedDay)) &&
     (!requireTripDay || Boolean(selectedDay));
@@ -950,7 +966,7 @@ export default function PlaceCreateModal({
                     label="카테고리"
                     onPress={() => setPickerPage('category')}
                     placeholder="카테고리를 선택하세요"
-                    value={category}
+                    value={getPlaceCategoryLabel(category)}
                   />
                 ) : null}
               </ScrollView>
@@ -1022,21 +1038,21 @@ export default function PlaceCreateModal({
 
           {pickerPage === 'category' && (
             <View style={styles.categoryList}>
-              {CATEGORIES.map((item) => (
+              {PLACE_CATEGORY_OPTIONS.map((item) => (
                 <TouchableOpacity
-                  key={item}
+                  key={item.value}
                   activeOpacity={0.7}
                   onPress={() => {
-                    setCategory(item);
+                    setCategory(item.value);
                     setPickerPage('form');
                   }}
                   style={[
                     styles.categoryOption,
-                    category === item && styles.categoryOptionSelected,
+                    category === item.value && styles.categoryOptionSelected,
                   ]}
                 >
-                  <Text style={styles.categoryText}>{item}</Text>
-                  {category === item && (
+                  <Text style={styles.categoryText}>{item.label}</Text>
+                  {category === item.value && (
                     <Ionicons color={Colors.foundation.black} name="checkmark" size={18} />
                   )}
                 </TouchableOpacity>

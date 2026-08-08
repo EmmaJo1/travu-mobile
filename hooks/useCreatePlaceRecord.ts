@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import type { PlaceCreateInput } from '@/components/record/PlaceCreateModal';
+import { normalizePlaceCategoryValue } from '@/constants/placeCategories';
 import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
 import { useAuth } from '@/providers/AuthProvider';
 import {
@@ -46,6 +47,7 @@ export function useCreatePlaceRecord() {
       const place = await createPlaceForTripDay({
         address: input.formattedAddress ?? null,
         city: input.cityName ?? input.city ?? null,
+        category: normalizePlaceCategoryValue(input.category) ?? null,
         country: input.countryName ?? null,
         googlePlaceId: input.googlePlaceId ?? null,
         latitude: input.latitude ?? null,

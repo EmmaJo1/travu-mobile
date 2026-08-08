@@ -162,12 +162,3 @@ export interface PhotoImportTripCandidate {
   debugMetadata?: PhotoImportCandidateDebugMetadata;
   initiallySelected?: boolean;
 }
-
-export interface PhotoImportProvider {
-  requestPhotoLibraryAccess(): Promise<PhotoLibraryPermissionResult>;
-  startAnalysis(): Promise<void>;
-  getStatus(): Promise<PhotoImportStatus>;
-  getCandidates(): Promise<PhotoImportTripCandidate[]>;
-  saveCandidates(candidateIds: string[]): Promise<void>;
-  skipOnboarding(): Promise<void>;
-}

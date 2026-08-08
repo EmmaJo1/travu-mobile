@@ -22,7 +22,6 @@ import type { PhotoImportTripCandidate } from '@/services/photoImport/types';
 
 const BACKGROUND = Colors.light.bgScreen;
 const GREY_700 = '#595959';
-const MOCK_SAVE_DELAY_MS = 650;
 const CARD_HEIGHT = 99;
 const CARD_GAP = 8;
 const LIST_TOP = 195;
@@ -175,10 +174,7 @@ export default function DetectedTrips() {
     setIsSaving(true);
 
     try {
-      await Promise.all([
-        saveSelectedPhotoImportResults(selectedCandidateIds),
-        wait(MOCK_SAVE_DELAY_MS),
-      ]);
+      await saveSelectedPhotoImportResults(selectedCandidateIds);
       router.replace('/(tabs)' as Href);
     } catch (error) {
       setIsSaving(false);
@@ -283,12 +279,6 @@ export default function DetectedTrips() {
 
 function CandidateSeparator() {
   return <View style={styles.cardSeparator} />;
-}
-
-function wait(ms: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 const styles = StyleSheet.create({

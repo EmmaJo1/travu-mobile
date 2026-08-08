@@ -58,15 +58,9 @@ function AppStack({ routeMode }: { routeMode: Exclude<AuthRouteMode, 'resolving'
       </Stack.Protected>
       <Stack.Protected guard={isAppRoute}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-        <Stack.Screen name="button-test" options={{ title: 'Button 테스트', headerBackTitle: '뒤로' }} />
-        <Stack.Screen name="components-showcase" options={{ headerShown: false }} />
-        <Stack.Screen name="component-test" options={{ title: 'Component Test', headerShown: false }} />
         <Stack.Screen name="settings" options={{ headerShown: false }} />
         <Stack.Screen name="legal/[document]" options={{ headerShown: false }} />
         <Stack.Screen name="profile-edit" options={{ headerShown: false }} />
-        <Stack.Screen name="day-record-1207-2245" options={{ headerShown: false }} />
-        <Stack.Screen name="figma-node-1207-2245" options={{ headerShown: false }} />
         <Stack.Screen name="place-detail" options={{ headerShown: false }} />
         <Stack.Screen name="day-archive-detail" options={{ headerShown: false }} />
         <Stack.Screen name="find-trips-start" options={{ headerShown: false }} />

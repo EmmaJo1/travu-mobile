@@ -1,4 +1,5 @@
 import type { PlaceEntry } from '@/components/trip/PlaceEntryCard';
+import { getPlaceCategoryLabel } from '@/constants/placeCategories';
 import type { ResolvedPhotoRow } from '@/services/supabase/photos';
 import type { PlaceRow } from '@/services/supabase/places';
 import type { RecordRow } from '@/services/supabase/records';
@@ -48,6 +49,7 @@ export function mapSupabasePlacesToPlaceEntries(
     const text = firstRecord?.text ?? place.memo ?? undefined;
 
     return {
+      category: getPlaceCategoryLabel(place.category) || undefined,
       city: place.city ?? undefined,
       cityName: place.city ?? undefined,
       countryName: place.country ?? undefined,

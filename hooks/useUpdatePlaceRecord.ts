@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import type { PlaceCreateInput } from '@/components/record/PlaceCreateModal';
+import { normalizePlaceCategoryValue } from '@/constants/placeCategories';
 import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
 import { useAuth } from '@/providers/AuthProvider';
 import { updatePlace } from '@/services/supabase/places';
@@ -44,6 +45,7 @@ export function useUpdatePlaceRecord() {
       const place = await updatePlace(input.placeId, {
         address: input.formattedAddress ?? null,
         city: input.cityName ?? input.city ?? null,
+        category: normalizePlaceCategoryValue(input.category) ?? null,
         country: input.countryName ?? null,
         latitude: input.latitude ?? null,
         longitude: input.longitude ?? null,

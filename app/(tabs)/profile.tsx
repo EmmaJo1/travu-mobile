@@ -1,7 +1,15 @@
 import { useRouter, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useMemo, useState } from 'react';
-import { Alert, Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  Alert,
+  Image,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
@@ -94,11 +102,12 @@ export default function ProfileScreen() {
   const [deletedTripIds, setDeletedTripIds] = useState<string[]>([]);
   const savedTrips = useSavedMyPageTrips();
   const { profile } = useUserProfile();
-  const { canUseSupabaseUserData, user } = useAuth();
+  const { canUseSupabaseUserData } = useAuth();
   const {
     data: supabaseTrips,
     isError: isSupabaseTripsError,
     isLoading: isSupabaseTripsLoading,
+    isRefetching: isSupabaseTripsRefetching,
     refetch: refetchSupabaseTrips,
   } = useMyTrips();
   const deleteTripMutation = useDeleteTrip();
@@ -132,7 +141,7 @@ export default function ProfileScreen() {
   );
   const groupedTrips = useMemo(() => groupTripsByYear(sortedTrips), [sortedTrips]);
 
-  const handleRequestDeleteTrip = (tripId: string, tripTitle?: string) => {
+  const handleRequestDeleteTrip = (tripId: string) => {
     Alert.alert(
       '삭제하시겠습니까?',
       '이 여행 기록은 삭제 후 복구할 수 없어요.',
@@ -147,23 +156,11 @@ export default function ProfileScreen() {
           onPress: () => {
             const isSupabaseTrip = supabaseTripIds.has(tripId);
 
-            console.warn('[ProfileScreen] delete trip requested', {
-              isSupabaseTrip,
-              tripTitle,
-              tripId,
-              userId: user?.id,
-            });
-
             if (isSupabaseTrip) {
               deleteTripMutation.mutate(tripId, {
                 onError: (error) => {
                   const message = getErrorMessage(error);
-                  console.warn('[ProfileScreen] delete trip mutation failed', {
-                    message,
-                    tripTitle,
-                    tripId,
-                    userId: user?.id,
-                  });
+                  console.warn('[ProfileScreen] delete trip mutation failed', error);
                   Alert.alert(
                     '여행을 삭제하지 못했어요',
                     `잠시 후 다시 시도해주세요.\n개발 정보: ${message}`,
@@ -201,6 +198,12 @@ export default function ProfileScreen() {
         style={styles.scroll}
         contentContainerStyle={styles.content}
         nestedScrollEnabled
+        refreshControl={canUseSupabaseUserData ? (
+          <RefreshControl
+            refreshing={isSupabaseTripsRefetching}
+            onRefresh={() => void refetchSupabaseTrips()}
+          />
+        ) : undefined}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.profileBlock}>
@@ -284,7 +287,7 @@ export default function ProfileScreen() {
 
                       <TripListCardList
                         trips={yearTrips.map(toTripListItem)}
-                        onLongPressTrip={(trip) => handleRequestDeleteTrip(trip.id, trip.title)}
+                        onLongPressTrip={(trip) => handleRequestDeleteTrip(trip.id)}
                         onPressTrip={(trip) => {
                           router.push({
                             pathname: '/day-archive-detail',

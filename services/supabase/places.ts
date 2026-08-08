@@ -16,12 +16,14 @@ export interface CreatePlaceForTripDayInput {
   tripDayId?: string | null;
   tripId: string;
   visitedAt?: string | null;
+  category?: PlaceRow['category'];
 }
 
 export type UpdatePlacePatch = Pick<
   TablesUpdate<'places'>,
   | 'address'
   | 'city'
+  | 'category'
   | 'country'
   | 'custom_name'
   | 'latitude'
@@ -113,6 +115,7 @@ export async function createPlaceForTripDay(
   const payload: TablesInsert<'places'> = {
     address: input.address ?? null,
     city: input.city ?? null,
+    category: input.category ?? null,
     country: input.country ?? null,
     google_place_id: input.googlePlaceId ?? null,
     latitude: input.latitude ?? null,

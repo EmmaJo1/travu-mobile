@@ -9,6 +9,7 @@ import {
   type TripDestinationInput,
 } from '@/services/supabase/tripDestinations';
 import {
+  enrichTripsWithBookCovers,
   enrichTripsWithPhotoCovers,
   type TripWithPhotoCover,
 } from '@/services/supabase/photos';
@@ -166,7 +167,7 @@ export async function fetchMyTrips(): Promise<TripRow[]> {
 
   const { data, error } = await listTripsByUser(authData.user.id);
   throwIfError(error);
-  return enrichTripsWithPhotoCovers(data ?? []);
+  return enrichTripsWithBookCovers(data ?? []);
 }
 
 export async function fetchTripById(tripId: string): Promise<TripRow | null> {
@@ -228,7 +229,12 @@ export async function fetchActiveTrip(): Promise<TripRow | null> {
     });
   }
 
-  return selectedTrip;
+  if (!selectedTrip) {
+    return null;
+  }
+
+  const [tripWithCover] = await enrichTripsWithPhotoCovers([selectedTrip]);
+  return tripWithCover ?? selectedTrip;
 }
 
 export async function completeActiveTrip(): Promise<TripRow> {
