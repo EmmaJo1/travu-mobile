@@ -17,9 +17,21 @@ import {
   evaluateTripActivityForHome,
   getCurrentLocalDateKey,
 } from '@/utils/tripActivity';
+import { drainPendingPhotoStorageCleanup } from '@/services/supabase/photoStorageCleanup';
 
 export type TripRow = TripWithPhotoCover<Tables<'trips'>>;
-export type SoftDeletedTrip = Pick<TripRow, 'deleted_at' | 'id' | 'updated_at'>;
+export interface SoftDeletedTrip {
+  alreadyDeleted: boolean;
+  deletedAt: string;
+  deletedDestinationCount: number;
+  deletedPhotoCount: number;
+  deletedPlaceCount: number;
+  deletedRecordCount: number;
+  deletedRecordPhotoCount: number;
+  deletedTripDayCount: number;
+  id: string;
+  storageCleanupIncomplete: boolean;
+}
 
 export class ActiveTripExistsError extends Error {
   constructor() {
@@ -562,99 +574,34 @@ export async function updateActiveTripDestination(
 }
 
 export async function softDeleteTrip(tripId: string): Promise<SoftDeletedTrip> {
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  throwIfError(sessionError);
-
-  const { data: authData, error: authError } = await supabase.auth.getUser();
-  throwIfError(authError);
-
-  const sessionUserId = sessionData.session?.user.id;
-  const authUserId = authData.user?.id;
-
-  console.warn('[softDeleteTrip] session check', {
-    getSessionUserId: sessionUserId,
-    getUserUserId: authUserId,
-    idsMatch: Boolean(sessionUserId && authUserId && sessionUserId === authUserId),
-    tripId,
+  const { data, error } = await supabase.rpc('soft_delete_trip_tree', {
+    p_trip_id: tripId,
   });
+  throwIfError(error);
 
-  if (!sessionData.session || !sessionUserId) {
-    throw new Error('Login session is required.');
+  const result = data?.[0];
+  if (!result) {
+    throw new Error('The trip could not be deleted.');
   }
 
-  if (!authData.user || !authUserId) {
-    throw new Error('Login user is required.');
-  }
-
-  if (sessionUserId !== authUserId) {
-    throw new Error('Login session user does not match current user.');
-  }
-
-  if (!authData.user) {
-    throw new Error('로그인이 필요합니다.');
-  }
-
-  const { data: targetTrip, error: targetError } = await supabase
-    .from('trips')
-    .select('id,user_id,deleted_at')
-    .eq('id', tripId)
-    .is('deleted_at', null)
-    .maybeSingle();
-
-  if (targetError) {
-    console.warn('[softDeleteTrip] target lookup failed', {
-      code: targetError.code,
-      details: targetError.details,
-      hint: targetError.hint,
-      message: targetError.message,
-      tripId,
-      userId: authUserId,
+  const storageCleanup = await drainPendingPhotoStorageCleanup();
+  if (storageCleanup.incomplete) {
+    console.warn('[softDeleteTrip] photo storage cleanup incomplete', {
+      attemptedObjectCount: storageCleanup.attemptedObjectCount,
+      batchCount: storageCleanup.batchCount,
     });
-    throw new Error(targetError.message);
-  }
-
-  if (!targetTrip) {
-    throw new Error('Could not find a deletable trip for the current user.');
-  }
-
-  const timestamp = new Date().toISOString();
-  const payload = {
-    deleted_at: timestamp,
-    updated_at: timestamp,
-  };
-
-  console.warn('[softDeleteTrip] target and payload check', {
-    payloadFields: Object.keys(payload),
-    targetDeletedAt: targetTrip.deleted_at,
-    targetTripId: targetTrip.id,
-    targetUserId: targetTrip.user_id,
-    tripId,
-    userId: authUserId,
-    userIdMatchesTarget: targetTrip.user_id === authUserId,
-  });
-
-  const { error } = await supabase
-    .from('trips')
-    .update(payload)
-    .eq('id', tripId)
-    .eq('user_id', authUserId)
-    .is('deleted_at', null);
-
-  if (error) {
-    console.warn('[softDeleteTrip] update failed', {
-      code: error.code,
-      details: error.details,
-      hint: error.hint,
-      message: error.message,
-      tripId,
-      userId: authUserId,
-    });
-    throw new Error(error.message);
   }
 
   return {
-    deleted_at: timestamp,
-    id: tripId,
-    updated_at: timestamp,
+    alreadyDeleted: result.already_deleted,
+    deletedAt: result.deleted_at,
+    deletedDestinationCount: result.deleted_destination_count,
+    deletedPhotoCount: result.deleted_photo_count,
+    deletedPlaceCount: result.deleted_place_count,
+    deletedRecordCount: result.deleted_record_count,
+    deletedRecordPhotoCount: result.deleted_record_photo_count,
+    deletedTripDayCount: result.deleted_trip_day_count,
+    id: result.trip_id,
+    storageCleanupIncomplete: storageCleanup.incomplete,
   };
 }

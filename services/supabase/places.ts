@@ -199,3 +199,18 @@ export async function softDeletePlace(
     updated_at: data.updated_at,
   };
 }
+
+export async function softDeletePlaceTree(placeId: string) {
+  const { data, error } = await supabase.rpc('soft_delete_place_tree', {
+    p_place_id: placeId,
+  });
+
+  throwIfError(error);
+
+  const result = data?.[0];
+  if (!result) {
+    throw new Error('The place could not be deleted.');
+  }
+
+  return result;
+}

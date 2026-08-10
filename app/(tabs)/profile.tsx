@@ -166,10 +166,17 @@ export default function ProfileScreen() {
                     `잠시 후 다시 시도해주세요.\n개발 정보: ${message}`,
                   );
                 },
-                onSuccess: () => {
+                onSuccess: (result) => {
                   setDeletedTripIds((current) =>
                     current.includes(tripId) ? current : [...current, tripId],
                   );
+
+                  if (result.storageCleanupIncomplete) {
+                    Alert.alert(
+                      '\uC5EC\uD589\uC740 \uC0AD\uC81C\uB410\uC5B4\uC694',
+                      '\uC77C\uBD80 \uC0AC\uC9C4 \uD30C\uC77C \uC815\uB9AC\uAC00 \uB0A8\uC544 \uC788\uC5B4 \uB2E4\uC74C \uC571 \uC2E4\uD589 \uB54C \uC790\uB3D9\uC73C\uB85C \uB2E4\uC2DC \uC815\uB9AC\uD569\uB2C8\uB2E4.',
+                    );
+                  }
                 },
               });
               return;

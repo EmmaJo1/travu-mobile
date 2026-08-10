@@ -18,6 +18,7 @@ import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { PhotoImportFlowProvider } from '@/providers/PhotoImportFlowProvider';
 import QueryProvider from '@/providers/QueryProvider';
 import { UserProfileProvider } from '@/providers/UserProfileProvider';
+import { drainPendingPhotoStorageCleanup } from '@/services/supabase/photoStorageCleanup';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -84,6 +85,7 @@ function AuthenticatedApp() {
     isDevBypass,
     profile,
     profileStatus,
+    user,
   } = useAuth();
   const routeMode = resolveAuthRouteMode({
     initializationStatus,
@@ -95,6 +97,32 @@ function AuthenticatedApp() {
   const [laidOutRouteMode, setLaidOutRouteMode] = React.useState<AuthRouteMode | null>(null);
   const isRouteLayoutReady = laidOutRouteMode === routeMode;
   const hasNavigator = routeMode === 'auth' || routeMode === 'onboarding' || routeMode === 'app';
+  const cleanupStartedUserIdRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    if (routeMode !== 'app' || isDevBypass || !user?.id) {
+      cleanupStartedUserIdRef.current = null;
+      return;
+    }
+
+    if (cleanupStartedUserIdRef.current === user.id) {
+      return;
+    }
+
+    cleanupStartedUserIdRef.current = user.id;
+    void drainPendingPhotoStorageCleanup()
+      .then((result) => {
+        if (result.incomplete) {
+          console.warn('[startup photo storage cleanup] incomplete', {
+            attemptedObjectCount: result.attemptedObjectCount,
+            batchCount: result.batchCount,
+          });
+        }
+      })
+      .catch(() => {
+        console.warn('[startup photo storage cleanup] failed');
+      });
+  }, [isDevBypass, routeMode, user?.id]);
 
   return (
     <View style={styles.root}>

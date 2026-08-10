@@ -400,6 +400,16 @@ export interface Database {
           updated_place_count: number;
         }[];
       };
+      list_pending_photo_storage_cleanup: {
+        Args: {
+          p_limit?: number;
+        };
+        Returns: {
+          photo_id: string;
+          storage_path: string;
+          trip_id: string;
+        }[];
+      };
       set_place_cover_photo: {
         Args: {
           p_photo_id: string;
@@ -445,6 +455,22 @@ export interface Database {
           trip_id: string;
         }[];
       };
+      soft_delete_place_tree: {
+        Args: {
+          p_place_id: string;
+        };
+        Returns: {
+          already_deleted: boolean;
+          deleted_at: string;
+          deleted_photo_count: number;
+          deleted_record_count: number;
+          deleted_record_photo_count: number;
+          place_id: string;
+          trip_cover_photo_id: string | null;
+          trip_day_id: string | null;
+          trip_id: string;
+        }[];
+      };
       soft_delete_record_photo_links: {
         Args: {
           p_photo_ids: string[];
@@ -453,6 +479,22 @@ export interface Database {
         Returns: {
           deleted_photo_count: number;
           requested_photo_count: number;
+        }[];
+      };
+      soft_delete_trip_tree: {
+        Args: {
+          p_trip_id: string;
+        };
+        Returns: {
+          already_deleted: boolean;
+          deleted_at: string;
+          deleted_destination_count: number;
+          deleted_photo_count: number;
+          deleted_place_count: number;
+          deleted_record_count: number;
+          deleted_record_photo_count: number;
+          deleted_trip_day_count: number;
+          trip_id: string;
         }[];
       };
       sync_active_trip_destinations: {

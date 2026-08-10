@@ -2,15 +2,10 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
 import { useAuth } from '@/providers/AuthProvider';
-import {
-  listPhotosByPlace,
-  softDeletePhotos,
-  type DeletePhotosResult,
-  type PhotoRow,
-  type ResolvedPhotoRow,
-} from '@/services/supabase/photos';
-import { softDeletePlace, type PlaceRow } from '@/services/supabase/places';
-import { softDeleteRecordsByPlaceId, type RecordRow } from '@/services/supabase/records';
+import { drainPendingPhotoStorageCleanup } from '@/services/supabase/photoStorageCleanup';
+import { type PhotoRow, type ResolvedPhotoRow } from '@/services/supabase/photos';
+import { softDeletePlaceTree, type PlaceRow } from '@/services/supabase/places';
+import type { RecordRow } from '@/services/supabase/records';
 
 export interface DeletePlaceRecordInput {
   placeId: string;
@@ -19,8 +14,8 @@ export interface DeletePlaceRecordInput {
 }
 
 type DeletePlaceRecordResult = {
-  photoDeleteResult: DeletePhotosResult;
-  place: Awaited<ReturnType<typeof softDeletePlace>>;
+  place: Awaited<ReturnType<typeof softDeletePlaceTree>>;
+  storageCleanupIncomplete: boolean;
 };
 
 const activePlaceDeleteOperations = new Map<string, Promise<DeletePlaceRecordResult>>();
@@ -53,32 +48,20 @@ export function useDeletePlaceRecord() {
       }
 
       const operation = (async (): Promise<DeletePlaceRecordResult> => {
-        const { data: photos, error: photosError } = await listPhotosByPlace(input.placeId);
+        const place = await softDeletePlaceTree(input.placeId);
+        const storageCleanup = await drainPendingPhotoStorageCleanup();
 
-        if (photosError) {
-          throw photosError;
-        }
-
-        const photoDeleteResult = await softDeletePhotos(
-          (photos ?? []).map((photo) => photo.id),
-        );
-
-        if (photoDeleteResult.failed.length > 0) {
-          throw new Error('One or more place photos could not be deleted.');
-        }
-
-        if (photoDeleteResult.storageCleanupFailedPhotoIds.length > 0) {
+        if (storageCleanup.incomplete) {
           console.warn('[useDeletePlaceRecord] photo storage cleanup incomplete', {
-            failedPhotoCount: photoDeleteResult.storageCleanupFailedPhotoIds.length,
-            failedPhotoIds: photoDeleteResult.storageCleanupFailedPhotoIds,
-            placeId: input.placeId,
+            attemptedObjectCount: storageCleanup.attemptedObjectCount,
+            batchCount: storageCleanup.batchCount,
           });
         }
 
-        await softDeleteRecordsByPlaceId(input.placeId);
-        const place = await softDeletePlace(input.placeId);
-
-        return { photoDeleteResult, place };
+        return {
+          place,
+          storageCleanupIncomplete: storageCleanup.incomplete,
+        };
       })();
 
       activePlaceDeleteOperations.set(input.placeId, operation);

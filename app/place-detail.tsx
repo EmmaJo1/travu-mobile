@@ -1247,17 +1247,27 @@ export default function PlaceDetailScreen() {
     }
 
     try {
+      let storageCleanupIncomplete = false;
+
       if (shouldUseSupabasePlaceDetail) {
-        await deletePlaceRecordMutation.mutateAsync({
+        const result = await deletePlaceRecordMutation.mutateAsync({
           placeId: initialDetail.placeId,
           tripDayId: initialDetail.dayId || routeDayId || '',
           tripId: initialDetail.tripId || routeTripId || '',
         });
+        storageCleanupIncomplete = result.storageCleanupIncomplete;
       }
 
       markPlaceDetailDeleted(initialDetail.placeId);
       setDeleteConfirmOpen(false);
       router.back();
+
+      if (storageCleanupIncomplete) {
+        Alert.alert(
+          '\uC7A5\uC18C\uB294 \uC0AD\uC81C\uB410\uC5B4\uC694',
+          '\uC77C\uBD80 \uC0AC\uC9C4 \uD30C\uC77C \uC815\uB9AC\uAC00 \uB0A8\uC544 \uC788\uC5B4 \uB2E4\uC74C \uC571 \uC2E4\uD589 \uB54C \uC790\uB3D9\uC73C\uB85C \uB2E4\uC2DC \uC815\uB9AC\uD569\uB2C8\uB2E4.',
+        );
+      }
     } catch (error) {
       console.warn('[place-detail] delete place failed', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
