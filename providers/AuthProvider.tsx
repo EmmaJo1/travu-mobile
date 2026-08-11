@@ -13,7 +13,15 @@ import {
 import { queryClient } from '@/lib/queryClient';
 import { supabase } from '@/lib/supabase';
 import {
+  cancelPendingLocalUserDataCleanup,
+  clearLocalUserData,
+  prepareLocalUserDataCleanup,
+  recoverPendingLocalUserDataCleanups,
+} from '@/services/localUserData';
+import {
+  clearLocalAuthSession,
   ensureUserProfile,
+  getAppleAccountDeletionAuthorizationCode,
   getCurrentSession,
   getMyProfile,
   signInWithApple as signInWithAppleService,
@@ -22,6 +30,10 @@ import {
   type AuthProfile,
   type AuthSessionResult,
 } from '@/services/supabase/auth';
+import {
+  requestAccountDeletion,
+  shouldCancelPendingLocalCleanupAfterDeletionError,
+} from '@/services/supabase/accountDeletion';
 
 export type AuthInitializationStatus = 'initializing' | 'ready' | 'error';
 export type AuthProfileStatus = 'idle' | 'loading' | 'resolved' | 'error';
@@ -29,9 +41,23 @@ export type AuthSignInResult = {
   profile: AuthProfile | null;
   status: 'authenticated' | 'cancelled' | 'dev-bypass' | 'profile-error' | 'in-progress';
 };
+export type AccountDeletionResult = {
+  status: 'apple-reauth-unavailable' | 'in-progress';
+} | {
+  appleRevocation: 'manual_required' | 'not_applicable' | 'revoked' | null;
+  localCleanupCompleted: boolean;
+  manualAppleRevocationRequired: boolean;
+  recovered: boolean;
+  status: 'deleted';
+};
+
+export type AccountDeletionOptions = {
+  skipAppleReauthentication?: boolean;
+};
 
 type AuthContextValue = {
   canUseSupabaseUserData: boolean;
+  deleteAccount: (options?: AccountDeletionOptions) => Promise<AccountDeletionResult>;
   initializationError: Error | null;
   initializationStatus: AuthInitializationStatus;
   isAuthenticated: boolean;
@@ -65,7 +91,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const isMountedRef = useRef(true);
   const authStateVersionRef = useRef(0);
   const initializationStatusRef = useRef<AuthInitializationStatus>('initializing');
+  const startupLocalCleanupRecoveryPromiseRef = useRef<Promise<void> | null>(null);
   const signInInFlightRef = useRef(false);
+  const accountDeletionInFlightRef = useRef(false);
   const profileResolutionRef = useRef<{
     promise: Promise<AuthProfile>;
     userId: string;
@@ -84,6 +112,17 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const updateInitializationStatus = useCallback((nextStatus: AuthInitializationStatus) => {
     initializationStatusRef.current = nextStatus;
     setInitializationStatus(nextStatus);
+  }, []);
+
+  const ensureStartupLocalCleanupRecovery = useCallback(() => {
+    if (!startupLocalCleanupRecoveryPromiseRef.current) {
+      startupLocalCleanupRecoveryPromiseRef.current = recoverPendingLocalUserDataCleanups()
+        .catch(() => {
+          // Pending device cleanup is best-effort and must not block authentication startup.
+        });
+    }
+
+    return startupLocalCleanupRecoveryPromiseRef.current;
   }, []);
 
   const resolveUserProfile = useCallback((
@@ -262,6 +301,109 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
   }, []);
 
+  const deleteAccount = useCallback(async (
+    options: AccountDeletionOptions = {},
+  ): Promise<AccountDeletionResult> => {
+    if (accountDeletionInFlightRef.current) {
+      return { status: 'in-progress' };
+    }
+
+    if (isDevBypass) {
+      throw new Error('ACCOUNT_DELETION_UNAVAILABLE_IN_DEV_BYPASS');
+    }
+
+    if (!user) {
+      throw new Error('ACCOUNT_DELETION_REQUIRES_AUTHENTICATION');
+    }
+
+    accountDeletionInFlightRef.current = true;
+    setIsLoading(true);
+    const deletingUserId = user.id;
+
+    try {
+      let appleAuthorizationCode: string | undefined;
+      const hasAppleIdentity = user.identities?.some(
+        (identity) => identity.provider === 'apple',
+      ) ?? false;
+
+      if (hasAppleIdentity && !options.skipAppleReauthentication) {
+        try {
+          const authorization = await getAppleAccountDeletionAuthorizationCode();
+
+          if (authorization.status === 'cancelled') {
+            return { status: 'apple-reauth-unavailable' };
+          }
+
+          appleAuthorizationCode = authorization.authorizationCode;
+        } catch (error) {
+          console.warn('[auth] Apple account deletion reauthentication unavailable', {
+            code: error instanceof Error ? error.message : 'APPLE_REAUTH_FAILED',
+          });
+          return { status: 'apple-reauth-unavailable' };
+        }
+      }
+
+      await prepareLocalUserDataCleanup(deletingUserId);
+      let deletionRequestStarted = false;
+      let deletionResponse;
+
+      try {
+        await queryClient.cancelQueries({
+          predicate: (query) => isSupabaseUserQuery(query.queryKey),
+        });
+        deletionRequestStarted = true;
+        deletionResponse = await requestAccountDeletion({ appleAuthorizationCode });
+      } catch (error) {
+        if (
+          !deletionRequestStarted ||
+          shouldCancelPendingLocalCleanupAfterDeletionError(error)
+        ) {
+          await cancelPendingLocalUserDataCleanup(deletingUserId);
+        }
+
+        throw error;
+      }
+
+      if (!deletionResponse) {
+        throw new Error('ACCOUNT_DELETION_RESPONSE_MISSING');
+      }
+
+      const localCleanupCompleted = await clearLocalUserData(deletingUserId);
+      await clearLocalAuthSession();
+
+      if (isMountedRef.current) {
+        authStateVersionRef.current += 1;
+        profileResolutionRef.current = null;
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        setProfileError(null);
+        setProfileStatus('idle');
+        setIsDevBypass(false);
+      }
+
+      queryClient.removeQueries({
+        predicate: (query) => isSupabaseUserQuery(query.queryKey),
+      });
+
+      return {
+        appleRevocation: deletionResponse.appleRevocation,
+        localCleanupCompleted,
+        manualAppleRevocationRequired: (
+          deletionResponse.appleRevocation === 'manual_required' ||
+          (hasAppleIdentity && deletionResponse.recovered)
+        ),
+        recovered: deletionResponse.recovered,
+        status: 'deleted',
+      };
+    } finally {
+      accountDeletionInFlightRef.current = false;
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
+    }
+  }, [isDevBypass, user]);
+
   const retryProfile = useCallback(async () => {
     if (!session?.user) {
       return null;
@@ -281,6 +423,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
     updateInitializationStatus('initializing');
     setInitializationError(null);
     setIsLoading(true);
+
+    await ensureStartupLocalCleanupRecovery();
+
+    if (!isMountedRef.current) {
+      return;
+    }
 
     let currentSession: Session | null;
     try {
@@ -310,7 +458,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setIsLoading(false);
       }
     }
-  }, [setAuthState, updateInitializationStatus]);
+  }, [ensureStartupLocalCleanupRecovery, setAuthState, updateInitializationStatus]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -323,23 +471,40 @@ export function AuthProvider({ children }: PropsWithChildren) {
         return;
       }
 
-      void setAuthState(nextSession).catch(() => undefined).finally(() => {
-        if (isMountedRef.current && initializationStatusRef.current === 'initializing') {
+      void (async () => {
+        await ensureStartupLocalCleanupRecovery();
+
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        await setAuthState(nextSession).catch(() => undefined);
+
+        if (
+          isMountedRef.current &&
+          initializationStatusRef.current === 'initializing'
+        ) {
           setInitializationError(null);
           updateInitializationStatus('ready');
         }
-      });
+      })();
     });
 
     return () => {
       isMountedRef.current = false;
       subscription.unsubscribe();
     };
-  }, [initializeAuth, setAuthState, updateInitializationStatus]);
+  }, [
+    ensureStartupLocalCleanupRecovery,
+    initializeAuth,
+    setAuthState,
+    updateInitializationStatus,
+  ]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       canUseSupabaseUserData: Boolean(session?.user && !isDevBypass),
+      deleteAccount,
       initializationError,
       initializationStatus,
       isAuthenticated: Boolean(session?.user),
@@ -361,6 +526,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [
       initializationError,
       initializationStatus,
+      deleteAccount,
       initializeAuth,
       isDevBypass,
       isLoading,

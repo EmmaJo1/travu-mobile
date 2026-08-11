@@ -18,6 +18,8 @@ import Text from '@/components/common/AppText';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useAuth } from '@/providers/AuthProvider';
+import { LocalUserDataCleanupError } from '@/services/localUserData';
+import { AccountDeletionError } from '@/services/supabase/accountDeletion';
 
 type PermissionStatusLabel = '허용됨' | '제한됨' | '허용 안 됨' | '확인 필요';
 
@@ -32,6 +34,24 @@ interface SettingRowProps {
 interface SettingSectionProps {
   title: string;
   children: React.ReactNode;
+}
+
+function confirmAccountDeletionWithoutAppleRevocation() {
+  return new Promise<boolean>((resolve) => {
+    Alert.alert(
+      'Apple 연결 확인을 완료하지 못했어요',
+      'Travu 계정과 데이터는 삭제할 수 있어요. 다만 Apple 로그인 연결은 삭제 후 iPhone 설정에서 직접 해제해야 할 수 있어요. 계속 탈퇴할까요?',
+      [
+        { onPress: () => resolve(false), style: 'cancel', text: '취소' },
+        {
+          onPress: () => resolve(true),
+          style: 'destructive',
+          text: '계속 탈퇴',
+        },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) },
+    );
+  });
 }
 
 function SettingSection({ title, children }: SettingSectionProps) {
@@ -113,7 +133,8 @@ function getLocationPermissionLabel(
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { signOut } = useAuth();
+  const { deleteAccount, isDevBypass, signOut } = useAuth();
+  const isDeletingAccountRef = React.useRef(false);
   const isSigningOutRef = React.useRef(false);
   const [photoPermissionLabel, setPhotoPermissionLabel] =
     React.useState<PermissionStatusLabel>('확인 필요');
@@ -154,19 +175,22 @@ export default function SettingsScreen() {
     router.push('/profile-edit' as Href);
   }, [router]);
 
-  const showLaterAlert = React.useCallback((message: string) => {
-    Alert.alert(message);
-  }, []);
-
   const handlePressPermissions = React.useCallback(() => {
     Linking.openSettings().catch(() => {
       Alert.alert('설정 화면을 열 수 없어요.');
     });
   }, []);
 
-  const handlePressInfoLink = React.useCallback(() => {
-    showLaterAlert('외부 링크 연결은 추후 구현 예정입니다.');
-  }, [showLaterAlert]);
+  const handlePressSupport = React.useCallback(() => {
+    const subject = encodeURIComponent('Travu 문의');
+
+    Linking.openURL(`mailto:travu.support@gmail.com?subject=${subject}`).catch(() => {
+      Alert.alert(
+        '메일 앱을 열 수 없어요.',
+        'travu.support@gmail.com으로 문의해주세요.',
+      );
+    });
+  }, []);
 
   const handlePressPrivacyPolicy = React.useCallback(() => {
     router.push('/legal/privacy-policy' as Href);
@@ -215,6 +239,91 @@ export default function SettingsScreen() {
     );
   }, [signOut]);
 
+  const handleDeleteAccount = React.useCallback(() => {
+    if (isDeletingAccountRef.current) {
+      return;
+    }
+
+    if (isDevBypass) {
+      Alert.alert(
+        '회원 탈퇴',
+        '개발 모드에서는 회원 탈퇴를 사용할 수 없어요.',
+      );
+      return;
+    }
+
+    Alert.alert(
+      '회원 탈퇴',
+      '계정을 삭제하면 여행 기록, 사진, 프로필 정보가 영구적으로 삭제되며 복구할 수 없어요.',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '탈퇴하기',
+          style: 'destructive',
+          onPress: () => {
+            if (isDeletingAccountRef.current) {
+              return;
+            }
+
+            isDeletingAccountRef.current = true;
+
+            void (async () => {
+              try {
+                let result = await deleteAccount();
+
+                if (result.status === 'apple-reauth-unavailable') {
+                  const shouldContinue = await confirmAccountDeletionWithoutAppleRevocation();
+
+                  if (!shouldContinue) {
+                    return;
+                  }
+
+                  result = await deleteAccount({ skipAppleReauthentication: true });
+                }
+
+                if (result.status !== 'deleted') {
+                  return;
+                }
+
+                router.replace('/auth-start' as Href);
+                const completionMessages = ['Travu의 계정과 데이터는 삭제됐어요.'];
+
+                if (result.manualAppleRevocationRequired) {
+                  completionMessages.push(
+                    'Apple 로그인 연결 자동 해제를 완료하지 못했어요. 설정 > [사용자 이름] > Apple로 로그인 > Travu에서 연결을 해제해주세요.',
+                  );
+                }
+
+                if (!result.localCleanupCompleted) {
+                  completionMessages.push(
+                    '기기의 일부 임시 데이터는 정리를 완료하지 못해 다음 앱 실행 시 다시 정리됩니다.',
+                  );
+                }
+
+                Alert.alert(
+                  '회원 탈퇴가 완료됐어요',
+                  completionMessages.join('\n\n'),
+                );
+              } catch (error) {
+                console.warn('[settings] account deletion failed', {
+                  code: error instanceof AccountDeletionError || error instanceof LocalUserDataCleanupError
+                    ? error.code
+                    : 'CLIENT_ERROR',
+                });
+                Alert.alert(
+                  '회원 탈퇴를 완료하지 못했어요.',
+                  '잠시 후 다시 시도해주세요.',
+                );
+              } finally {
+                isDeletingAccountRef.current = false;
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [deleteAccount, isDevBypass, router]);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader
@@ -243,7 +352,7 @@ export default function SettingsScreen() {
           <SettingRow
             label="회원 탈퇴"
             destructive
-            onPress={() => showLaterAlert('회원 탈퇴 기능은 추후 연결 예정입니다.')}
+            onPress={handleDeleteAccount}
           />
         </SettingSection>
 
@@ -279,7 +388,7 @@ export default function SettingsScreen() {
           <SettingRow
             label="문의하기"
             showChevron
-            onPress={handlePressInfoLink}
+            onPress={handlePressSupport}
           />
           <View style={styles.divider} />
           <SettingRow label="앱 버전" value="1.0.0" />

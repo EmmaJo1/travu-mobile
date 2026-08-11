@@ -21,6 +21,10 @@ export type AuthSessionResult = {
   user: User | null;
 };
 
+export type AppleAccountDeletionAuthorizationResult =
+  | { status: 'cancelled' }
+  | { authorizationCode: string; status: 'authorized' };
+
 type UserMetadata = {
   avatar_url?: unknown;
   full_name?: unknown;
@@ -353,6 +357,46 @@ export async function signInWithApple() {
 
     throw error;
   }
+}
+
+export async function getAppleAccountDeletionAuthorizationCode(): Promise<
+  AppleAccountDeletionAuthorizationResult
+> {
+  if (isExpoGo() || Platform.OS !== 'ios') {
+    throw new Error('APPLE_REAUTH_UNAVAILABLE');
+  }
+
+  if (!(await AppleAuthentication.isAvailableAsync())) {
+    throw new Error('APPLE_REAUTH_UNAVAILABLE');
+  }
+
+  try {
+    const credential = await AppleAuthentication.signInAsync({
+      requestedScopes: [],
+    });
+    const authorizationCode = credential.authorizationCode?.trim();
+
+    if (!authorizationCode) {
+      throw new Error('APPLE_REAUTH_FAILED');
+    }
+
+    return { authorizationCode, status: 'authorized' };
+  } catch (error) {
+    if (isAppleSignInCancel(error)) {
+      return { status: 'cancelled' };
+    }
+
+    throw error;
+  }
+}
+
+export async function clearLocalAuthSession() {
+  if (hasConfiguredGoogleSignIn) {
+    const googleSignIn = await loadGoogleSignInModule().catch(() => null);
+    await googleSignIn?.signOut().catch(() => {});
+  }
+
+  await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
 }
 
 export async function signOut() {

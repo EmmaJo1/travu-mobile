@@ -400,6 +400,81 @@ interface SavedCandidateMatch {
 const savedDetectedCandidateRegistry = new Map<string, SavedDetectedCandidateRegistryEntry>();
 let savedDetectedCandidateRegistryUserId: string | null = null;
 let savedDetectedCandidateRegistryLoaded = false;
+const savedCandidateStorageOperationsByUserId = new Map<string, Promise<void>>();
+let localDetectedTripDataGeneration = 0;
+let localDetectedTripDataOwnerUserId: string | null = null;
+
+interface LocalDetectedTripDataOperation {
+  generation: number;
+  ownerUserId: string | null;
+}
+
+function normalizeLocalDetectedTripDataOwner(userId?: string | null) {
+  const normalizedUserId = userId?.trim();
+  return normalizedUserId || null;
+}
+
+function captureLocalDetectedTripDataOperation(): LocalDetectedTripDataOperation {
+  return {
+    generation: localDetectedTripDataGeneration,
+    ownerUserId: localDetectedTripDataOwnerUserId,
+  };
+}
+
+function beginLocalDetectedTripDataOperation(userId?: string | null) {
+  const ownerUserId = normalizeLocalDetectedTripDataOwner(userId);
+
+  if (localDetectedTripDataOwnerUserId !== ownerUserId) {
+    localDetectedTripDataGeneration += 1;
+    localDetectedTripDataOwnerUserId = ownerUserId;
+  }
+
+  return captureLocalDetectedTripDataOperation();
+}
+
+function beginLocalDetectedTripScan(userId?: string | null) {
+  const ownerUserId = normalizeLocalDetectedTripDataOwner(userId);
+
+  localDetectedTripDataGeneration += 1;
+  localDetectedTripDataOwnerUserId = ownerUserId;
+  return captureLocalDetectedTripDataOperation();
+}
+
+function isLocalDetectedTripDataOperationCurrent(
+  operation: LocalDetectedTripDataOperation,
+) {
+  return (
+    operation.generation === localDetectedTripDataGeneration &&
+    operation.ownerUserId === localDetectedTripDataOwnerUserId
+  );
+}
+
+function assertLocalDetectedTripDataOperationCurrent(
+  operation: LocalDetectedTripDataOperation,
+) {
+  if (!isLocalDetectedTripDataOperationCurrent(operation)) {
+    throw new Error('LOCAL_DETECTED_TRIP_DATA_OPERATION_STALE');
+  }
+}
+
+function runSavedCandidateStorageMutation<T>(
+  userId: string,
+  operation: () => Promise<T>,
+) {
+  const previousOperation = savedCandidateStorageOperationsByUserId.get(userId)
+    ?? Promise.resolve();
+  const result = previousOperation.then(operation, operation);
+  const settledOperation = result.then(() => undefined, () => undefined);
+
+  savedCandidateStorageOperationsByUserId.set(userId, settledOperation);
+  void settledOperation.then(() => {
+    if (savedCandidateStorageOperationsByUserId.get(userId) === settledOperation) {
+      savedCandidateStorageOperationsByUserId.delete(userId);
+    }
+  });
+
+  return result;
+}
 
 function isFiniteCoordinateValue(value?: number | null): value is number {
   return typeof value === 'number' && Number.isFinite(value);
@@ -927,9 +1002,13 @@ function getMaskedFingerprint(fingerprint?: string | null) {
   return fingerprint ? `${fingerprint.slice(0, 24)}...` : null;
 }
 
-async function persistSavedDetectedCandidateRegistry() {
-  if (!savedDetectedCandidateRegistryUserId) {
-    return;
+async function persistSavedDetectedCandidateRegistry(
+  operation = captureLocalDetectedTripDataOperation(),
+) {
+  const userId = savedDetectedCandidateRegistryUserId;
+
+  if (!userId || !isLocalDetectedTripDataOperationCurrent(operation)) {
+    return false;
   }
 
   const entries = [...savedDetectedCandidateRegistry.values()]
@@ -937,14 +1016,20 @@ async function persistSavedDetectedCandidateRegistry() {
     .slice(0, SAVED_DETECTED_CANDIDATE_REGISTRY_MAX_ENTRIES);
   const state: SavedDetectedCandidateRegistryState = {
     entries,
-    userId: savedDetectedCandidateRegistryUserId,
+    userId,
     version: SAVED_DETECTED_CANDIDATE_REGISTRY_VERSION,
   };
+  const storageKey = getSavedDetectedCandidateRegistryKey(userId);
+  const serializedState = JSON.stringify(state);
 
-  await AsyncStorage.setItem(
-    getSavedDetectedCandidateRegistryKey(savedDetectedCandidateRegistryUserId),
-    JSON.stringify(state),
-  );
+  return runSavedCandidateStorageMutation(userId, async () => {
+    if (!isLocalDetectedTripDataOperationCurrent(operation)) {
+      return false;
+    }
+
+    await AsyncStorage.setItem(storageKey, serializedState);
+    return isLocalDetectedTripDataOperationCurrent(operation);
+  });
 }
 
 function formatDateLabel(date: Date): string {
@@ -1786,6 +1871,7 @@ async function reverseGeocodeLocationLabel(
   latitude?: number,
   longitude?: number,
   scanStats?: ReverseGeocodeScanStats,
+  operation?: LocalDetectedTripDataOperation,
 ): Promise<ReverseGeocodeResult> {
   if (!isFiniteCoordinateValue(latitude) || !isFiniteCoordinateValue(longitude)) {
     if (scanStats) {
@@ -1817,6 +1903,10 @@ async function reverseGeocodeLocationLabel(
 
     if (delayMs > 0) {
       await wait(delayMs);
+    }
+
+    if (operation) {
+      assertLocalDetectedTripDataOperationCurrent(operation);
     }
 
     lastReverseGeocodeRequestStartedAt = Date.now();
@@ -1868,6 +1958,10 @@ async function reverseGeocodeLocationLabel(
         rateLimited: false,
       } satisfies ReverseGeocodeResult,
     );
+
+    if (operation) {
+      assertLocalDetectedTripDataOperationCurrent(operation);
+    }
 
     if (scanStats) {
       if (result.address) {
@@ -2180,14 +2274,17 @@ async function getHydratedAssetDisplayUri(assetId?: string) {
   return request;
 }
 
-async function hydratePhotoDisplayUri(photo: LocalDetectedPhoto) {
+async function hydratePhotoDisplayUri(
+  photo: LocalDetectedPhoto,
+  operation: LocalDetectedTripDataOperation,
+) {
   if (isRenderableImageUri(photo.displayUri)) {
     return photo.displayUri;
   }
 
   const displayUri = await getHydratedAssetDisplayUri(photo.assetId);
 
-  if (!displayUri) {
+  if (!displayUri || !isLocalDetectedTripDataOperationCurrent(operation)) {
     return null;
   }
 
@@ -3434,7 +3531,14 @@ function splitPhotosIntoTripDrafts(photos: LocalDetectedPhoto[]): {
   };
 }
 
-async function hydrateDraftCoverPhoto(draft: LocalDetectedTripDraft) {
+async function hydrateDraftCoverPhoto(
+  draft: LocalDetectedTripDraft,
+  operation: LocalDetectedTripDataOperation,
+) {
+  if (!isLocalDetectedTripDataOperationCurrent(operation)) {
+    return 'stale' as const;
+  }
+
   if (isRenderableImageUri(draft.coverPhotoUri)) {
     coverHydrationCompletedDraftIds.add(draft.id);
     return 'skipped_has_cover' as const;
@@ -3465,10 +3569,14 @@ async function hydrateDraftCoverPhoto(draft: LocalDetectedTripDraft) {
 
   for (const photo of photosToTry) {
     const displayUri = await withTimeout(
-      hydratePhotoDisplayUri(photo),
+      hydratePhotoDisplayUri(photo, operation),
       COVER_HYDRATION_TIMEOUT_MS,
       null,
     );
+
+    if (!isLocalDetectedTripDataOperationCurrent(operation)) {
+      return 'stale' as const;
+    }
 
     if (displayUri) {
       draft.coverPhotoUri = displayUri;
@@ -3508,6 +3616,7 @@ async function hydrateDraftCoverPhoto(draft: LocalDetectedTripDraft) {
 async function hydrateDraftTitle(
   draft: LocalDetectedTripDraft,
   reverseGeocodeStats?: ReverseGeocodeScanStats,
+  operation?: LocalDetectedTripDataOperation,
 ) {
   const titleBefore = draft.title;
   const startedAt = draft.debugMetadata.titleEnrichmentStartedAt ?? new Date().toISOString();
@@ -3543,6 +3652,7 @@ async function hydrateDraftTitle(
         titleCoordinate.latitude,
         titleCoordinate.longitude,
         reverseGeocodeStats,
+        operation,
       );
       draft.locationLabel = result.label ?? undefined;
       draft.regionLabel = result.label ?? undefined;
@@ -4403,6 +4513,7 @@ async function enrichDraftTitlesBeforeResults(
     scanAttemptId: string;
   },
   reverseGeocodeStats?: ReverseGeocodeScanStats,
+  operation?: LocalDetectedTripDataOperation,
 ) {
   const eligibleDrafts = draftsToEnrich.filter((draft) => (
     draft.debugMetadata.gpsPhotoCount > 0 &&
@@ -4419,8 +4530,17 @@ async function enrichDraftTitlesBeforeResults(
   }
 
   for (let index = 0; index < queue.length; index += 1) {
+    if (operation) {
+      assertLocalDetectedTripDataOperationCurrent(operation);
+    }
+
     const draft = queue[index];
-    await hydrateDraftTitle(draft, reverseGeocodeStats);
+    await hydrateDraftTitle(draft, reverseGeocodeStats, operation);
+
+    if (operation) {
+      assertLocalDetectedTripDataOperationCurrent(operation);
+    }
+
     onProgress?.({
       currentPage: progressContext.currentPage,
       detectedCandidateCount: 0,
@@ -4487,6 +4607,12 @@ export async function hydrateLocalDetectedTripDraftCovers(
     onCandidatesUpdated?: (candidates: PhotoImportTripCandidate[]) => void;
   } = {},
 ) {
+  const operation = captureLocalDetectedTripDataOperation();
+
+  if (!isLocalDetectedTripDataOperationCurrent(operation)) {
+    return;
+  }
+
   const maxCandidates = options.maxCandidates ?? COVER_HYDRATION_INITIAL_CANDIDATE_LIMIT;
   const visibleDrafts = getVisibleCandidateDrafts([...drafts.values()]);
   const requestedDrafts = draftIds
@@ -4528,10 +4654,14 @@ export async function hydrateLocalDetectedTripDraftCovers(
     }
 
     const result = await withTimeout(
-      hydrateDraftCoverPhoto(draft),
+      hydrateDraftCoverPhoto(draft, operation),
       COVER_HYDRATION_TIMEOUT_MS,
       'timeout' as const,
     );
+
+    if (!isLocalDetectedTripDataOperationCurrent(operation) || result === 'stale') {
+      return;
+    }
 
     coverHydrationInFlightDraftIds.delete(draft.id);
 
@@ -4548,9 +4678,15 @@ export async function hydrateLocalDetectedTripDraftCovers(
     }
 
     await wait(COVER_HYDRATION_DELAY_MS);
+
+    if (!isLocalDetectedTripDataOperationCurrent(operation)) {
+      return;
+    }
   }
 
-  options.onCandidatesUpdated?.(getVisibleCandidateDrafts([...drafts.values()]).map(createCandidateFromDraft));
+  if (isLocalDetectedTripDataOperationCurrent(operation)) {
+    options.onCandidatesUpdated?.(getVisibleCandidateDrafts([...drafts.values()]).map(createCandidateFromDraft));
+  }
 
   if (__DEV__) {
     console.info('[photo-import cover thumbnail] queue completed', {
@@ -4577,7 +4713,12 @@ function yieldToEventLoop() {
   });
 }
 
-export async function hydrateSavedDetectedCandidateRegistry(userId?: string | null) {
+async function hydrateSavedDetectedCandidateRegistryForOperation(
+  userId: string | null | undefined,
+  operation: LocalDetectedTripDataOperation,
+) {
+  assertLocalDetectedTripDataOperationCurrent(operation);
+
   if (!userId) {
     savedDetectedCandidateRegistry.clear();
     savedDetectedCandidateRegistryUserId = null;
@@ -4595,6 +4736,7 @@ export async function hydrateSavedDetectedCandidateRegistry(userId?: string | nu
 
   try {
     const rawState = await AsyncStorage.getItem(getSavedDetectedCandidateRegistryKey(userId));
+    assertLocalDetectedTripDataOperationCurrent(operation);
     const parsedState = rawState ? JSON.parse(rawState) as Partial<SavedDetectedCandidateRegistryState> : null;
     const entries = Array.isArray(parsedState?.entries) ? parsedState.entries : [];
 
@@ -4641,7 +4783,8 @@ export async function hydrateSavedDetectedCandidateRegistry(userId?: string | nu
     }
 
     if (backfilledCount > 0) {
-      await persistSavedDetectedCandidateRegistry();
+      await persistSavedDetectedCandidateRegistry(operation);
+      assertLocalDetectedTripDataOperationCurrent(operation);
     }
 
     savedDetectedCandidateRegistryLoaded = true;
@@ -4655,10 +4798,51 @@ export async function hydrateSavedDetectedCandidateRegistry(userId?: string | nu
 
     return savedDetectedCandidateRegistry.size;
   } catch (error) {
+    if (!isLocalDetectedTripDataOperationCurrent(operation)) {
+      return 0;
+    }
+
     savedDetectedCandidateRegistryLoaded = true;
     console.warn('[detected trip saved registry] load failed', error);
     return savedDetectedCandidateRegistry.size;
   }
+}
+
+export function hydrateSavedDetectedCandidateRegistry(userId?: string | null) {
+  return hydrateSavedDetectedCandidateRegistryForOperation(
+    userId,
+    beginLocalDetectedTripDataOperation(userId),
+  );
+}
+
+export async function clearLocalDetectedTripDataForUser(userId: string) {
+  const normalizedUserId = userId.trim();
+
+  if (!normalizedUserId) {
+    throw new Error('LOCAL_USER_DATA_CLEANUP_REQUIRES_USER_ID');
+  }
+
+  if (localDetectedTripDataOwnerUserId === normalizedUserId) {
+    localDetectedTripDataGeneration += 1;
+    localDetectedTripDataOwnerUserId = null;
+    drafts.clear();
+    processedCandidateFingerprints.clear();
+    assetDisplayUriCache.clear();
+    coverHydrationFailedDraftIds.clear();
+    coverHydrationInFlightDraftIds.clear();
+    coverHydrationCompletedDraftIds.clear();
+    reverseGeocodeCache.clear();
+    lastReverseGeocodeRequestStartedAt = 0;
+    savedDetectedCandidateRegistry.clear();
+    savedDetectedCandidateRegistryUserId = null;
+    savedDetectedCandidateRegistryLoaded = true;
+    lastScanCompletedAt = null;
+  }
+
+  await runSavedCandidateStorageMutation(
+    normalizedUserId,
+    () => AsyncStorage.removeItem(getSavedDetectedCandidateRegistryKey(normalizedUserId)),
+  );
 }
 
 export async function recordSavedDetectedTripDraft(
@@ -4670,8 +4854,11 @@ export async function recordSavedDetectedTripDraft(
     return false;
   }
 
+  const operation = beginLocalDetectedTripDataOperation(userId);
+
   if (!savedDetectedCandidateRegistryLoaded || savedDetectedCandidateRegistryUserId !== userId) {
-    await hydrateSavedDetectedCandidateRegistry(userId);
+    await hydrateSavedDetectedCandidateRegistryForOperation(userId, operation);
+    assertLocalDetectedTripDataOperationCurrent(operation);
   }
 
   const draft = drafts.get(draftId);
@@ -4692,7 +4879,11 @@ export async function recordSavedDetectedTripDraft(
   });
 
   try {
-    await persistSavedDetectedCandidateRegistry();
+    const didPersist = await persistSavedDetectedCandidateRegistry(operation);
+
+    if (!didPersist) {
+      return false;
+    }
 
     if (__DEV__) {
       console.info('[detected trip saved registry] persisted', {
@@ -4760,9 +4951,10 @@ export async function hydrateLocalDetectedTripDraftPhotos(
     maxTotalPhotos?: number;
   } = {},
 ) {
+  const operation = captureLocalDetectedTripDataOperation();
   const draft = getLocalDetectedTripDraft(draftId);
 
-  if (!draft) {
+  if (!draft || !isLocalDetectedTripDataOperationCurrent(operation)) {
     return undefined;
   }
 
@@ -4811,14 +5003,22 @@ export async function hydrateLocalDetectedTripDraftPhotos(
 
   for (const photo of photosToHydrate) {
     const displayUri = await withTimeout(
-      hydratePhotoDisplayUri(photo),
+      hydratePhotoDisplayUri(photo, operation),
       COVER_HYDRATION_TIMEOUT_MS,
       null,
     );
 
+    if (!isLocalDetectedTripDataOperationCurrent(operation)) {
+      return undefined;
+    }
+
     if (displayUri) {
       recordDayDetailHydrationSuccessCount += 1;
     }
+  }
+
+  if (!isLocalDetectedTripDataOperationCurrent(operation)) {
+    return undefined;
   }
 
   const coverPhoto = draft.days
@@ -4850,6 +5050,12 @@ export async function hydrateLocalDetectedTripDraftPhotos(
 async function scanPhotoLibraryForTripDrafts(
   options: PhotoLibraryScanOptions = {},
 ): Promise<PhotoLibraryScanResult> {
+  const operation = beginLocalDetectedTripScan(options.savedRegistryUserId);
+  const reportProgress = (progress: PhotoLibraryScanProgress) => {
+    if (isLocalDetectedTripDataOperationCurrent(operation)) {
+      options.onProgress?.(progress);
+    }
+  };
   const scanStartedAt = Date.now();
   const metrics = createPhotoScanPerformanceMetrics();
   const reverseGeocodeStats: ReverseGeocodeScanStats = {
@@ -4888,12 +5094,14 @@ async function scanPhotoLibraryForTripDrafts(
     });
   }
   const isAvailable = await MediaLibrary.isAvailableAsync();
+  assertLocalDetectedTripDataOperationCurrent(operation);
 
   if (!isAvailable) {
     throw new Error('photo-library-unavailable');
   }
 
   const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo']);
+  assertLocalDetectedTripDataOperationCurrent(operation);
   const permissionState: PhotoLibraryScanPermissionState = permission.accessPrivileges === 'limited'
     ? 'limited'
     : permission.granted
@@ -4952,7 +5160,11 @@ async function scanPhotoLibraryForTripDrafts(
 
   const photos: LocalDetectedPhoto[] = [];
   const savedDetectedCandidateRegistryLoadedCount =
-    await hydrateSavedDetectedCandidateRegistry(options.savedRegistryUserId);
+    await hydrateSavedDetectedCandidateRegistryForOperation(
+      options.savedRegistryUserId,
+      operation,
+    );
+  assertLocalDetectedTripDataOperationCurrent(operation);
   const seenAssetIds = new Set<string>();
   const createdAfterTimestamp = getCreatedAfterTimestamp(options.createdAfter);
   const mediaCollectionStartedAt = Date.now();
@@ -4971,6 +5183,7 @@ async function scanPhotoLibraryForTripDrafts(
       mediaType: MediaLibrary.MediaType.photo,
       sortBy: [[MediaLibrary.SortBy.creationTime, false]],
     });
+    assertLocalDetectedTripDataOperationCurrent(operation);
     metrics.mediaPageFetchDurationMs += Date.now() - pageFetchStartedAt;
     pageCount += 1;
     totalAssetCount = page.totalCount;
@@ -5022,7 +5235,7 @@ async function scanPhotoLibraryForTripDrafts(
     metrics.mediaAssetMappingDurationMs += Date.now() - assetMappingStartedAt;
     after = page.endCursor;
     hasNextPage = page.hasNextPage;
-    options.onProgress?.({
+    reportProgress({
       currentPage: pageCount,
       detectedCandidateCount: 0,
       hasNextPage,
@@ -5045,6 +5258,7 @@ async function scanPhotoLibraryForTripDrafts(
     }
 
     await yieldToEventLoop();
+    assertLocalDetectedTripDataOperationCurrent(operation);
   }
   metrics.mediaCollectionDurationMs = Date.now() - mediaCollectionStartedAt;
 
@@ -5134,6 +5348,7 @@ async function scanPhotoLibraryForTripDrafts(
     drafts: nextDrafts,
     stats: candidateMetadataLookupStats,
   } = await enrichTimeCandidatesWithRepresentativeMetadata(deduplicatedDrafts);
+  assertLocalDetectedTripDataOperationCurrent(operation);
   assetsWithLocationCount = photos.filter((photo) => photo.hasLocation).length;
   photosWithCoordinatesCount = photos.filter((photo) => getPhotoCoordinates(photo)).length;
   assetsWithoutLocationCount = photos.length - assetsWithLocationCount;
@@ -5223,6 +5438,7 @@ async function scanPhotoLibraryForTripDrafts(
     HOME_REGION_EXCLUSION_RADIUS_KM,
     scanAttemptId,
   );
+  assertLocalDetectedTripDataOperationCurrent(operation);
   const hiddenHomeRegionCandidateCount = homeRegionEvaluations.filter(
     ({ result }) => result.shouldHide,
   ).length;
@@ -5261,14 +5477,16 @@ async function scanPhotoLibraryForTripDrafts(
   const geocodingStartedAt = Date.now();
   await enrichDraftTitlesBeforeResults(
     sortedNextDrafts,
-    options.onProgress,
+    reportProgress,
     {
       currentPage: pageCount,
       failedPreparationCount: 0,
       scanAttemptId,
     },
     reverseGeocodeStats,
+    operation,
   );
+  assertLocalDetectedTripDataOperationCurrent(operation);
   metrics.geocodingDurationMs = Date.now() - geocodingStartedAt;
   metrics.geocodingCacheHitCount = reverseGeocodeStats.cacheHitCount;
   metrics.geocodingRequestCount = reverseGeocodeStats.requestStartedCount;
@@ -5288,7 +5506,7 @@ async function scanPhotoLibraryForTripDrafts(
       scanAttemptId,
     });
   }
-  options.onProgress?.({
+  reportProgress({
     currentPage: pageCount,
     detectedCandidateCount: preparationCandidateDrafts.length,
     failedPreparationCount: 0,
@@ -5300,6 +5518,7 @@ async function scanPhotoLibraryForTripDrafts(
     scannedAssetCount: 0,
     totalAssetCount: preparationCandidateDrafts.length,
   });
+  assertLocalDetectedTripDataOperationCurrent(operation);
   storeDrafts(sortedNextDrafts);
   logRecentCandidateLifecycle('store_persisted', sortedNextDrafts, scanAttemptId);
   const savedCandidateMatchReasons = nextDrafts.map((draft) => getSavedCandidateMatchReason(draft));
@@ -5625,7 +5844,7 @@ async function scanPhotoLibraryForTripDrafts(
   )).length;
   const overseasSuburbSuppressedCount = overseasMajorCityNormalizedCount;
 
-  options.onProgress?.({
+  reportProgress({
     currentPage: pageCount,
     detectedCandidateCount: candidates.length,
     failedPreparationCount: 0,
@@ -6075,13 +6294,18 @@ let lastScanCompletedAt: Date | null = null;
 export async function scanPhotosSinceLastScan(
   options: Omit<PhotoLibraryScanOptions, 'createdAfter'> = {},
 ) {
-  return scanPhotoLibraryForTripDrafts({
+  const scanPromise = scanPhotoLibraryForTripDrafts({
     ...options,
     createdAfter: lastScanCompletedAt ?? undefined,
-  }).then((result) => {
-    lastScanCompletedAt = new Date();
-    return result;
   });
+  const operation = captureLocalDetectedTripDataOperation();
+  const result = await scanPromise;
+
+  if (isLocalDetectedTripDataOperationCurrent(operation)) {
+    lastScanCompletedAt = new Date();
+  }
+
+  return result;
 }
 
 export function getLocalDetectedTripDraft(draftId?: string | null) {

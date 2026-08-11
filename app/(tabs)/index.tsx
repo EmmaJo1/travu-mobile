@@ -419,19 +419,6 @@ class CurrentLocationUnavailableError extends Error {
   }
 }
 
-type ReverseGeocodeAddress = {
-  city?: string;
-  town?: string;
-  village?: string;
-  county?: string;
-  state?: string;
-  country?: string;
-};
-
-type ReverseGeocodeResponse = {
-  address?: ReverseGeocodeAddress;
-};
-
 function getTodayDateKey(): string {
   return getCurrentLocalDateKey();
 }
@@ -500,6 +487,18 @@ function getEnglishDeviceLocationLabelFromLocality(locality: string): string {
   return trimmed;
 }
 
+function getDeviceLocationAdministrativeArea(
+  address?: Location.LocationGeocodedAddress | null,
+): string {
+  return (
+    address?.city?.trim() ||
+    address?.subregion?.trim() ||
+    address?.district?.trim() ||
+    address?.region?.trim() ||
+    ''
+  );
+}
+
 async function ensureHeaderLocationPermission(): Promise<boolean> {
   const currentPermission = await Location.getForegroundPermissionsAsync();
   const permission = currentPermission.status === 'undetermined'
@@ -517,12 +516,7 @@ async function getDeviceLocationHeaderLabel(
     longitude: coords.longitude,
   });
 
-  const locality =
-    address?.city?.trim() ||
-    address?.subregion?.trim() ||
-    address?.district?.trim() ||
-    address?.region?.trim() ||
-    '';
+  const locality = getDeviceLocationAdministrativeArea(address);
 
   const label = getEnglishDeviceLocationLabelFromLocality(locality);
 
@@ -603,34 +597,24 @@ async function reverseGeocodeCurrentLocation(
   latitude: number,
   longitude: number,
 ): Promise<DestinationOption> {
-  const response = await fetch(
-    `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=10&accept-language=ko`,
-    {
-      headers: {
-        Accept: 'application/json',
-      },
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error('Reverse geocoding failed.');
-  }
-
-  const result = (await response.json()) as ReverseGeocodeResponse;
-  const address = result.address ?? {};
+  const [address] = await Location.reverseGeocodeAsync({ latitude, longitude });
   const displayName =
-    address.city ?? address.town ?? address.village ?? address.county ?? address.state;
+    getDeviceLocationAdministrativeArea(address) || address?.name?.trim();
 
   if (!displayName) {
     throw new Error('City-level location is unavailable.');
   }
 
+  const countryName = address?.country?.trim() ?? '';
+  const englishDisplayName = getEnglishDeviceLocationLabelFromLocality(displayName);
+
   return {
     id: createDestinationId('current-location', displayName),
     name: displayName,
-    country: address.country ?? '',
+    country: countryName,
     displayName,
-    countryName: address.country ?? '',
+    countryName,
+    englishDisplayName: englishDisplayName || undefined,
     type: 'city',
   };
 }

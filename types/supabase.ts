@@ -389,6 +389,21 @@ export interface Database {
     };
     Views: Record<string, never>;
     Functions: {
+      hard_delete_account_data: {
+        Args: {
+          p_user_id: string;
+        };
+        Returns: {
+          deleted_destination_count: number;
+          deleted_photo_count: number;
+          deleted_photo_import_job_count: number;
+          deleted_place_count: number;
+          deleted_record_count: number;
+          deleted_record_photo_count: number;
+          deleted_trip_count: number;
+          deleted_trip_day_count: number;
+        }[];
+      };
       ensure_photo_covers_for_trip: {
         Args: {
           p_trip_id: string;
@@ -408,6 +423,16 @@ export interface Database {
           photo_id: string;
           storage_path: string;
           trip_id: string;
+        }[];
+      };
+      list_account_storage_objects: {
+        Args: {
+          p_limit?: number;
+          p_user_id: string;
+        };
+        Returns: {
+          bucket_id: string;
+          object_name: string;
         }[];
       };
       set_place_cover_photo: {
