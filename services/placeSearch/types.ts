@@ -14,7 +14,3 @@ export interface SelectedPlace {
 export interface PlaceSearchSuggestion extends SelectedPlace {
   searchKeywords?: string[];
 }
-
-export interface PlaceSearchProvider {
-  search: (query: string) => PlaceSearchSuggestion[];
-}

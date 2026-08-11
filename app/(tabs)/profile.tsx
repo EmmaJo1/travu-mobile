@@ -1,7 +1,15 @@
 import { useRouter, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useMemo, useState } from 'react';
-import { Alert, Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  Alert,
+  Image,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
@@ -10,7 +18,6 @@ import ProfileSummary from '@/components/mypage/ProfileSummary';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import DaySelectorSheet from '@/components/record/DaySelectorSheet';
 import TripListCardList from '@/components/trip/TripListCardList';
-import { MOCK_MY_PAGE_PROFILE } from '@/constants/mockMyPageProfile';
 import {
     MOCK_MY_PAGE_TRIPS,
     TRAVEL_SORT_LABELS,
@@ -95,8 +102,14 @@ export default function ProfileScreen() {
   const [deletedTripIds, setDeletedTripIds] = useState<string[]>([]);
   const savedTrips = useSavedMyPageTrips();
   const { profile } = useUserProfile();
-  const { user } = useAuth();
-  const { data: supabaseTrips } = useMyTrips();
+  const { canUseSupabaseUserData } = useAuth();
+  const {
+    data: supabaseTrips,
+    isError: isSupabaseTripsError,
+    isLoading: isSupabaseTripsLoading,
+    isRefetching: isSupabaseTripsRefetching,
+    refetch: refetchSupabaseTrips,
+  } = useMyTrips();
   const deleteTripMutation = useDeleteTrip();
   const supabaseTripIds = useMemo(
     () => new Set((supabaseTrips ?? []).map((trip) => trip.id)),
@@ -106,14 +119,13 @@ export default function ProfileScreen() {
   const myPageTrips = useMemo(
     () => {
       const deletedTripIdSet = new Set(deletedTripIds);
-      const hasSupabaseTrips = Array.isArray(supabaseTrips) && supabaseTrips.length > 0;
-      const sourceTrips = hasSupabaseTrips
-        ? mapSupabaseTripsToMyPageTrips(supabaseTrips)
+      const sourceTrips = canUseSupabaseUserData
+        ? mapSupabaseTripsToMyPageTrips(supabaseTrips ?? [])
         : mergeSavedAndMockTrips(savedTrips);
 
       return sourceTrips.filter((trip) => !deletedTripIdSet.has(trip.id));
     },
-    [deletedTripIds, savedTrips, supabaseTrips],
+    [canUseSupabaseUserData, deletedTripIds, savedTrips, supabaseTrips],
   );
   const profileStats = useMemo(
     () => ({
@@ -129,7 +141,7 @@ export default function ProfileScreen() {
   );
   const groupedTrips = useMemo(() => groupTripsByYear(sortedTrips), [sortedTrips]);
 
-  const handleRequestDeleteTrip = (tripId: string, tripTitle?: string) => {
+  const handleRequestDeleteTrip = (tripId: string) => {
     Alert.alert(
       '삭제하시겠습니까?',
       '이 여행 기록은 삭제 후 복구할 수 없어요.',
@@ -144,32 +156,27 @@ export default function ProfileScreen() {
           onPress: () => {
             const isSupabaseTrip = supabaseTripIds.has(tripId);
 
-            console.warn('[ProfileScreen] delete trip requested', {
-              isSupabaseTrip,
-              tripTitle,
-              tripId,
-              userId: user?.id,
-            });
-
             if (isSupabaseTrip) {
               deleteTripMutation.mutate(tripId, {
                 onError: (error) => {
                   const message = getErrorMessage(error);
-                  console.warn('[ProfileScreen] delete trip mutation failed', {
-                    message,
-                    tripTitle,
-                    tripId,
-                    userId: user?.id,
-                  });
+                  console.warn('[ProfileScreen] delete trip mutation failed', error);
                   Alert.alert(
                     '여행을 삭제하지 못했어요',
                     `잠시 후 다시 시도해주세요.\n개발 정보: ${message}`,
                   );
                 },
-                onSuccess: () => {
+                onSuccess: (result) => {
                   setDeletedTripIds((current) =>
                     current.includes(tripId) ? current : [...current, tripId],
                   );
+
+                  if (result.storageCleanupIncomplete) {
+                    Alert.alert(
+                      '\uC5EC\uD589\uC740 \uC0AD\uC81C\uB410\uC5B4\uC694',
+                      '\uC77C\uBD80 \uC0AC\uC9C4 \uD30C\uC77C \uC815\uB9AC\uAC00 \uB0A8\uC544 \uC788\uC5B4 \uB2E4\uC74C \uC571 \uC2E4\uD589 \uB54C \uC790\uB3D9\uC73C\uB85C \uB2E4\uC2DC \uC815\uB9AC\uD569\uB2C8\uB2E4.',
+                    );
+                  }
                 },
               });
               return;
@@ -198,6 +205,12 @@ export default function ProfileScreen() {
         style={styles.scroll}
         contentContainerStyle={styles.content}
         nestedScrollEnabled
+        refreshControl={canUseSupabaseUserData ? (
+          <RefreshControl
+            refreshing={isSupabaseTripsRefetching}
+            onRefresh={() => void refetchSupabaseTrips()}
+          />
+        ) : undefined}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.profileBlock}>
@@ -205,7 +218,6 @@ export default function ProfileScreen() {
             <ProfileSummary
               userName={profile.name}
               profileUri={profile.profileImageUri}
-              profileImage={profile.profileImageUri ? undefined : MOCK_MY_PAGE_PROFILE.profileImage}
               cityCount={profileStats.uniqueCityCount}
               countryCount={profileStats.uniqueCountryCount}
               tripCount={profileStats.totalTrips}
@@ -231,6 +243,7 @@ export default function ProfileScreen() {
                 <View style={styles.tripListHeader}>
                   <Text style={styles.tripListTitle}>여행 리스트</Text>
                   <Pressable
+                    disabled={groupedTrips.length === 0}
                     onPress={() => setSortSheetVisible(true)}
                     style={({ pressed }) => [styles.sortTrigger, pressed && styles.sortTriggerPressed]}
                     accessibilityRole="button"
@@ -248,7 +261,32 @@ export default function ProfileScreen() {
                 </View>
 
                 <View style={styles.tripList}>
-                  {groupedTrips.map(({ year, trips: yearTrips }) => (
+                  {canUseSupabaseUserData && isSupabaseTripsLoading ? (
+                    <View style={styles.tripListState}>
+                      <Text style={styles.tripListStateTitle}>여행을 불러오는 중이에요</Text>
+                    </View>
+                  ) : canUseSupabaseUserData && isSupabaseTripsError ? (
+                    <View style={styles.tripListState}>
+                      <Text style={styles.tripListStateTitle}>여행을 불러오지 못했어요</Text>
+                      <Text style={styles.tripListStateDescription}>
+                        네트워크 상태를 확인한 뒤 다시 시도해주세요.
+                      </Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => void refetchSupabaseTrips()}
+                        style={styles.tripListRetryButton}
+                      >
+                        <Text style={styles.tripListRetryText}>다시 시도</Text>
+                      </Pressable>
+                    </View>
+                  ) : groupedTrips.length === 0 ? (
+                    <View style={styles.tripListState}>
+                      <Text style={styles.tripListStateTitle}>아직 완료한 여행이 없어요</Text>
+                      <Text style={styles.tripListStateDescription}>
+                        여행을 완료하면 이곳에 차곡차곡 모여요.
+                      </Text>
+                    </View>
+                  ) : groupedTrips.map(({ year, trips: yearTrips }) => (
                     <View key={year} style={styles.yearSection}>
                       <View style={styles.yearHeader}>
                         <Text style={styles.yearLabel}>{year}</Text>
@@ -256,7 +294,7 @@ export default function ProfileScreen() {
 
                       <TripListCardList
                         trips={yearTrips.map(toTripListItem)}
-                        onLongPressTrip={(trip) => handleRequestDeleteTrip(trip.id, trip.title)}
+                        onLongPressTrip={(trip) => handleRequestDeleteTrip(trip.id)}
                         onPressTrip={(trip) => {
                           router.push({
                             pathname: '/day-archive-detail',
@@ -396,5 +434,31 @@ const styles = StyleSheet.create({
   sortTriggerIcon: {
     width: 8,
     height: 8,
+  },
+  tripListState: {
+    minHeight: 160,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.xl,
+  },
+  tripListStateTitle: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+  },
+  tripListStateDescription: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+    textAlign: 'center',
+  },
+  tripListRetryButton: {
+    marginTop: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+  },
+  tripListRetryText: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.black,
   },
 });

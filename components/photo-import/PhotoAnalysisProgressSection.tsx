@@ -11,10 +11,20 @@ const CIRCLE_RADIUS = (CIRCLE_SIZE - CIRCLE_STROKE_WIDTH) / 2;
 const CIRCLE_CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS;
 
 interface PhotoAnalysisProgressSectionProps {
+  phase?: 'collecting' | 'preparing_files' | 'resolving_locations' | 'building_candidates';
+  phaseCompletedCount?: number;
+  phaseTotalCount?: number;
   progress: number;
   scannedAssetCount?: number;
   totalAssetCount?: number;
 }
+
+const PHASE_STATUS_TEXT = {
+  collecting: '사진 불러오는 중',
+  preparing_files: '원본 사진 준비 중',
+  resolving_locations: '촬영 지역 확인 중',
+  building_candidates: '여행 후보 정리 중',
+} as const;
 
 function clampProgress(value: number) {
   if (!Number.isFinite(value)) {
@@ -25,17 +35,20 @@ function clampProgress(value: number) {
 }
 
 export default function PhotoAnalysisProgressSection({
+  phase,
+  phaseCompletedCount,
+  phaseTotalCount,
   progress,
   scannedAssetCount,
   totalAssetCount,
 }: PhotoAnalysisProgressSectionProps) {
+  const hasPhaseCounts = typeof phaseTotalCount === 'number';
   const hasTotal = typeof totalAssetCount === 'number' && totalAssetCount > 0;
-  const total = hasTotal ? totalAssetCount : DEFAULT_PREVIEW_TOTAL;
-  const percent = clampProgress(hasTotal
-    ? ((scannedAssetCount ?? 0) / total) * 100
-    : progress);
-  const scanned = typeof scannedAssetCount === 'number' && scannedAssetCount > 0
-    ? Math.min(scannedAssetCount, total)
+  const total = hasPhaseCounts ? phaseTotalCount : hasTotal ? totalAssetCount : DEFAULT_PREVIEW_TOTAL;
+  const completed = hasPhaseCounts ? phaseCompletedCount : scannedAssetCount;
+  const percent = clampProgress(progress);
+  const scanned = typeof completed === 'number'
+    ? Math.max(0, Math.min(completed, total))
     : Math.round((total * percent) / 100);
   const strokeDashoffset = CIRCLE_CIRCUMFERENCE * (1 - percent / 100);
 
@@ -79,7 +92,9 @@ export default function PhotoAnalysisProgressSection({
           <Text style={styles.statusText}>분석 완료</Text>
         </View>
       </View>
-      <Text style={styles.currentStatusText}>여행 후보를 정리하고 있어요</Text>
+      <Text style={styles.currentStatusText}>
+        {phase ? PHASE_STATUS_TEXT[phase] : '여행 후보를 정리하고 있어요'}
+      </Text>
     </View>
   );
 }

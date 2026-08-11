@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   StyleSheet,
@@ -16,11 +17,11 @@ import ScreenHeader from '@/components/nav/ScreenHeader';
 import DetectedTripCandidateCard from '@/components/photo-import/DetectedTripCandidateCard';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
+import { getDetectedTripSaveUserMessage } from '@/services/photoImport/saveDetectedTripDraft';
 import type { PhotoImportTripCandidate } from '@/services/photoImport/types';
 
 const BACKGROUND = Colors.light.bgScreen;
 const GREY_700 = '#595959';
-const MOCK_SAVE_DELAY_MS = 650;
 const CARD_HEIGHT = 99;
 const CARD_GAP = 8;
 const LIST_TOP = 195;
@@ -30,10 +31,6 @@ const LINK_MIN_GAP = 16;
 const LINK_TO_CTA_GAP = 24;
 const CTA_HEIGHT = 48;
 const CTA_BOTTOM_MIN = 16;
-const INITIAL_COVER_HYDRATION_LIMIT = 15;
-const VIEWABILITY_CONFIG = {
-  itemVisiblePercentThreshold: 40,
-};
 
 function getCandidateStartTime(candidate: PhotoImportTripCandidate) {
   const startDate = candidate.debugMetadata?.startDate;
@@ -92,8 +89,8 @@ export default function DetectedTrips() {
     candidates,
     selectedCandidateIds,
     toggleCandidate,
-    hydrateCandidateCovers,
     openPhotoImportResults,
+    photoSaveProgress,
     saveSelectedPhotoImportResults,
   } = usePhotoImportFlow();
   const [isSaving, setIsSaving] = React.useState(false);
@@ -118,15 +115,6 @@ export default function DetectedTrips() {
       .map(({ candidate }) => candidate),
     [candidates],
   );
-  const initialHydrationCandidateIds = React.useMemo(
-    () => sortedCandidates
-      .slice(0, INITIAL_COVER_HYDRATION_LIMIT)
-      .map((candidate) => candidate.id),
-    [sortedCandidates],
-  );
-  const initialHydrationCandidateKey = initialHydrationCandidateIds.join('|');
-  const requestedInitialHydrationKeyRef = React.useRef<string | undefined>(undefined);
-
   React.useEffect(() => {
     openPhotoImportResults();
   }, [openPhotoImportResults]);
@@ -151,7 +139,6 @@ export default function DetectedTrips() {
       detectedCandidateRenderedCount: sortedCandidates.length,
       detectedCandidateSortOrder: 'oldest_first',
       detectedCandidateTotalBeforeListLimit: candidates.length,
-      initialCoverHydrationLimit: INITIAL_COVER_HYDRATION_LIMIT,
       isAscending: getOutOfOrderPairCount(sortedCandidates) === 0,
       outOfOrderPairCount: getOutOfOrderPairCount(sortedCandidates),
       scanAttemptId: sortedCandidates[0]?.debugMetadata?.scanAttemptId,
@@ -159,20 +146,10 @@ export default function DetectedTrips() {
     });
   }, [candidates.length, sortedCandidates]);
 
-  React.useEffect(() => {
-    if (initialHydrationCandidateIds.length === 0) {
-      return;
-    }
-
-    if (requestedInitialHydrationKeyRef.current === initialHydrationCandidateKey) {
-      return;
-    }
-
-    requestedInitialHydrationKeyRef.current = initialHydrationCandidateKey;
-    void hydrateCandidateCovers(initialHydrationCandidateIds);
-  }, [hydrateCandidateCovers, initialHydrationCandidateIds, initialHydrationCandidateKey]);
-
   const selectedCount = selectedCandidateIds.length;
+  const saveProgressLabel = photoSaveProgress
+    ? `${photoSaveProgress.phase === 'preparing' ? '원본 사진 준비 중' : '사진 저장 중'} · ${photoSaveProgress.completedCount.toLocaleString()} / ${photoSaveProgress.totalCount.toLocaleString()}`
+    : '저장하는 중...';
   const canSave = selectedCount > 0;
   const ctaBottom = Math.max(insets.bottom + 8, CTA_BOTTOM_MIN);
   const ctaTop = screenHeight - ctaBottom - CTA_HEIGHT;
@@ -197,13 +174,12 @@ export default function DetectedTrips() {
     setIsSaving(true);
 
     try {
-      await Promise.all([
-        saveSelectedPhotoImportResults(selectedCandidateIds),
-        wait(MOCK_SAVE_DELAY_MS),
-      ]);
+      await saveSelectedPhotoImportResults(selectedCandidateIds);
       router.replace('/(tabs)' as Href);
-    } catch {
+    } catch (error) {
       setIsSaving(false);
+      const message = getDetectedTripSaveUserMessage(error);
+      Alert.alert(message.title, message.message);
     }
   }, [canSave, isSaving, router, saveSelectedPhotoImportResults, selectedCandidateIds]);
 
@@ -246,20 +222,6 @@ export default function DetectedTrips() {
     [handleOpenCandidate, isSaving, selectedCandidateIds, toggleCandidate],
   );
 
-  const handleViewableItemsChanged = React.useRef(({
-    viewableItems,
-  }: {
-    viewableItems: { item?: PhotoImportTripCandidate }[];
-  }) => {
-    const visibleCandidateIds = viewableItems
-      .map((viewableItem) => viewableItem.item?.id)
-      .filter((candidateId): candidateId is string => Boolean(candidateId));
-
-    if (visibleCandidateIds.length > 0) {
-      void hydrateCandidateCovers(visibleCandidateIds);
-    }
-  }).current;
-
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar style="dark" />
@@ -276,9 +238,7 @@ export default function DetectedTrips() {
           keyExtractor={(item) => item.id}
           renderItem={renderCandidate}
           ItemSeparatorComponent={CandidateSeparator}
-          onViewableItemsChanged={handleViewableItemsChanged}
           showsVerticalScrollIndicator={false}
-          viewabilityConfig={VIEWABILITY_CONFIG}
           bounces={isListScrollable}
           scrollEnabled={isListScrollable}
         />
@@ -305,7 +265,7 @@ export default function DetectedTrips() {
         {isSaving ? (
           <View style={styles.savingContent}>
             <ActivityIndicator size="small" color={Colors.foundation.grey600} />
-            <Text style={styles.fixedButtonSavingLabel}>저장하는 중...</Text>
+            <Text style={styles.fixedButtonSavingLabel}>{saveProgressLabel}</Text>
           </View>
         ) : (
           <Text style={[styles.fixedButtonLabel, !canSave && styles.fixedButtonLabelDisabled]}>
@@ -319,12 +279,6 @@ export default function DetectedTrips() {
 
 function CandidateSeparator() {
   return <View style={styles.cardSeparator} />;
-}
-
-function wait(ms: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 const styles = StyleSheet.create({

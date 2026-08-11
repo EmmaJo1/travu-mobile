@@ -259,7 +259,7 @@ export default function TravelStatusSheet({
               <View style={styles.divider} />
               <SheetMenuItem
                 iconName="map-pin"
-                title="여행지 변경"
+                title="여행지 수정"
                 description="여행 장소를 변경합니다"
                 onPress={onPressChangeDestination}
               />

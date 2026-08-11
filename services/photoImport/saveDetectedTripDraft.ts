@@ -1,14 +1,35 @@
 import {
   createTripWithDays,
+  fetchTripById,
   softDeleteTrip,
   type TripRow,
 } from '@/services/supabase/trips';
 import { fetchTripDaysByTripId, type TripDayRow } from '@/services/supabase/tripDays';
-import { createPlaceForTripDay, type PlaceRow } from '@/services/supabase/places';
-import type {
-  LocalDetectedPlaceGroup,
-  LocalDetectedTripDraft,
+import {
+  createPlaceForTripDay,
+  fetchPlacesByTripDayId,
+  type PlaceRow,
+} from '@/services/supabase/places';
+import { uploadPhotoAsset } from '@/services/supabase/photos';
+import {
+  getLocalDetectedPhotoStableIdentifier,
+  prepareLocalDetectedPhotoForUpload,
+  type LocalDetectedPhoto,
+  type LocalDetectedPlaceGroup,
+  type LocalDetectedTripDraft,
 } from '@/services/photoImport/localDetectedTripDraftStore';
+import { buildVisitedAtIso } from '@/utils/placeEntryTime';
+
+const PHOTO_UPLOAD_CONCURRENCY = 3;
+const PHOTO_PREPARATION_CONCURRENCY = 4;
+const activeDetectedTripSaveOperations =
+  new Map<string, Promise<SaveDetectedTripDraftResult>>();
+
+export interface DetectedTripPhotoSaveProgress {
+  completedCount: number;
+  phase: 'preparing' | 'uploading';
+  totalCount: number;
+}
 
 export interface DetectedTripSavePlaceInput {
   cityName?: string | null;
@@ -19,16 +40,20 @@ export interface DetectedTripSavePlaceInput {
   longitude?: number | null;
   name: string;
   photoCount?: number | null;
+  sourceGroupId?: string | null;
   time?: string | null;
 }
 
 export interface SaveDetectedTripDraftOptions {
+  onPhotoProgress?: (progress: DetectedTripPhotoSaveProgress) => void;
   places?: DetectedTripSavePlaceInput[];
   saveAttemptId?: string;
 }
 
 export interface SaveDetectedTripDraftResult {
   photoReferenceCreatedCount: number;
+  photoUploadFailedCount: number;
+  photoUploadTotalCount: number;
   placeCreatedCount: number;
   places: PlaceRow[];
   trip: TripRow;
@@ -44,6 +69,7 @@ type DetectedTripSaveStage =
   | 'map_draft_days'
   | 'insert_places'
   | 'validate_place_count'
+  | 'upload_photos'
   | 'rollback';
 
 export class DetectedTripSaveError extends Error {
@@ -81,6 +107,20 @@ export class DetectedTripSaveError extends Error {
     this.rollbackSucceeded = rollbackSucceeded;
     this.stage = stage;
   }
+}
+
+export function getDetectedTripSaveUserMessage(error: unknown) {
+  if (error instanceof DetectedTripSaveError && error.stage === 'upload_photos') {
+    return {
+      message: error.message,
+      title: '사진을 모두 저장하지 못했어요',
+    };
+  }
+
+  return {
+    message: '잠시 후 다시 시도해주세요.',
+    title: '여행을 저장하지 못했어요',
+  };
 }
 
 const FORBIDDEN_TRIP_TITLES = new Set([
@@ -129,37 +169,6 @@ function parseDateLabelToDateKey(dateLabel?: string | null) {
   return `${matched[1]}-${String(Number(matched[2])).padStart(2, '0')}-${String(
     Number(matched[3]),
   ).padStart(2, '0')}`;
-}
-
-function parseTimeLabel(timeLabel?: string | null) {
-  const trimmedTime = timeLabel?.trim();
-  const matchedTime = trimmedTime?.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
-
-  if (!matchedTime) {
-    return { hour: 0, minute: 0 };
-  }
-
-  const hour12 = Number(matchedTime[1]);
-  const minute = Number(matchedTime[2] ?? 0);
-  const period = matchedTime[3].toUpperCase();
-  const hour = period === 'AM'
-    ? hour12 % 12
-    : (hour12 % 12) + 12;
-
-  return { hour, minute };
-}
-
-function buildVisitedAt(dateKey?: string | null, timeLabel?: string | null) {
-  if (!dateKey) {
-    return null;
-  }
-
-  const { hour, minute } = parseTimeLabel(timeLabel);
-
-  return `${dateKey}T${String(hour).padStart(2, '0')}:${String(minute).padStart(
-    2,
-    '0',
-  )}:00.000Z`;
 }
 
 function getDateKeyTime(dateKey: string) {
@@ -279,6 +288,7 @@ function createPlaceInputsFromDraft(draft: LocalDetectedTripDraft): DetectedTrip
         longitude,
         name: group.groupDisplayName || group.label || fallbackName,
         photoCount: group.photos.length,
+        sourceGroupId: group.id,
         time: group.time,
       };
     }),
@@ -293,7 +303,290 @@ function isInsertablePlaceInput(place: DetectedTripSavePlaceInput) {
   return normalizeText(place.name).length > 0 && (place.photoCount ?? 1) > 0;
 }
 
-export async function saveDetectedTripDraftToSupabase(
+interface DetectedTripPhotoUploadTarget {
+  dateKey: string;
+  groupId: string;
+  identifier: string;
+  photo: LocalDetectedPhoto;
+}
+
+function createDetectedTripPhotoUploadTargets(
+  draft: LocalDetectedTripDraft,
+): DetectedTripPhotoUploadTarget[] {
+  const targetsByIdentifier = new Map<string, DetectedTripPhotoUploadTarget>();
+
+  for (const day of draft.days) {
+    for (const group of day.groups) {
+      for (const photo of group.photos) {
+        if (photo.isScreenshot) {
+          continue;
+        }
+
+        const identifier = getLocalDetectedPhotoStableIdentifier(photo);
+
+        if (!targetsByIdentifier.has(identifier)) {
+          targetsByIdentifier.set(identifier, {
+            dateKey: day.dateKey,
+            groupId: group.id,
+            identifier,
+            photo,
+          });
+        }
+      }
+    }
+  }
+
+  return [...targetsByIdentifier.values()];
+}
+
+function createUploadExif(photo: LocalDetectedPhoto) {
+  if (photo.orientation == null) {
+    return photo.exif ?? null;
+  }
+
+  return {
+    ...(photo.exif ?? {}),
+    Orientation: photo.orientation,
+  };
+}
+
+async function fetchPlacesForTripDays(tripDays: TripDayRow[]) {
+  const placeGroups = await Promise.all(
+    tripDays.map((tripDay) => fetchPlacesByTripDayId(tripDay.id)),
+  );
+
+  return placeGroups.flat();
+}
+
+async function uploadDetectedTripPhotos(
+  draft: LocalDetectedTripDraft,
+  trip: TripRow,
+  tripDays: TripDayRow[],
+  places: PlaceRow[],
+  saveAttemptId: string,
+  onPhotoProgress?: (progress: DetectedTripPhotoSaveProgress) => void,
+): Promise<SaveDetectedTripDraftResult> {
+  const targets = createDetectedTripPhotoUploadTargets(draft);
+  const tripDayByDate = new Map(tripDays.map((tripDay) => [tripDay.date, tripDay]));
+  const state = draft.photoSaveState;
+
+  if (!state || state.tripId !== trip.id) {
+    throw new DetectedTripSaveError('사진 저장 상태를 확인할 수 없어요. 다시 시도해주세요.', {
+      code: 'photo_upload_state_missing',
+      stage: 'upload_photos',
+    });
+  }
+
+  const confirmedState = state;
+  confirmedState.totalPhotoCount = targets.length;
+  const isRetry = (confirmedState.saveAttemptCount ?? 0) > 0;
+  confirmedState.saveAttemptCount = (confirmedState.saveAttemptCount ?? 0) + 1;
+  const failedIdentifiers: string[] = [];
+  const pendingTargets = targets.filter(
+    (target) => !confirmedState.savedPhotoResultsByIdentifier[target.identifier],
+  );
+  const alreadySavedPhotoCount = targets.length - pendingTargets.length;
+  const preparedTargets: DetectedTripPhotoUploadTarget[] = [];
+  const preparationPromiseCache =
+    new Map<string, Promise<LocalDetectedPhoto | null>>();
+  let nextPreparationTargetIndex = 0;
+  let preparedCompletedCount = 0;
+  let nextTargetIndex = 0;
+  let photoRowCreatedCount = 0;
+  let rollbackObjectDeleteCount = 0;
+  let uploadedPhotoCount = 0;
+
+  logStageStarted('upload_photos', draft.id, {
+    alreadySavedPhotoCount,
+    attemptedPhotoCount: pendingTargets.length,
+    expectedPhotoCount: targets.length,
+    photoUploadTotalCount: targets.length,
+    retryTargetCount: isRetry ? pendingTargets.length : 0,
+    saveAttemptId,
+    tripId: trip.id,
+  });
+
+  onPhotoProgress?.({
+    completedCount: 0,
+    phase: 'preparing',
+    totalCount: pendingTargets.length,
+  });
+
+  async function prepareNextTarget() {
+    while (nextPreparationTargetIndex < pendingTargets.length) {
+      const target = pendingTargets[nextPreparationTargetIndex];
+      nextPreparationTargetIndex += 1;
+      let preparationPromise = preparationPromiseCache.get(target.identifier);
+
+      if (!preparationPromise) {
+        preparationPromise = prepareLocalDetectedPhotoForUpload(target.photo);
+        preparationPromiseCache.set(target.identifier, preparationPromise);
+      }
+
+      const preparedPhoto = await preparationPromise;
+
+      if (preparedPhoto) {
+        preparedTargets.push(target);
+      } else {
+        failedIdentifiers.push(target.identifier);
+      }
+
+      preparedCompletedCount += 1;
+      onPhotoProgress?.({
+        completedCount: preparedCompletedCount,
+        phase: 'preparing',
+        totalCount: pendingTargets.length,
+      });
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      {
+        length: Math.min(
+          PHOTO_PREPARATION_CONCURRENCY,
+          pendingTargets.length,
+        ),
+      },
+      () => prepareNextTarget(),
+    ),
+  );
+
+  onPhotoProgress?.({
+    completedCount: 0,
+    phase: 'uploading',
+    totalCount: preparedTargets.length,
+  });
+
+  let uploadCompletedCount = 0;
+  async function uploadNextTarget() {
+    while (nextTargetIndex < preparedTargets.length) {
+      const target = preparedTargets[nextTargetIndex];
+      nextTargetIndex += 1;
+
+      const tripDay = tripDayByDate.get(target.dateKey);
+      const preparedPhoto = target.photo;
+
+      if (
+        !tripDay ||
+        preparedPhoto.preparationStatus !== 'ready' ||
+        !preparedPhoto.localUri
+      ) {
+        failedIdentifiers.push(target.identifier);
+        continue;
+      }
+
+      try {
+        const result = await uploadPhotoAsset({
+          exif: createUploadExif(preparedPhoto),
+          fileName: preparedPhoto.filename,
+          fileSize: preparedPhoto.fileSize,
+          height: preparedPhoto.height,
+          latitude: preparedPhoto.latitude,
+          localUri: preparedPhoto.localUri,
+          longitude: preparedPhoto.longitude,
+          mimeType: preparedPhoto.mimeType,
+          onLifecycleEvent: (event) => {
+            if (event === 'storage_object_uploaded') {
+              uploadedPhotoCount += 1;
+            } else if (event === 'photo_row_created') {
+              photoRowCreatedCount += 1;
+            } else if (event === 'storage_object_deleted') {
+              rollbackObjectDeleteCount += 1;
+            }
+          },
+          placeId: confirmedState.placeIdsByGroupId[target.groupId] ?? null,
+          takenAt: preparedPhoto.takenAt,
+          tripDayId: tripDay.id,
+          tripId: trip.id,
+          width: preparedPhoto.width,
+        });
+
+        confirmedState.savedPhotoResultsByIdentifier[target.identifier] = {
+          photoId: result.photo.id,
+          storagePath: result.storagePath,
+        };
+      } catch (error) {
+        failedIdentifiers.push(target.identifier);
+        if (__DEV__) {
+          console.warn('[detected trip save] photo upload failed', {
+            draftId: draft.id,
+            errorCode: getErrorCode(error),
+            saveAttemptId,
+          });
+        }
+      }
+      uploadCompletedCount += 1;
+      onPhotoProgress?.({
+        completedCount: uploadCompletedCount,
+        phase: 'uploading',
+        totalCount: preparedTargets.length,
+      });
+    }
+  }
+
+  const workerCount = Math.min(PHOTO_UPLOAD_CONCURRENCY, preparedTargets.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, () => uploadNextTarget()),
+  );
+
+  confirmedState.failedPhotoIdentifiers = failedIdentifiers;
+  const savedPhotoCount = Object.keys(confirmedState.savedPhotoResultsByIdentifier).length;
+
+  logStageCompleted('upload_photos', draft.id, {
+    alreadySavedPhotoCount,
+    attemptedPhotoCount: pendingTargets.length,
+    expectedPhotoCount: targets.length,
+    failedPhotoCount: failedIdentifiers.length,
+    finalSavedPhotoCount: savedPhotoCount,
+    photoRowCreatedCount,
+    photoPreparationConcurrency: PHOTO_PREPARATION_CONCURRENCY,
+    photoPreparationFailedCount: pendingTargets.length - preparedTargets.length,
+    photoPreparationSuccessCount: preparedTargets.length,
+    photoUploadAttemptedCount: pendingTargets.length,
+    photoUploadConcurrency: PHOTO_UPLOAD_CONCURRENCY,
+    photoUploadFailedCount: failedIdentifiers.length,
+    photoUploadSuccessCount: savedPhotoCount,
+    photoUploadTotalCount: targets.length,
+    retryTargetCount: isRetry ? pendingTargets.length : 0,
+    rollbackObjectDeleteCount,
+    saveAttemptId,
+    uploadedPhotoCount,
+  });
+
+  if (targets.length === 0 || failedIdentifiers.length > 0 || savedPhotoCount !== targets.length) {
+    const failedCount = targets.length === 0
+      ? draft.photoCount
+      : Math.max(failedIdentifiers.length, targets.length - savedPhotoCount);
+
+    throw new DetectedTripSaveError(
+      `사진 ${failedCount}장을 저장하지 못했어요. 연결 상태를 확인한 뒤 다시 시도해주세요.`,
+      {
+        code: savedPhotoCount > 0 ? 'photo_upload_partial_failed' : 'photo_upload_all_failed',
+        details: {
+          photoUploadFailedCount: failedCount,
+          photoUploadSuccessCount: savedPhotoCount,
+          photoUploadTotalCount: targets.length,
+          saveAttemptId,
+        },
+        stage: 'upload_photos',
+      },
+    );
+  }
+
+  return {
+    photoReferenceCreatedCount: savedPhotoCount,
+    photoUploadFailedCount: 0,
+    photoUploadTotalCount: targets.length,
+    placeCreatedCount: places.length,
+    places,
+    trip,
+    tripDayCreatedCount: tripDays.length,
+    tripDays,
+  };
+}
+
+async function executeDetectedTripDraftSave(
   draft: LocalDetectedTripDraft,
   options: SaveDetectedTripDraftOptions = {},
 ): Promise<SaveDetectedTripDraftResult> {
@@ -360,6 +653,41 @@ export async function saveDetectedTripDraftToSupabase(
 
   logStageCompleted('validate_draft', draft.id, { saveAttemptId });
 
+  if (draft.photoSaveState?.tripId) {
+    const existingTrip = await fetchTripById(draft.photoSaveState.tripId);
+
+    if (!existingTrip) {
+      throw new DetectedTripSaveError('저장 중인 여행 정보를 찾을 수 없어요.', {
+        code: 'photo_retry_trip_missing',
+        stage: 'upload_photos',
+      });
+    }
+
+    const existingTripDays = await fetchTripDaysByTripId(existingTrip.id);
+    const existingPlaces = await fetchPlacesForTripDays(existingTripDays);
+
+    if (__DEV__) {
+      console.info('[detected trip save] resuming failed photos', {
+        draftId: draft.id,
+        failedPhotoCount: draft.photoSaveState.failedPhotoIdentifiers.length,
+        saveAttemptId,
+        savedPhotoCount: Object.keys(
+          draft.photoSaveState.savedPhotoResultsByIdentifier,
+        ).length,
+        tripId: existingTrip.id,
+      });
+    }
+
+    return uploadDetectedTripPhotos(
+      draft,
+      existingTrip,
+      existingTripDays,
+      existingPlaces,
+      saveAttemptId,
+      options.onPhotoProgress,
+    );
+  }
+
   logStageStarted('create_trip', draft.id, { saveAttemptId });
   let trip: TripRow;
 
@@ -420,6 +748,7 @@ export async function saveDetectedTripDraftToSupabase(
     });
     const tripDayByDate = new Map(tripDays.map((day) => [day.date, day]));
     const createdPlaces: PlaceRow[] = [];
+    const placeIdsByGroupId: Record<string, string> = {};
     let placeInsertAttemptCount = 0;
     let placeInsertFailureCount = 0;
     const placeMappingByDate = new Map<string, {
@@ -544,10 +873,13 @@ export async function saveDetectedTripDraftToSupabase(
           source: 'photo_cluster',
           tripDayId: tripDay.id,
           tripId: trip.id,
-          visitedAt: buildVisitedAt(dateKey, place.time),
+          visitedAt: buildVisitedAtIso(dateKey, place.time),
         });
 
         createdPlaces.push(createdPlace);
+        if (place.sourceGroupId) {
+          placeIdsByGroupId[place.sourceGroupId] = createdPlace.id;
+        }
       } catch (error) {
         placeInsertFailureCount += 1;
         logStageFailed('insert_places', draft.id, error, {
@@ -625,11 +957,33 @@ export async function saveDetectedTripDraftToSupabase(
       saveAttemptId,
     });
 
+    const photoUploadTargets = createDetectedTripPhotoUploadTargets(draft);
+    draft.photoSaveState = {
+      failedPhotoIdentifiers: photoUploadTargets.map((target) => target.identifier),
+      placeIdsByGroupId,
+      saveAttemptCount: 0,
+      savedPhotoResultsByIdentifier: {},
+      totalPhotoCount: photoUploadTargets.length,
+      tripDayIdsByDate: Object.fromEntries(
+        tripDays.map((tripDay) => [tripDay.date, tripDay.id]),
+      ),
+      tripId: trip.id,
+    };
+
+    const result = await uploadDetectedTripPhotos(
+      draft,
+      trip,
+      tripDays,
+      createdPlaces,
+      saveAttemptId,
+      options.onPhotoProgress,
+    );
+
     if (__DEV__) {
       console.info('[detected trip save] completed', {
         detectedTripSaveCompleted: true,
         detectedTripSaveElapsedMs: Date.now() - startedAt,
-        detectedTripSavePhotoReferenceCreatedCount: 0,
+        detectedTripSavePhotoReferenceCreatedCount: result.photoReferenceCreatedCount,
         detectedTripSavePlaceCreatedCount: createdPlaces.length,
         detectedTripSaveTripDayCreatedCount: tripDays.length,
         detectedTripSavedTripId: trip.id,
@@ -637,15 +991,21 @@ export async function saveDetectedTripDraftToSupabase(
       });
     }
 
-    return {
-      photoReferenceCreatedCount: 0,
-      placeCreatedCount: createdPlaces.length,
-      places: createdPlaces,
-      trip,
-      tripDayCreatedCount: tripDays.length,
-      tripDays,
-    };
+    return result;
   } catch (error) {
+    if (error instanceof DetectedTripSaveError && error.stage === 'upload_photos') {
+      if (__DEV__) {
+        console.warn('[detected trip save] photo upload incomplete', {
+          detectedTripSaveElapsedMs: Date.now() - startedAt,
+          detectedTripSavedTripId: trip.id,
+          draftId: draft.id,
+          errorCode: error.code,
+          saveAttemptId,
+        });
+      }
+      throw error;
+    }
+
     const rollbackReason = error instanceof Error ? error.message : String(error);
 
     logStageStarted('rollback', draft.id, {
@@ -709,4 +1069,39 @@ export async function saveDetectedTripDraftToSupabase(
       stage: 'insert_places',
     });
   }
+}
+
+export function saveDetectedTripDraftToSupabase(
+  draft: LocalDetectedTripDraft,
+  options: SaveDetectedTripDraftOptions = {},
+): Promise<SaveDetectedTripDraftResult> {
+  const operationKey = draft.candidateFingerprint ?? draft.id;
+  const activeOperation = activeDetectedTripSaveOperations.get(operationKey);
+
+  if (activeOperation) {
+    if (__DEV__) {
+      console.info('[detected trip save] duplicate operation blocked', {
+        draftId: draft.id,
+        saveOperationDuplicateBlocked: true,
+      });
+    }
+    return activeOperation;
+  }
+
+  if (__DEV__) {
+    console.info('[detected trip save] operation started', {
+      draftId: draft.id,
+      saveOperationStarted: true,
+    });
+  }
+
+  const operation = executeDetectedTripDraftSave(draft, options)
+    .finally(() => {
+      if (activeDetectedTripSaveOperations.get(operationKey) === operation) {
+        activeDetectedTripSaveOperations.delete(operationKey);
+      }
+    });
+  activeDetectedTripSaveOperations.set(operationKey, operation);
+
+  return operation;
 }

@@ -1,22 +1,37 @@
 import { Feather } from '@expo/vector-icons';
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, View, type RefreshControlProps } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+  type RefreshControlProps,
+} from 'react-native';
 
 import Text from '@/components/common/AppText';
 import TimeLineCard, { type TimeLineCardProps } from '@/components/home/TimeLineCard';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 
-export type TodayTimelineItem = Omit<TimeLineCardProps, 'isLast' | 'onPress'> & {
+export type TodayTimelineItem = Omit<TimeLineCardProps, 'isLast' | 'onLongPress' | 'onPress'> & {
+  dataSource?: 'detected' | 'local' | 'mock' | 'supabase';
   id: string;
+  placeId?: string;
+  tripDayId?: string;
+  tripId?: string;
 };
 
 interface TodayTimelineSectionProps {
   items: TodayTimelineItem[];
   title?: string;
   isSelectedToday?: boolean;
+  isLoading?: boolean;
+  isError?: boolean;
+  onLongPressItem?: (item: TodayTimelineItem) => void;
   onPressItem?: (item: TodayTimelineItem) => void;
   onPressViewAll?: () => void;
   onPressAddManually?: () => void;
+  onRetry?: () => void;
   refreshControl?: React.ReactElement<RefreshControlProps>;
   listContentBottomInset?: number;
 }
@@ -25,9 +40,13 @@ export default function TodayTimelineSection({
   items,
   title = '오늘의 타임라인',
   isSelectedToday = false,
+  isLoading = false,
+  isError = false,
+  onLongPressItem,
   onPressItem,
   onPressViewAll,
   onPressAddManually,
+  onRetry,
   refreshControl,
   listContentBottomInset = 0,
 }: TodayTimelineSectionProps) {
@@ -57,7 +76,28 @@ export default function TodayTimelineSection({
         <Text style={styles.description}>자동으로 정리된 기록을 확인해보세요</Text>
       </View>
 
-      {items.length > 0 ? (
+      {isLoading ? (
+        <View style={styles.emptyState}>
+          <ActivityIndicator color={Colors.foundation.black} />
+        </View>
+      ) : isError ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyTitle}>{'\uC77C\uC815\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694'}</Text>
+          <Text style={styles.emptyDescription}>{'\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.'}</Text>
+          {onRetry ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={onRetry}
+              style={({ pressed }) => [
+                styles.emptyActionButton,
+                pressed && styles.emptyActionButtonPressed,
+              ]}
+            >
+              <Text style={styles.emptyActionText}>{'\uB2E4\uC2DC \uC2DC\uB3C4'}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : items.length > 0 ? (
         <ScrollView
           style={styles.listScroll}
           contentContainerStyle={[styles.list, { paddingBottom: listContentBottomInset }]}
@@ -65,14 +105,25 @@ export default function TodayTimelineSection({
           refreshControl={refreshControl}
         >
           <View style={styles.listInner}>
-          {items.map((item, index) => (
-            <TimeLineCard
-              key={item.id}
-              {...item}
-              isLast={index === items.length - 1}
-              onPress={onPressItem ? () => onPressItem(item) : undefined}
-            />
-          ))}
+          {items.map((item, index) => {
+            const canLongPressItem =
+              item.dataSource === 'supabase' &&
+              Boolean(item.placeId && item.tripDayId && item.tripId);
+
+            return (
+              <TimeLineCard
+                key={item.id}
+                {...item}
+                isLast={index === items.length - 1}
+                onLongPress={
+                  onLongPressItem && canLongPressItem
+                    ? () => onLongPressItem(item)
+                    : undefined
+                }
+                onPress={onPressItem ? () => onPressItem(item) : undefined}
+              />
+            );
+          })}
           {onPressAddManually ? (
             <Pressable
               accessibilityRole="button"

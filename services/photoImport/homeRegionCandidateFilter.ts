@@ -1,3 +1,5 @@
+import * as Location from 'expo-location';
+
 import type { LivingArea } from '@/services/location/livingAreas';
 import type {
   LocalDetectedPhoto,
@@ -6,8 +8,6 @@ import type {
 } from '@/services/photoImport/localDetectedTripDraftStore';
 
 export const HOME_REGION_EXCLUSION_RADIUS_KM = 25;
-const MEANINGFUL_OUTSIDE_GROUP_MIN_PHOTOS = 3;
-const MEANINGFUL_OUTSIDE_GROUP_MIN_DISTANCE_KM = 100;
 
 export type HomeRegionRelation = 'inside_home_region' | 'outside_home_region' | 'unknown';
 export type HomeRegionCoordinateSource =
@@ -17,6 +17,7 @@ export type HomeRegionCoordinateSource =
   | 'none';
 
 export interface HomeRegionGroupEvaluation {
+  administrativeArea?: string;
   coordinateSource: HomeRegionCoordinateSource;
   distanceFromHomeKm?: number;
   photoCount: number;
@@ -35,6 +36,8 @@ export interface HomeRegionCandidateVisibilityResult {
   unknownGroupCount: number;
 }
 
+const reverseGeocodeRegionCache = new Map<string, Promise<string | null>>();
+
 function isFiniteCoordinate(value?: number | null): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -44,6 +47,46 @@ export function hasValidHomeRegion(homeRegion?: LivingArea | null): homeRegion i
     homeRegion &&
       isFiniteCoordinate(homeRegion.latitude) &&
       isFiniteCoordinate(homeRegion.longitude),
+  );
+}
+
+function normalizeAdministrativeArea(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/특별자치도|특별자치시|광역시|특별시|도$/u, '');
+
+  const aliases: Record<string, string> = {
+    gwangju: '광주',
+    seoul: '서울',
+    busan: '부산',
+    daegu: '대구',
+    incheon: '인천',
+    daejeon: '대전',
+    ulsan: '울산',
+    sejong: '세종',
+    jeju: '제주',
+    jeollanamdo: '전남',
+    jeollabukdo: '전북',
+    gyeonggido: '경기',
+    gangwondo: '강원',
+    chungcheongnamdo: '충남',
+    chungcheongbukdo: '충북',
+    gyeongsangnamdo: '경남',
+    gyeongsangbukdo: '경북',
+  };
+
+  return aliases[normalized] ?? normalized;
+}
+
+function getHomeAdministrativeArea(homeRegion: LivingArea) {
+  return normalizeAdministrativeArea(
+    homeRegion.administrativeArea ?? homeRegion.locality ?? homeRegion.displayName,
   );
 }
 
@@ -106,24 +149,36 @@ export function getGroupCoordinateForHomeRegion(group: LocalDetectedPlaceGroup):
     };
   }
 
-  if (isFiniteCoordinate(group.latitude) && isFiniteCoordinate(group.longitude)) {
-    return {
-      coordinateSource: 'group_coordinate',
-      latitude: group.latitude,
-      longitude: group.longitude,
-    };
-  }
-
   return {
     coordinateSource: 'none',
   };
 }
 
-export function classifyGroupAgainstHomeRegion(
+async function reverseGeocodeAdministrativeArea(latitude: number, longitude: number) {
+  const cacheKey = `${latitude.toFixed(3)},${longitude.toFixed(3)}`;
+  const cached = reverseGeocodeRegionCache.get(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
+  const request = Location.reverseGeocodeAsync({ latitude, longitude })
+    .then((addresses) => {
+      const address = addresses[0];
+      return normalizeAdministrativeArea(
+        address?.region ?? address?.city ?? address?.subregion ?? null,
+      );
+    })
+    .catch(() => null);
+
+  reverseGeocodeRegionCache.set(cacheKey, request);
+  return request;
+}
+
+export async function classifyGroupAgainstHomeRegion(
   group: LocalDetectedPlaceGroup,
   homeRegion: LivingArea,
-  radiusKm = HOME_REGION_EXCLUSION_RADIUS_KM,
-): HomeRegionGroupEvaluation {
+): Promise<HomeRegionGroupEvaluation> {
   const coordinates = getGroupCoordinateForHomeRegion(group);
 
   if (
@@ -137,30 +192,41 @@ export function classifyGroupAgainstHomeRegion(
     };
   }
 
+  const administrativeArea = await reverseGeocodeAdministrativeArea(
+    coordinates.latitude,
+    coordinates.longitude,
+  );
+  const homeAdministrativeArea = getHomeAdministrativeArea(homeRegion);
   const distanceFromHomeKm = calculateDistanceKm(
-    {
-      latitude: homeRegion.latitude,
-      longitude: homeRegion.longitude,
-    },
-    {
-      latitude: coordinates.latitude,
-      longitude: coordinates.longitude,
-    },
+    { latitude: homeRegion.latitude, longitude: homeRegion.longitude },
+    { latitude: coordinates.latitude, longitude: coordinates.longitude },
   );
 
+  if (!administrativeArea || !homeAdministrativeArea) {
+    return {
+      administrativeArea: administrativeArea ?? undefined,
+      coordinateSource: coordinates.coordinateSource,
+      distanceFromHomeKm,
+      photoCount: group.photos.length,
+      relation: 'unknown',
+    };
+  }
+
   return {
+    administrativeArea,
     coordinateSource: coordinates.coordinateSource,
     distanceFromHomeKm,
     photoCount: group.photos.length,
-    relation: distanceFromHomeKm <= radiusKm ? 'inside_home_region' : 'outside_home_region',
+    relation: administrativeArea === homeAdministrativeArea
+      ? 'inside_home_region'
+      : 'outside_home_region',
   };
 }
 
-export function evaluateCandidateHomeRegionVisibility(
+export async function evaluateCandidateHomeRegionVisibility(
   draft: LocalDetectedTripDraft,
   homeRegion?: LivingArea | null,
-  radiusKm = HOME_REGION_EXCLUSION_RADIUS_KM,
-): HomeRegionCandidateVisibilityResult {
+): Promise<HomeRegionCandidateVisibilityResult> {
   if (!hasValidHomeRegion(homeRegion)) {
     return {
       insideGroupCount: 0,
@@ -173,38 +239,27 @@ export function evaluateCandidateHomeRegionVisibility(
   }
 
   const groups = draft.days.flatMap((day) => day.groups);
-  const evaluations = groups.map((group) =>
-    classifyGroupAgainstHomeRegion(group, homeRegion, radiusKm),
+  const evaluations = await Promise.all(
+    groups.map((group) => classifyGroupAgainstHomeRegion(group, homeRegion)),
   );
   const insideGroupCount = evaluations.filter((result) => result.relation === 'inside_home_region').length;
   const outsideGroupCount = evaluations.filter((result) => result.relation === 'outside_home_region').length;
   const unknownGroupCount = evaluations.filter((result) => result.relation === 'unknown').length;
   const locatedGroupCount = insideGroupCount + outsideGroupCount;
-  const meaningfulOutsideGroupCount = evaluations.filter((result) => (
-    result.relation === 'outside_home_region' &&
-    (
-      result.photoCount >= MEANINGFUL_OUTSIDE_GROUP_MIN_PHOTOS ||
-      (
-        typeof result.distanceFromHomeKm === 'number' &&
-        Number.isFinite(result.distanceFromHomeKm) &&
-        result.distanceFromHomeKm >= MEANINGFUL_OUTSIDE_GROUP_MIN_DISTANCE_KM
-      )
-    )
-  )).length;
   const distances = evaluations
     .map((result) => result.distanceFromHomeKm)
     .filter(isFiniteCoordinate);
-  const shouldHide =
-    locatedGroupCount > 0 &&
-    insideGroupCount > 0 &&
-    meaningfulOutsideGroupCount === 0;
+
+  // A candidate is hidden only when every resolved address belongs to the configured
+  // administrative region. Any resolved address in another city/province keeps it visible.
+  const shouldHide = locatedGroupCount > 0 && insideGroupCount > 0 && outsideGroupCount === 0;
 
   return {
     farthestDistanceKm: distances.length ? Math.max(...distances) : undefined,
     hiddenReason: shouldHide ? 'hidden_home_region' : undefined,
     insideGroupCount,
     locatedGroupCount,
-    meaningfulOutsideGroupCount,
+    meaningfulOutsideGroupCount: outsideGroupCount,
     nearestDistanceKm: distances.length ? Math.min(...distances) : undefined,
     outsideGroupCount,
     shouldHide,
@@ -212,10 +267,10 @@ export function evaluateCandidateHomeRegionVisibility(
   };
 }
 
-export function applyHomeRegionCandidateFilter(
+export async function applyHomeRegionCandidateFilter(
   drafts: LocalDetectedTripDraft[],
   homeRegion?: LivingArea | null,
-  radiusKm = HOME_REGION_EXCLUSION_RADIUS_KM,
+  _radiusKm = HOME_REGION_EXCLUSION_RADIUS_KM,
   scanAttemptId?: string,
 ) {
   if (!hasValidHomeRegion(homeRegion)) {
@@ -230,30 +285,45 @@ export function applyHomeRegionCandidateFilter(
       draft.debugMetadata.homeRegionMeaningfulOutsideGroupCount = 0;
       draft.debugMetadata.homeRegionOutsideGroupCount = 0;
       draft.debugMetadata.homeRegionUnknownGroupCount = 0;
-
-      for (const group of draft.days.flatMap((day) => day.groups)) {
-        group.coordinateSource = undefined;
-        group.distanceFromHomeKm = undefined;
-        group.homeRegionRelation = undefined;
-      }
     }
 
     return drafts.map((draft) => ({
       draftId: draft.id,
-      result: evaluateCandidateHomeRegionVisibility(draft, null, radiusKm),
+      result: {
+        insideGroupCount: 0,
+        locatedGroupCount: 0,
+        meaningfulOutsideGroupCount: 0,
+        outsideGroupCount: 0,
+        shouldHide: false,
+        unknownGroupCount: 0,
+      } satisfies HomeRegionCandidateVisibilityResult,
     }));
   }
 
-  return drafts.map((draft) => {
-    if (__DEV__) {
-      console.info('[photo-import home region] candidate evaluation started', {
-        draftId: draft.id,
-        homeRegionCandidateEvaluationStarted: true,
-        scanAttemptId,
-      });
-    }
+  const homeAdministrativeArea = getHomeAdministrativeArea(homeRegion);
 
-    const result = evaluateCandidateHomeRegionVisibility(draft, homeRegion, radiusKm);
+  return Promise.all(drafts.map(async (draft) => {
+    const groups = draft.days.flatMap((day) => day.groups);
+    const groupEvaluations = await Promise.all(
+      groups.map((group) => classifyGroupAgainstHomeRegion(group, homeRegion)),
+    );
+    const insideGroupCount = groupEvaluations.filter((result) => result.relation === 'inside_home_region').length;
+    const outsideGroupCount = groupEvaluations.filter((result) => result.relation === 'outside_home_region').length;
+    const unknownGroupCount = groupEvaluations.filter((result) => result.relation === 'unknown').length;
+    const distances = groupEvaluations
+      .map((result) => result.distanceFromHomeKm)
+      .filter(isFiniteCoordinate);
+    const result: HomeRegionCandidateVisibilityResult = {
+      farthestDistanceKm: distances.length ? Math.max(...distances) : undefined,
+      hiddenReason: insideGroupCount > 0 && outsideGroupCount === 0 ? 'hidden_home_region' : undefined,
+      insideGroupCount,
+      locatedGroupCount: insideGroupCount + outsideGroupCount,
+      meaningfulOutsideGroupCount: outsideGroupCount,
+      nearestDistanceKm: distances.length ? Math.min(...distances) : undefined,
+      outsideGroupCount,
+      shouldHide: insideGroupCount > 0 && outsideGroupCount === 0,
+      unknownGroupCount,
+    };
 
     draft.debugMetadata.distanceFromHomeFarthestKm = result.farthestDistanceKm;
     draft.debugMetadata.distanceFromHomeNearestKm = result.nearestDistanceKm;
@@ -266,34 +336,32 @@ export function applyHomeRegionCandidateFilter(
     draft.debugMetadata.homeRegionOutsideGroupCount = result.outsideGroupCount;
     draft.debugMetadata.homeRegionUnknownGroupCount = result.unknownGroupCount;
 
-    for (const [groupIndex, group] of draft.days.flatMap((day) => day.groups).entries()) {
-      const groupResult = classifyGroupAgainstHomeRegion(group, homeRegion, radiusKm);
+    groups.forEach((group, groupIndex) => {
+      const groupResult = groupEvaluations[groupIndex];
       group.coordinateSource = groupResult.coordinateSource;
       group.distanceFromHomeKm = groupResult.distanceFromHomeKm;
       group.homeRegionRelation = groupResult.relation;
 
       if (__DEV__) {
-        console.info('[photo-import home region] group distance evaluated', {
-          coordinateSource: groupResult.coordinateSource,
-          distanceKm: groupResult.distanceFromHomeKm,
+        console.info('[photo-import home region] group address evaluated', {
+          administrativeArea: groupResult.administrativeArea,
           draftId: draft.id,
           groupIndex,
-          homeRegionGroupDistanceEvaluated: true,
+          homeAdministrativeArea,
           photoCount: groupResult.photoCount,
           relation: groupResult.relation,
           scanAttemptId,
         });
       }
-    }
+    });
 
     if (__DEV__) {
       console.info('[photo-import home region] candidate evaluation completed', {
         draftId: draft.id,
         hiddenReason: result.hiddenReason,
-        homeRegionCandidateEvaluationCompleted: true,
+        homeAdministrativeArea,
+        homeRegionDisplayName: homeRegion.displayName,
         insideGroupCount: result.insideGroupCount,
-        locatedGroupCount: result.locatedGroupCount,
-        meaningfulOutsideGroupCount: result.meaningfulOutsideGroupCount,
         outsideGroupCount: result.outsideGroupCount,
         scanAttemptId,
         shouldHide: result.shouldHide,
@@ -303,9 +371,6 @@ export function applyHomeRegionCandidateFilter(
       });
     }
 
-    return {
-      draftId: draft.id,
-      result,
-    };
-  });
+    return { draftId: draft.id, result };
+  }));
 }

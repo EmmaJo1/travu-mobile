@@ -9,6 +9,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
   Modal,
@@ -36,13 +37,7 @@ import PlaceCreateModal, {
 } from '@/components/record/PlaceCreateModal';
 import PlaceEntryCard, { type PlaceEntry } from '@/components/trip/PlaceEntryCard';
 import {
-  getDaySelectorItemsForTrip,
-  getDetectedTripById,
-} from '@/constants/mockDetectedTrips';
-import { MOCK_PHOTO_IMPORT_CANDIDATES } from '@/services/photoImport/mockPhotoImportProvider';
-import {
   getLocalDetectedTripDraft,
-  hydrateLocalDetectedTripDraftPhotos,
   markLocalDetectedTripDraftSaveFailed,
   markLocalDetectedTripDraftSaved,
   markLocalDetectedTripDraftSaving,
@@ -51,9 +46,10 @@ import {
 } from '@/services/photoImport/localDetectedTripDraftStore';
 import {
   DetectedTripSaveError,
+  getDetectedTripSaveUserMessage,
   saveDetectedTripDraftToSupabase,
+  type DetectedTripPhotoSaveProgress,
 } from '@/services/photoImport/saveDetectedTripDraft';
-import type { PhotoImportTripCandidate } from '@/services/photoImport/types';
 import {
   DEFAULT_RECORD_DAY,
   RECORD_DAY_ENTRIES,
@@ -261,76 +257,17 @@ function normalizeDetectedTripHeaderTitle(value?: string | null) {
   return rawTitle.endsWith('여행') ? rawTitle : `${baseTitle} 여행`;
 }
 
-function isDetectedTripRoute(entryPoint?: string, mode?: string, tripId?: string) {
+function isDetectedTripRoute(entryPoint?: string, mode?: string) {
   return (
     entryPoint === 'detectedTrip' ||
     entryPoint === 'detectedTrips' ||
     entryPoint === 'detectedPhotoDraft' ||
-    mode === 'create' ||
-    Boolean(tripId && (getDetectedTripById(tripId) || getPhotoImportCandidateById(tripId)))
+    mode === 'create'
   );
 }
 
-function isExplicitMockRoute(entryPoint?: string, mode?: string, tripId?: string) {
-  if (entryPoint === 'mock' || mode === 'mock') {
-    return true;
-  }
-
-  return !tripId && !entryPoint && !mode;
-}
-
-function parseDetectedDateRange(dateRange?: string) {
-  const normalized = dateRange?.replace(/\s+/g, '') ?? '';
-  const singleDateMatched = normalized.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})$/);
-  const matched = normalized.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})-(?:(\d{4})\.)?(\d{1,2})\.(\d{1,2})$/);
-
-  const formatDateKey = (year: number, month: number, day: number) =>
-    `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-
-  if (singleDateMatched) {
-    const dateKey = formatDateKey(
-      Number(singleDateMatched[1]),
-      Number(singleDateMatched[2]),
-      Number(singleDateMatched[3]),
-    );
-
-    return { endDate: dateKey, startDate: dateKey };
-  }
-
-  if (!matched) {
-    return { endDate: undefined, startDate: undefined };
-  }
-
-  const startYear = Number(matched[1]);
-  const startMonth = Number(matched[2]);
-  const startDay = Number(matched[3]);
-  const endYear = Number(matched[4] ?? matched[1]);
-  const endMonth = Number(matched[5]);
-  const endDay = Number(matched[6]);
-
-  return {
-    endDate: formatDateKey(endYear, endMonth, endDay),
-    startDate: formatDateKey(startYear, startMonth, startDay),
-  };
-}
-
-function getPhotoImportCandidateById(tripId?: string) {
-  return tripId ? MOCK_PHOTO_IMPORT_CANDIDATES.find((candidate) => candidate.id === tripId) : undefined;
-}
-
-function createDetectedTripDayOptionsFromCandidate(
-  candidate: PhotoImportTripCandidate,
-): DaySelectorItem[] {
-  const { endDate, startDate } = parseDetectedDateRange(candidate.dateRange);
-
-  if (!startDate || !endDate) {
-    return [];
-  }
-
-  return createDetectedTripDraftDays(startDate, endDate, String(candidate.photoCount)).map((day) => ({
-    ...day,
-    id: `${candidate.id}-d${day.dayNumber}`,
-  }));
+function isExplicitMockRoute(entryPoint?: string, mode?: string) {
+  return __DEV__ && (entryPoint === 'mock' || mode === 'mock');
 }
 
 function createLocalDetectedTripDayOptions(
@@ -347,15 +284,12 @@ function createLocalDetectedTripDayOptions(
 
 function createDetectedTripEntries(
   tripId: string | undefined,
+  city: string | undefined,
+  country: string | undefined,
   days: DaySelectorItem[],
   selectedDay: DaySelectorItem,
   selectedFilterId: string,
 ): PlaceEntry[] {
-  const photoImportCandidate = getPhotoImportCandidateById(tripId);
-  const detectedTrip = tripId ? getDetectedTripById(tripId) : undefined;
-  const city = photoImportCandidate?.city ?? detectedTrip?.title;
-  const country = photoImportCandidate?.country;
-
   if (!city) {
     return [];
   }
@@ -373,11 +307,7 @@ function createDetectedTripEntries(
     dayNumber: day.dayNumber,
     id: `${tripId ?? 'detected'}-${day.id}-entry`,
     photoCount: day.photoCount,
-    photoSources: photoImportCandidate?.image
-      ? [photoImportCandidate.image]
-      : detectedTrip?.dayThumbnails?.[(day.dayNumber - 1) % detectedTrip.dayThumbnails.length]
-        ? [detectedTrip.dayThumbnails[(day.dayNumber - 1) % detectedTrip.dayThumbnails.length]]
-        : undefined,
+    photoSources: undefined,
     place: city,
     placeId: `${tripId ?? 'detected'}-${day.id}-place`,
     placeName: city,
@@ -415,7 +345,7 @@ function createLocalDetectedTripEntries(
       countryName: hasGroupCoordinates ? draft.debugMetadata.rawPlacemarkCountry : undefined,
       photoCount: group.photos.length,
       photoUris: group.photos
-        .map((photo) => photo.displayUri)
+        .map((photo) => photo.previewUri ?? photo.displayUri)
         .filter((uri): uri is string => Boolean(uri)),
       place: group.label,
       placeId: group.id,
@@ -1102,98 +1032,29 @@ export default function RecordDayDetailScreen() {
   const [localDetectedTripDraft, setLocalDetectedTripDraft] =
     useState<LocalDetectedTripDraft | undefined>(() => routeLocalDetectedTripDraft);
   const isLocalDetectedPhotoDraftRoute = entryPoint === 'detectedPhotoDraft';
-  const isDetectedTripPreviewRoute = isDetectedTripRoute(entryPoint, mode, routeTripId);
-  const isExplicitMockRecordRoute = isExplicitMockRoute(entryPoint, mode, routeTripId);
+  const isDetectedTripPreviewRoute = isDetectedTripRoute(entryPoint, mode);
+  const isExplicitMockRecordRoute = isExplicitMockRoute(entryPoint, mode);
   const isSupabaseTripRoute = isSupabaseUuid(routeTripId);
   const isSupabaseTripDayRoute = isSupabaseUuid(routeTripDayId);
   const shouldUseSupabaseRecordDay = isSupabaseTripRoute || isSupabaseTripDayRoute;
   const createPlaceRecordMutation = useCreatePlaceRecord();
   const deletePlaceRecordMutation = useDeletePlaceRecord();
   const updatePlaceRecordMutation = useUpdatePlaceRecord();
-  const { data: supabaseTripDays } = useTripDays(isSupabaseTripRoute ? routeTripId : undefined);
+  const {
+    data: supabaseTripDays,
+    isError: isSupabaseTripDaysError,
+    isFetched: hasFetchedSupabaseTripDays,
+    isPending: isSupabaseTripDaysPending,
+    refetch: refetchSupabaseTripDays,
+  } = useTripDays(isSupabaseTripRoute ? routeTripId : undefined);
 
   useEffect(() => {
     setLocalDetectedTripDraft(routeLocalDetectedTripDraft);
-
-    if (!routeLocalDetectedTripDraft) {
-      return;
-    }
-
-    let active = true;
-
-    hydrateLocalDetectedTripDraftPhotos(routeTripId).then((hydratedDraft) => {
-      if (!active || !hydratedDraft) {
-        return;
-      }
-
-      setLocalDetectedTripDraft({
-        ...hydratedDraft,
-        days: [...hydratedDraft.days],
-      });
-    }).catch((error) => {
-      if (__DEV__) {
-        console.warn('[record-day-detail] detected draft photo hydration failed', error);
-      }
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [routeLocalDetectedTripDraft, routeTripId]);
+  }, [routeLocalDetectedTripDraft]);
 
   useEffect(() => {
     setDetectedTripSaveStatus(localDetectedTripDraft?.saveStatus ?? 'idle');
   }, [localDetectedTripDraft?.saveStatus]);
-
-  useEffect(() => {
-    if (!__DEV__) {
-      return;
-    }
-
-    console.log('[record-day-detail params]', {
-      cityName,
-      countryName,
-      date,
-      dayId,
-      dayIndex,
-      detectedTripId,
-      entryPoint,
-      isDetectedTripRoute: isDetectedTripPreviewRoute,
-      isExplicitMockRoute: isExplicitMockRecordRoute,
-      isSupabaseRoute: shouldUseSupabaseRecordDay,
-      isSupabaseTrip: isSupabaseTripRoute,
-      isSupabaseTripDay: isSupabaseTripDayRoute,
-      mode,
-      photoCount,
-      localDetectedDraftId: localDetectedTripDraft?.id,
-      localDetectedPhotoCount: localDetectedTripDraft?.photoCount,
-      isLocalDetectedPhotoDraftRoute,
-      routeTripDayId,
-      tripDayId,
-      tripId,
-    });
-  }, [
-    cityName,
-    countryName,
-    date,
-    dayId,
-    dayIndex,
-    detectedTripId,
-    entryPoint,
-    isDetectedTripPreviewRoute,
-    isExplicitMockRecordRoute,
-    isLocalDetectedPhotoDraftRoute,
-    localDetectedTripDraft?.id,
-    localDetectedTripDraft?.photoCount,
-    isSupabaseTripDayRoute,
-    isSupabaseTripRoute,
-    mode,
-    photoCount,
-    routeTripDayId,
-    shouldUseSupabaseRecordDay,
-    tripDayId,
-    tripId,
-  ]);
 
   const baseDayOptions = useMemo(() => {
     if (shouldUseSupabaseRecordDay) {
@@ -1230,22 +1091,11 @@ export default function RecordDayDetailScreen() {
         return [];
       }
 
-      const photoImportCandidate = getPhotoImportCandidateById(routeTripId);
-      const detectedTripDays = routeTripId ? getDaySelectorItemsForTrip(routeTripId) : undefined;
-
-      if (photoImportCandidate) {
-        return createDetectedTripDayOptionsFromCandidate(photoImportCandidate);
-      }
-
-      if (detectedTripDays) {
-        return detectedTripDays;
-      }
-
       return createDetectedTripDraftDays(startDate, endDate, photoCount);
     }
 
     if (isExplicitMockRecordRoute && routeTripId) {
-      return getDaySelectorItemsForTrip(routeTripId) ?? RECORD_DAY_OPTIONS;
+      return RECORD_DAY_OPTIONS;
     }
     return isExplicitMockRecordRoute ? RECORD_DAY_OPTIONS : [];
   }, [
@@ -1285,6 +1135,8 @@ export default function RecordDayDetailScreen() {
   const [photoViewerIndex, setPhotoViewerIndex] = useState<number | null>(null);
   const [detectedTripSaveStatus, setDetectedTripSaveStatus] =
     useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const [detectedTripPhotoSaveProgress, setDetectedTripPhotoSaveProgress] =
+    useState<DetectedTripPhotoSaveProgress>();
   const [, setPendingDeletePhoto] = useState<{
     entry: PlaceEntry;
     photoIndex: number;
@@ -1295,8 +1147,18 @@ export default function RecordDayDetailScreen() {
     : isSupabaseTripDayRoute
       ? routeTripDayId
       : null;
-  const { data: supabasePlaces } = useTripDayPlaces(selectedSupabaseTripDayId);
-  const { data: supabaseRecords } = useTripDayRecords(selectedSupabaseTripDayId);
+  const {
+    data: supabasePlaces,
+    isError: isSupabasePlacesError,
+    isPending: isSupabasePlacesPending,
+    refetch: refetchSupabasePlaces,
+  } = useTripDayPlaces(selectedSupabaseTripDayId);
+  const {
+    data: supabaseRecords,
+    isError: isSupabaseRecordsError,
+    isPending: isSupabaseRecordsPending,
+    refetch: refetchSupabaseRecords,
+  } = useTripDayRecords(selectedSupabaseTripDayId);
 
   useEffect(() => {
     setDayOptions(baseDayOptions);
@@ -1395,6 +1257,8 @@ export default function RecordDayDetailScreen() {
       )
       : createDetectedTripEntries(
         routeTripId,
+        cityName,
+        countryName,
         dayOptions,
         selectedDay,
         selectedFilterId,
@@ -1412,6 +1276,8 @@ export default function RecordDayDetailScreen() {
       ))
     ));
   }, [
+    cityName,
+    countryName,
     dayOptions,
     deletedLocalEntryKeys,
     entriesByDay,
@@ -1461,6 +1327,18 @@ export default function RecordDayDetailScreen() {
       : isExplicitMockRecordRoute
         ? 'mock'
         : 'empty';
+  const isSupabaseRecordDayLoading = shouldUseSupabaseRecordDay && (
+    isSupabaseTripDaysPending ||
+    Boolean(selectedSupabaseTripDayId && (isSupabasePlacesPending || isSupabaseRecordsPending))
+  );
+  const isSupabaseRecordDayError = shouldUseSupabaseRecordDay && (
+    isSupabaseTripDaysError || isSupabasePlacesError || isSupabaseRecordsError
+  );
+  const isSupabaseRecordDayNotFound =
+    isSupabaseTripRoute &&
+    hasFetchedSupabaseTripDays &&
+    !isSupabaseTripDaysError &&
+    (supabaseTripDays?.length ?? 0) === 0;
   const entries = useMemo(() => {
     if (selectedDataSource === 'supabase') {
       return supabaseEntries;
@@ -1482,60 +1360,6 @@ export default function RecordDayDetailScreen() {
     supabaseEntries,
   ]);
 
-  useEffect(() => {
-    if (!__DEV__) {
-      return;
-    }
-
-    const mockLeakedIntoSupabaseRoute = shouldUseSupabaseRecordDay && entries.some((entry) => (
-      entry.dataSource !== 'supabase' || !entry.placeId || !isSupabaseUuid(entry.placeId)
-    ));
-
-    console.log('[record-day-detail entries]', {
-      finalEntries: entries.length,
-      finalEntryIds: entries.map((entry) => ({
-        dataSource: entry.dataSource,
-        id: entry.id,
-        placeId: entry.placeId,
-        placeName: entry.placeName ?? entry.place,
-      })),
-      isSupabaseRoute: shouldUseSupabaseRecordDay,
-      isDetectedTripRoute: isDetectedTripPreviewRoute,
-      isExplicitMockRoute: isExplicitMockRecordRoute,
-      selectedDataSource,
-      detectedTripEntries: detectedTripEntries.length,
-      localEntries: localEntries.length,
-      selectedFilterId,
-      selectedTripDayId: selectedSupabaseTripDayId,
-      supabasePlaces: supabasePlaces?.length ?? 0,
-      supabaseRecords: supabaseRecords?.length ?? 0,
-      supabaseEntries: supabaseEntries.length,
-    });
-
-    if (mockLeakedIntoSupabaseRoute) {
-      console.warn('[record-day-detail] mock entries leaked into Supabase route', {
-        entries,
-        routeTripDayId,
-        routeTripId,
-        selectedFilterId,
-      });
-    }
-  }, [
-    entries,
-    detectedTripEntries.length,
-    isDetectedTripPreviewRoute,
-    isExplicitMockRecordRoute,
-    localEntries.length,
-    routeTripDayId,
-    routeTripId,
-    selectedFilterId,
-    selectedSupabaseTripDayId,
-    selectedDataSource,
-    shouldUseSupabaseRecordDay,
-    supabasePlaces,
-    supabaseRecords,
-    supabaseEntries.length,
-  ]);
   const tripInfoInitialValue = useMemo(
     () => {
       const initialValue = createTripSetupInitialValue(dayOptions, entries);
@@ -1633,30 +1457,6 @@ export default function RecordDayDetailScreen() {
     selectedDay,
     shouldUseSupabaseRecordDay,
     tripTitle,
-  ]);
-
-  useEffect(() => {
-    if (!__DEV__) {
-      return;
-    }
-
-    console.info('[record-day-detail header title]', {
-      headerTitleAfter: headerTitleInfo.title,
-      headerTitleBefore: formatHeaderDate(selectedDay),
-      headerTitleSource: headerTitleInfo.source,
-      isDetectedTripRoute: isDetectedTripPreviewRoute,
-      localDetectedDraftDisplayTitle: localDetectedTripDraft?.displayTitle,
-      localDetectedDraftTitle: localDetectedTripDraft?.title,
-      routeCityName: cityName,
-    });
-  }, [
-    cityName,
-    headerTitleInfo.source,
-    headerTitleInfo.title,
-    isDetectedTripPreviewRoute,
-    localDetectedTripDraft?.displayTitle,
-    localDetectedTripDraft?.title,
-    selectedDay,
   ]);
 
   const handleClosePlaceEntryModal = () => {
@@ -1917,18 +1717,6 @@ export default function RecordDayDetailScreen() {
     }
 
     const initialIndex = Math.max(0, Math.min(index, photoGridSources.length - 1));
-
-    if (__DEV__) {
-      console.info('[record-day-detail photo viewer]', {
-        photoGridItemPressCount: 1,
-        photoGridPressedIndex: index,
-        photoGridPressedPhotoId: `record-grid-photo-${initialIndex}`,
-        photoViewerInitialIndex: initialIndex,
-        photoViewerOpenRequestedCount: 1,
-        photoViewerOpenSucceeded: true,
-        photoViewerPhotoCount: photoGridSources.length,
-      });
-    }
 
     setPhotoViewerIndex(initialIndex);
   };
@@ -2317,6 +2105,7 @@ export default function RecordDayDetailScreen() {
 
       const startedAt = Date.now();
       setDetectedTripSaveStatus('saving');
+      setDetectedTripPhotoSaveProgress(undefined);
       markLocalDetectedTripDraftSaving(localDetectedTripDraft.id);
 
       try {
@@ -2368,6 +2157,7 @@ export default function RecordDayDetailScreen() {
         }
 
         const result = await saveDetectedTripDraftToSupabase(localDetectedTripDraft, {
+          onPhotoProgress: setDetectedTripPhotoSaveProgress,
           saveAttemptId,
         });
         if (__DEV__) {
@@ -2381,11 +2171,7 @@ export default function RecordDayDetailScreen() {
             tripId: result.trip.id,
           });
         }
-        await recordSavedDetectedTripDraft(user.id, localDetectedTripDraft.id, result.trip.id);
-        markLocalDetectedTripDraftSaved(localDetectedTripDraft.id, result.trip.id);
-        setDetectedTripSaveStatus('saved');
-
-        void Promise.all([
+        await Promise.all([
           queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.myTrips(user.id) }),
           queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.recentTripsRoot(user.id) }),
           queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.tripDetail(user.id, result.trip.id) }),
@@ -2398,6 +2184,10 @@ export default function RecordDayDetailScreen() {
         ]).catch((error: unknown) => {
           console.warn('[record-day-detail] detected save invalidate failed', error);
         });
+
+        await recordSavedDetectedTripDraft(user.id, localDetectedTripDraft.id, result.trip.id);
+        markLocalDetectedTripDraftSaved(localDetectedTripDraft.id, result.trip.id);
+        setDetectedTripSaveStatus('saved');
 
         if (__DEV__) {
           console.info('[detected trip save] navigation', {
@@ -2432,10 +2222,8 @@ export default function RecordDayDetailScreen() {
             saveAttemptId,
           });
         }
-        Alert.alert(
-          '\uC5EC\uD589\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
-          '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
-        );
+        const userMessage = getDetectedTripSaveUserMessage(error);
+        Alert.alert(userMessage.title, userMessage.message);
       }
       return;
     }
@@ -2492,6 +2280,53 @@ export default function RecordDayDetailScreen() {
       ],
     );
   };
+
+  const retrySupabaseRecordDay = () => {
+    void Promise.all([
+      refetchSupabaseTripDays(),
+      refetchSupabasePlaces(),
+      refetchSupabaseRecords(),
+    ]);
+  };
+
+  if (isSupabaseRecordDayLoading) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader onBackPress={() => router.back()} style={styles.header} />
+        <View style={styles.routeState}>
+          <ActivityIndicator color={Colors.foundation.black} />
+          <Text style={styles.routeStateDescription}>{'\uC5EC\uD589 \uAE30\uB85D\uC744 \uBD88\uB7EC\uC624\uB294 \uC911\uC774\uC5D0\uC694'}</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (isSupabaseRecordDayError) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader onBackPress={() => router.back()} style={styles.header} />
+        <View style={styles.routeState}>
+          <Text style={styles.routeStateTitle}>{'\uC5EC\uD589 \uAE30\uB85D\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694'}</Text>
+          <Text style={styles.routeStateDescription}>{'\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.'}</Text>
+          <Pressable accessibilityRole="button" onPress={retrySupabaseRecordDay} style={styles.routeStateAction}>
+            <Text style={styles.routeStateActionText}>{'\uB2E4\uC2DC \uC2DC\uB3C4'}</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (selectedDataSource === 'empty' || isSupabaseRecordDayNotFound) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader onBackPress={() => router.back()} style={styles.header} />
+        <View style={styles.routeState}>
+          <Text style={styles.routeStateTitle}>{'\uC5EC\uD589 \uAE30\uB85D\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC5B4\uC694'}</Text>
+          <Text style={styles.routeStateDescription}>{'\uC774\uC804 \uD654\uBA74\uC73C\uB85C \uB3CC\uC544\uAC00 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.'}</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -2583,6 +2418,12 @@ export default function RecordDayDetailScreen() {
         />
 
         <View style={styles.entriesContent}>
+        {selectedDataSource === 'supabase' && entries.length === 0 ? (
+          <View style={styles.routeStateInline}>
+            <Text style={styles.routeStateTitle}>{'\uC544\uC9C1 \uAE30\uB85D\uB41C \uC7A5\uC18C\uAC00 \uC5C6\uC5B4\uC694'}</Text>
+            <Text style={styles.routeStateDescription}>{'\uC7A5\uC18C\uB97C \uCD94\uAC00\uD558\uBA74 \uC774 \uB0A0\uC758 \uC5EC\uD589 \uAE30\uB85D\uC5D0 \uD45C\uC2DC\uB3FC\uC694.'}</Text>
+          </View>
+        ) : null}
         {entries.map((entry, index) => (
           <PlaceEntryCard
             key={`${selectedFilterId}-${entry.id}-${index}`}
@@ -2617,7 +2458,9 @@ export default function RecordDayDetailScreen() {
           >
             <Text style={styles.detectedSaveButtonText}>
               {detectedTripSaveStatus === 'saving'
-                ? LABEL_SAVING_DETECTED_TRIP
+                ? detectedTripPhotoSaveProgress
+                  ? `${detectedTripPhotoSaveProgress.phase === 'preparing' ? '원본 사진 준비 중' : '사진 저장 중'} · ${detectedTripPhotoSaveProgress.completedCount.toLocaleString()} / ${detectedTripPhotoSaveProgress.totalCount.toLocaleString()}`
+                  : LABEL_SAVING_DETECTED_TRIP
                 : LABEL_SAVE_DETECTED_TRIP}
             </Text>
           </Pressable>
@@ -2844,6 +2687,38 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: Colors.light.bgScreen,
+  },
+  routeState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xl,
+  },
+  routeStateInline: {
+    alignItems: 'center',
+    paddingVertical: Spacing['3xl'],
+  },
+  routeStateTitle: {
+    ...Typography.title2,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+  },
+  routeStateDescription: {
+    marginTop: Spacing.sm,
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+    textAlign: 'center',
+  },
+  routeStateAction: {
+    marginTop: Spacing.lg,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.foundation.black,
+  },
+  routeStateActionText: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.white,
   },
   header: {
     width: '100%',

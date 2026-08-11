@@ -76,7 +76,9 @@ export default function RecentTripsSection({ trips, onPressTrip }: RecentTripsSe
             onPress={() => onPressTrip?.(trip)}
             style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
           >
-            <Image source={trip.image} style={styles.image} resizeMode="cover" />
+            {trip.image ? (
+              <Image source={trip.image} style={styles.image} resizeMode="cover" />
+            ) : null}
             <LinearGradient
               colors={[
                 'rgba(206, 206, 206, 0)',

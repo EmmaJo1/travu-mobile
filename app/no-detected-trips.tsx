@@ -7,6 +7,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Text from '@/components/common/AppText';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
+import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
 
 const BACKGROUND = Colors.light.bgScreen;
 const GREY_700 = '#595959';
@@ -14,6 +15,11 @@ const GREY_700 = '#595959';
 export default function NoDetectedTrips() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { openPhotoImportResults } = usePhotoImportFlow();
+
+  React.useEffect(() => {
+    openPhotoImportResults();
+  }, [openPhotoImportResults]);
 
   const handleManualCreate = React.useCallback(() => {
     router.push('/create-trip' as Href);

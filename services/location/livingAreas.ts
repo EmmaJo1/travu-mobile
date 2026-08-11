@@ -10,6 +10,8 @@ export type LivingArea = {
   longitude: number;
   providerPlaceId?: string;
   source: 'google' | 'apple' | 'manual';
+  scope?: 'administrative_area' | 'locality' | 'district';
+  exclusionRadiusKm?: number;
 };
 
 export type LivingAreaProfileValue = {
@@ -23,39 +25,113 @@ export type LivingAreaProfileValue = {
   placeId?: string | null;
 };
 
+const METROPOLITAN_EXCLUSION_RADIUS_KM = 45;
+const CITY_EXCLUSION_RADIUS_KM = 30;
+
 const LIVING_AREAS: LivingArea[] = [
   {
-    id: 'kr-seoul-mapo',
-    displayName: '서울특별시 마포구',
+    id: 'kr-seoul',
+    displayName: '서울특별시',
     countryCode: 'KR',
     countryName: '대한민국',
     administrativeArea: '서울특별시',
-    locality: '마포구',
-    latitude: 37.5663,
-    longitude: 126.9018,
+    locality: '서울특별시',
+    latitude: 37.5665,
+    longitude: 126.978,
     source: 'manual',
+    scope: 'administrative_area',
+    exclusionRadiusKm: METROPOLITAN_EXCLUSION_RADIUS_KM,
   },
   {
-    id: 'kr-seoul-gangnam',
-    displayName: '서울특별시 강남구',
+    id: 'kr-busan',
+    displayName: '부산광역시',
     countryCode: 'KR',
     countryName: '대한민국',
-    administrativeArea: '서울특별시',
-    locality: '강남구',
-    latitude: 37.5173,
-    longitude: 127.0473,
+    administrativeArea: '부산광역시',
+    locality: '부산광역시',
+    latitude: 35.1796,
+    longitude: 129.0756,
     source: 'manual',
+    scope: 'administrative_area',
+    exclusionRadiusKm: METROPOLITAN_EXCLUSION_RADIUS_KM,
   },
   {
-    id: 'kr-seoul-songpa',
-    displayName: '서울특별시 송파구',
+    id: 'kr-daegu',
+    displayName: '대구광역시',
     countryCode: 'KR',
     countryName: '대한민국',
-    administrativeArea: '서울특별시',
-    locality: '송파구',
-    latitude: 37.5145,
-    longitude: 127.1059,
+    administrativeArea: '대구광역시',
+    locality: '대구광역시',
+    latitude: 35.8714,
+    longitude: 128.6014,
     source: 'manual',
+    scope: 'administrative_area',
+    exclusionRadiusKm: METROPOLITAN_EXCLUSION_RADIUS_KM,
+  },
+  {
+    id: 'kr-incheon',
+    displayName: '인천광역시',
+    countryCode: 'KR',
+    countryName: '대한민국',
+    administrativeArea: '인천광역시',
+    locality: '인천광역시',
+    latitude: 37.4563,
+    longitude: 126.7052,
+    source: 'manual',
+    scope: 'administrative_area',
+    exclusionRadiusKm: METROPOLITAN_EXCLUSION_RADIUS_KM,
+  },
+  {
+    id: 'kr-gwangju',
+    displayName: '광주광역시',
+    countryCode: 'KR',
+    countryName: '대한민국',
+    administrativeArea: '광주광역시',
+    locality: '광주광역시',
+    latitude: 35.1595,
+    longitude: 126.8526,
+    source: 'manual',
+    scope: 'administrative_area',
+    exclusionRadiusKm: METROPOLITAN_EXCLUSION_RADIUS_KM,
+  },
+  {
+    id: 'kr-daejeon',
+    displayName: '대전광역시',
+    countryCode: 'KR',
+    countryName: '대한민국',
+    administrativeArea: '대전광역시',
+    locality: '대전광역시',
+    latitude: 36.3504,
+    longitude: 127.3845,
+    source: 'manual',
+    scope: 'administrative_area',
+    exclusionRadiusKm: METROPOLITAN_EXCLUSION_RADIUS_KM,
+  },
+  {
+    id: 'kr-ulsan',
+    displayName: '울산광역시',
+    countryCode: 'KR',
+    countryName: '대한민국',
+    administrativeArea: '울산광역시',
+    locality: '울산광역시',
+    latitude: 35.5384,
+    longitude: 129.3114,
+    source: 'manual',
+    scope: 'administrative_area',
+    exclusionRadiusKm: METROPOLITAN_EXCLUSION_RADIUS_KM,
+  },
+  {
+    id: 'kr-sejong',
+    displayName: '세종특별자치시',
+    countryCode: 'KR',
+    countryName: '대한민국',
+    administrativeArea: '세종특별자치시',
+    locality: '세종특별자치시',
+    latitude: 36.48,
+    longitude: 127.289,
+    source: 'manual',
+    scope: 'administrative_area',
+    exclusionRadiusKm: CITY_EXCLUSION_RADIUS_KM,
   },
   {
     id: 'kr-gyeonggi-gwangju',
@@ -67,6 +143,8 @@ const LIVING_AREAS: LivingArea[] = [
     latitude: 37.4293,
     longitude: 127.2551,
     source: 'manual',
+    scope: 'locality',
+    exclusionRadiusKm: CITY_EXCLUSION_RADIUS_KM,
   },
   {
     id: 'kr-gyeonggi-suwon',
@@ -78,39 +156,8 @@ const LIVING_AREAS: LivingArea[] = [
     latitude: 37.2636,
     longitude: 127.0286,
     source: 'manual',
-  },
-  {
-    id: 'kr-incheon-yeonsu',
-    displayName: '인천광역시 연수구',
-    countryCode: 'KR',
-    countryName: '대한민국',
-    administrativeArea: '인천광역시',
-    locality: '연수구',
-    latitude: 37.4103,
-    longitude: 126.6783,
-    source: 'manual',
-  },
-  {
-    id: 'kr-busan-haeundae',
-    displayName: '부산광역시 해운대구',
-    countryCode: 'KR',
-    countryName: '대한민국',
-    administrativeArea: '부산광역시',
-    locality: '해운대구',
-    latitude: 35.1631,
-    longitude: 129.1636,
-    source: 'manual',
-  },
-  {
-    id: 'kr-gwangju-dong',
-    displayName: '광주광역시 동구',
-    countryCode: 'KR',
-    countryName: '대한민국',
-    administrativeArea: '광주광역시',
-    locality: '동구',
-    latitude: 35.1461,
-    longitude: 126.9231,
-    source: 'manual',
+    scope: 'locality',
+    exclusionRadiusKm: CITY_EXCLUSION_RADIUS_KM,
   },
   {
     id: 'kr-jeju-jeju',
@@ -122,11 +169,29 @@ const LIVING_AREAS: LivingArea[] = [
     latitude: 33.4996,
     longitude: 126.5312,
     source: 'manual',
+    scope: 'locality',
+    exclusionRadiusKm: 35,
   },
 ];
 
 function normalizeSearchText(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, '');
+}
+
+function findCanonicalLivingArea(...values: Array<string | null | undefined>) {
+  const normalizedValues = values
+    .filter((value): value is string => Boolean(value))
+    .map(normalizeSearchText);
+
+  return LIVING_AREAS.find((area) => {
+    const areaNames = [area.displayName, area.administrativeArea, area.locality]
+      .filter((value): value is string => Boolean(value))
+      .map(normalizeSearchText);
+
+    return normalizedValues.some((value) => areaNames.some((areaName) => (
+      value === areaName || value.startsWith(areaName) || areaName.startsWith(value)
+    )));
+  });
 }
 
 export function searchLivingAreas(query: string, limit = 8) {
@@ -159,9 +224,22 @@ export function createLivingAreaFromProfile(
   basedIn?: string | null,
   basedInPlace?: LivingAreaProfileValue | null,
 ): LivingArea | null {
-  const displayName = basedInPlace?.displayName ?? basedIn;
-  const latitude = basedInPlace?.latitude;
-  const longitude = basedInPlace?.longitude;
+  const canonicalArea = findCanonicalLivingArea(
+    basedInPlace?.region,
+    basedInPlace?.city,
+    basedInPlace?.displayName,
+    basedIn,
+  );
+
+  // Existing district-level profiles such as "광주광역시 동구" are promoted to
+  // the canonical city-wide area so the home-region filter excludes the whole city.
+  if (canonicalArea?.scope === 'administrative_area') {
+    return canonicalArea;
+  }
+
+  const displayName = canonicalArea?.displayName ?? basedInPlace?.displayName ?? basedIn;
+  const latitude = canonicalArea?.latitude ?? basedInPlace?.latitude;
+  const longitude = canonicalArea?.longitude ?? basedInPlace?.longitude;
 
   if (
     !displayName ||
@@ -172,15 +250,17 @@ export function createLivingAreaFromProfile(
   }
 
   return {
-    id: basedInPlace?.placeId ?? `profile-${displayName}`,
+    id: canonicalArea?.id ?? basedInPlace?.placeId ?? `profile-${displayName}`,
     displayName,
-    countryCode: basedInPlace?.countryCode ?? undefined,
-    countryName: basedInPlace?.country ?? undefined,
-    administrativeArea: basedInPlace?.region ?? undefined,
-    locality: basedInPlace?.city ?? displayName,
+    countryCode: canonicalArea?.countryCode ?? basedInPlace?.countryCode ?? undefined,
+    countryName: canonicalArea?.countryName ?? basedInPlace?.country ?? undefined,
+    administrativeArea: canonicalArea?.administrativeArea ?? basedInPlace?.region ?? undefined,
+    locality: canonicalArea?.locality ?? basedInPlace?.city ?? displayName,
     latitude: latitude as number,
     longitude: longitude as number,
-    providerPlaceId: basedInPlace?.placeId ?? undefined,
-    source: 'manual',
+    providerPlaceId: canonicalArea?.providerPlaceId ?? basedInPlace?.placeId ?? undefined,
+    source: canonicalArea?.source ?? 'manual',
+    scope: canonicalArea?.scope ?? 'locality',
+    exclusionRadiusKm: canonicalArea?.exclusionRadiusKm ?? CITY_EXCLUSION_RADIUS_KM,
   };
 }

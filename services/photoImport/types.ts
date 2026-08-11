@@ -69,6 +69,9 @@ export interface PhotoImportCandidateDebugMetadata {
   scanAttemptId?: string;
   candidateQualityScore?: number;
   candidateQualityType?: PhotoImportCandidateQualityType;
+  candidateMetadataLookupCompleted?: boolean;
+  candidateMetadataLocationFound?: boolean;
+  candidateMetadataDisplayUriFound?: boolean;
   startDate: string;
   endDate: string;
   dayCount: number;
@@ -158,13 +161,4 @@ export interface PhotoImportTripCandidate {
   image: ImageSourcePropType;
   debugMetadata?: PhotoImportCandidateDebugMetadata;
   initiallySelected?: boolean;
-}
-
-export interface PhotoImportProvider {
-  requestPhotoLibraryAccess(): Promise<PhotoLibraryPermissionResult>;
-  startAnalysis(): Promise<void>;
-  getStatus(): Promise<PhotoImportStatus>;
-  getCandidates(): Promise<PhotoImportTripCandidate[]>;
-  saveCandidates(candidateIds: string[]): Promise<void>;
-  skipOnboarding(): Promise<void>;
 }

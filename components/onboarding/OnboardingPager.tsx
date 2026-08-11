@@ -37,8 +37,17 @@ import { FIGMA_IMAGES } from '@/constants/figmaImages';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
 import { usePrimaryLivingArea } from '@/hooks/usePrimaryLivingArea';
+import { useAuth } from '@/providers/AuthProvider';
 import { searchLivingAreas, type LivingArea } from '@/services/location/livingAreas';
+import {
+  getDetectedTripSaveUserMessage,
+  type DetectedTripPhotoSaveProgress,
+} from '@/services/photoImport/saveDetectedTripDraft';
 import type { PhotoImportTripCandidate } from '@/services/photoImport/types';
+import {
+  updateMyOnboardingStatus,
+  type OnboardingStatus,
+} from '@/services/supabase/users';
 
 const STEPS = ['intro', 'photo-library', 'living-area', 'analyzing', 'results'] as const;
 export type OnboardingStepKey = (typeof STEPS)[number];
@@ -49,7 +58,6 @@ const EDGE_RESISTANCE = 0.32;
 const PAGE_MAX_WIDTH = 430;
 const DESIGN_WIDTH = 390;
 const DESIGN_HEIGHT = 844;
-const MOCK_SAVE_DELAY_MS = 650;
 const BACKGROUND = Colors.warm.white;
 const GREY_200 = '#C3C3C3';
 const GREY_700 = '#595959';
@@ -65,7 +73,7 @@ interface OnboardingPagerProps {
 }
 
 export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPagerProps) {
-  const router = useRouter();
+  const { setProfileSnapshot } = useAuth();
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const pageWidth = Math.min(windowWidth, PAGE_MAX_WIDTH);
@@ -74,6 +82,7 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
     candidates,
     progress,
     scanProgress,
+    photoSaveProgress,
     selectedCandidateIds,
     toggleCandidate,
     openPhotoImportResults,
@@ -90,6 +99,7 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
   const [skipLivingAreaForOnboardingScan, setSkipLivingAreaForOnboardingScan] = React.useState(false);
   const hasAutoAdvancedRef = React.useRef(false);
   const hasStartedOnboardingScanRef = React.useRef(false);
+  const isFinalizingOnboardingRef = React.useRef(false);
   const translateX = useSharedValue(-initialIndex * pageWidth);
   const currentIndex = useSharedValue(initialIndex);
   const selectedCount = selectedCandidateIds.length;
@@ -133,7 +143,6 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
       }
 
       hasAutoAdvancedRef.current = true;
-      openPhotoImportResults();
       animateToPage(4);
     }).catch((error) => {
       console.warn('[onboarding photo import] scan failed', error);
@@ -145,7 +154,6 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
     currentIndex,
     currentPage,
     onboardingLivingArea,
-    openPhotoImportResults,
     runPhotoImportDetection,
     skipLivingAreaForOnboardingScan,
   ]);
@@ -191,24 +199,58 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
     animateToPage(3);
   }, [animateToPage, isSavingLivingArea]);
 
+  const persistOnboardingResult = React.useCallback(async (
+    status: Exclude<OnboardingStatus, 'pending'>,
+  ) => {
+    if (isFinalizingOnboardingRef.current) {
+      return false;
+    }
+
+    isFinalizingOnboardingRef.current = true;
+
+    try {
+      const nextProfile = await updateMyOnboardingStatus(status);
+      setProfileSnapshot(nextProfile);
+      return true;
+    } catch (error) {
+      console.warn('[onboarding] failed to save account status', error);
+      Alert.alert(
+        '\uC628\uBCF4\uB529 \uC0C1\uD0DC\uB97C \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+        '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+      );
+      return false;
+    } finally {
+      isFinalizingOnboardingRef.current = false;
+    }
+  }, [setProfileSnapshot]);
+
   const handleSkip = React.useCallback(async () => {
+    if (!(await persistOnboardingResult('skipped'))) {
+      return;
+    }
+
     await skipOnboarding();
-    router.replace('/(tabs)' as Href);
-  }, [router, skipOnboarding]);
+  }, [persistOnboardingResult, skipOnboarding]);
 
-  const handleGoHome = React.useCallback(() => {
-    deferPhotoImportResults();
-    router.replace('/(tabs)' as Href);
-  }, [deferPhotoImportResults, router]);
-
-  const handleDeferResults = React.useCallback(() => {
-    if (isSaving) {
+  const handleGoHome = React.useCallback(async () => {
+    if (!(await persistOnboardingResult('completed'))) {
       return;
     }
 
     deferPhotoImportResults();
-    router.replace('/(tabs)' as Href);
-  }, [deferPhotoImportResults, isSaving, router]);
+  }, [deferPhotoImportResults, persistOnboardingResult]);
+
+  const handleDeferResults = React.useCallback(async () => {
+    if (isSaving) {
+      return;
+    }
+
+    if (!(await persistOnboardingResult('completed'))) {
+      return;
+    }
+
+    deferPhotoImportResults();
+  }, [deferPhotoImportResults, isSaving, persistOnboardingResult]);
 
   const handleSave = React.useCallback(async () => {
     if (!canSave || isSaving) {
@@ -218,15 +260,23 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
     setIsSaving(true);
 
     try {
-      await Promise.all([
-        saveSelectedPhotoImportResults(selectedCandidateIds),
-        wait(MOCK_SAVE_DELAY_MS),
-      ]);
-      router.replace('/(tabs)' as Href);
-    } catch {
+      await saveSelectedPhotoImportResults(selectedCandidateIds);
+      if (!(await persistOnboardingResult('completed'))) {
+        setIsSaving(false);
+        return;
+      }
+    } catch (error) {
       setIsSaving(false);
+      const message = getDetectedTripSaveUserMessage(error);
+      Alert.alert(message.title, message.message);
     }
-  }, [canSave, isSaving, router, saveSelectedPhotoImportResults, selectedCandidateIds]);
+  }, [
+    canSave,
+    isSaving,
+    persistOnboardingResult,
+    saveSelectedPhotoImportResults,
+    selectedCandidateIds,
+  ]);
 
   const panResponder = React.useMemo(
     () =>
@@ -310,6 +360,7 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
         candidates={candidates}
         selectedCandidateIds={selectedCandidateIds}
         isSaving={isSaving}
+        photoSaveProgress={photoSaveProgress}
         onToggleCandidate={toggleCandidate}
         bottomInset={insets.bottom}
         onSave={handleSave}
@@ -327,6 +378,7 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
       handleSkipLivingArea,
       insets.bottom,
       isSaving,
+      photoSaveProgress,
       isSavingLivingArea,
       progress,
       scanProgress,
@@ -779,12 +831,18 @@ function AnalyzingPage({
 }: {
   progress: number;
   scanProgress?: {
+    phase?: 'collecting' | 'preparing_files' | 'resolving_locations' | 'building_candidates';
+    phaseCompletedCount?: number;
+    phaseTotalCount?: number;
     scannedAssetCount: number;
     totalAssetCount: number;
   };
   onGoHome: () => void;
 }) {
-  const displayProgress = scanProgress?.totalAssetCount ? progress : 63;
+  const displayProgress =
+    scanProgress?.phaseTotalCount || scanProgress?.totalAssetCount
+      ? progress
+      : 63;
 
   return (
     <View style={styles.page}>
@@ -795,6 +853,9 @@ function AnalyzingPage({
         </Text>
         <View style={styles.onboardingAnalysisProgressSection}>
           <PhotoAnalysisProgressSection
+            phase={scanProgress?.phase}
+            phaseCompletedCount={scanProgress?.phaseCompletedCount}
+            phaseTotalCount={scanProgress?.phaseTotalCount}
             progress={displayProgress}
             scannedAssetCount={scanProgress?.scannedAssetCount}
             totalAssetCount={scanProgress?.totalAssetCount}
@@ -824,6 +885,7 @@ function ResultsPage({
   candidates,
   selectedCandidateIds,
   isSaving,
+  photoSaveProgress,
   onToggleCandidate,
   bottomInset,
   onSave,
@@ -832,6 +894,7 @@ function ResultsPage({
   candidates: PhotoImportTripCandidate[];
   selectedCandidateIds: string[];
   isSaving: boolean;
+  photoSaveProgress?: DetectedTripPhotoSaveProgress;
   onToggleCandidate: (id: string) => void;
   bottomInset: number;
   onSave: () => void;
@@ -840,6 +903,9 @@ function ResultsPage({
   const router = useRouter();
   const selectedCount = selectedCandidateIds.length;
   const canSave = selectedCount > 0;
+  const saveProgressLabel = photoSaveProgress
+    ? `${photoSaveProgress.phase === 'preparing' ? '원본 사진 준비 중' : '사진 저장 중'} · ${photoSaveProgress.completedCount.toLocaleString()} / ${photoSaveProgress.totalCount.toLocaleString()}`
+    : '저장하는 중...';
   const helperBottom = Math.max(bottomInset + 2, 22);
   const skipBottom = helperBottom + 28;
   const primaryBottom = skipBottom + 42;
@@ -908,7 +974,7 @@ function ResultsPage({
           <View style={styles.savingButtonContent}>
             <ActivityIndicator size="small" color={GREY_700} />
             <Text style={[styles.primaryButtonLabel, styles.primaryButtonLabelSaving]}>
-              저장하는 중...
+              {saveProgressLabel}
             </Text>
           </View>
         ) : (
@@ -1178,12 +1244,6 @@ function ResultTripCard({
       </Pressable>
     </Pressable>
   );
-}
-
-function wait(ms: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 function useDebouncedValue<T>(value: T, delayMs: number) {

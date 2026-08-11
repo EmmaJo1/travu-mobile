@@ -5,25 +5,29 @@ import type { DestinationOption } from '@/constants/mockTripDestinations';
 
 interface DestinationSearchModalProps {
   visible: boolean;
-  currentDestination: DestinationOption;
+  currentDestinations: DestinationOption[];
+  isSaving?: boolean;
   onCancel: () => void;
-  onSave: (destination: DestinationOption) => void;
+  onSave: (destinations: DestinationOption[]) => void;
 }
 
 export default function DestinationSearchModal({
   visible,
-  currentDestination,
+  currentDestinations,
+  isSaving = false,
   onCancel,
   onSave,
 }: DestinationSearchModalProps) {
   return (
     <DestinationSelectModal
       visible={visible}
-      selectedDestination={currentDestination}
+      selectedDestinations={currentDestinations}
+      isConfirming={isSaving}
       initialScope="domestic"
       initialCategoryId="popular"
       onClose={onCancel}
-      onSelectDestination={onSave}
+      onSelectDestination={() => {}}
+      onConfirmDestinations={onSave}
     />
   );
 }

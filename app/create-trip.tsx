@@ -2,7 +2,13 @@ import { Feather } from '@expo/vector-icons';
 import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import {
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
@@ -39,6 +45,7 @@ export default function CreateTripScreen() {
   const params = useLocalSearchParams();
   const { canUseSupabaseUserData } = useAuth();
   const createTripMutation = useCreateTrip();
+  const createRequestInFlightRef = React.useRef(false);
 
   const destinationId = firstParam(params.destinationId);
   const destinationName = firstParam(params.destinationName);
@@ -48,7 +55,8 @@ export default function CreateTripScreen() {
   const endDate = firstParam(params.endDate);
 
   const dateLabel = formatDateLabel(startDate, endDate);
-  const canCreate = Boolean(destinationName && startDate && endDate);
+  const isCreating = createTripMutation.isPending;
+  const canCreate = Boolean(destinationName && startDate && endDate) && !isCreating;
   const ctaBottom = Math.max(insets.bottom + 32, 64);
 
   const sharedParams = React.useMemo(() => ({
@@ -67,6 +75,10 @@ export default function CreateTripScreen() {
     startDate,
   ]);
 
+  const handleBack = React.useCallback(() => {
+    router.back();
+  }, [router]);
+
   const handleOpenDestination = React.useCallback(() => {
     router.push({
       pathname: '/select-trip-destination',
@@ -82,7 +94,7 @@ export default function CreateTripScreen() {
   }, [router, sharedParams]);
 
   const handleCreate = React.useCallback(async () => {
-    if (!canCreate) return;
+    if (!canCreate || createRequestInFlightRef.current) return;
 
     const nextDestinationName = destinationName;
     const nextStartDate = startDate;
@@ -92,6 +104,7 @@ export default function CreateTripScreen() {
       return;
     }
 
+    createRequestInFlightRef.current = true;
     let createdTripId: string | undefined;
 
     if (canUseSupabaseUserData) {
@@ -105,10 +118,12 @@ export default function CreateTripScreen() {
           isEndDateUndecided: false,
           startDate: nextStartDate,
           status: 'draft',
-          title: `${nextDestinationName} 여행`,
+          title: nextDestinationName,
         });
         createdTripId = trip.id;
       } catch (error) {
+        createRequestInFlightRef.current = false;
+
         if (error instanceof ActiveTripExistsError) {
           Alert.alert('이미 진행 중인 여행이 있어요.', '기존 여행을 종료한 뒤 새 여행을 시작해주세요.');
           return;
@@ -148,29 +163,38 @@ export default function CreateTripScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar style="dark" />
-      <ScreenHeader title="직접 여행 만들기" onBackPress={() => router.back()} style={styles.header} />
+      <ScreenHeader title="직접 여행 만들기" onBackPress={handleBack} style={styles.header} />
 
-      <View style={styles.copyBlock}>
-        <Text style={styles.title}>어떤 여행을 정리할까요?</Text>
-        <Text style={styles.description}>여행지와 기간을 입력하여 직접 여행을 생성해보세요</Text>
-      </View>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: ctaBottom + 48 + Spacing['4xl'] },
+        ]}
+      >
+        <View style={styles.copyBlock}>
+          <Text style={styles.title}>어떤 여행을 정리할까요?</Text>
+          <Text style={styles.description}>여행지와 기간을 입력해 여행을 만들어보세요</Text>
+        </View>
 
-      <View style={styles.form}>
-        <CreateTripField
-          icon="map-pin"
-          label="여행지"
-          value={destinationLabel ?? ''}
-          placeholder="도시나 국가를 선택해주세요"
-          onPress={handleOpenDestination}
-        />
-        <CreateTripField
-          icon="calendar"
-          label="여행 기간"
-          value={dateLabel}
-          placeholder="여행 날짜를 선택해주세요"
-          onPress={handleOpenDate}
-        />
-      </View>
+        <View style={styles.form}>
+          <CreateTripField
+            icon="map-pin"
+            label="여행지"
+            value={destinationLabel ?? ''}
+            placeholder="도시나 국가를 선택해주세요"
+            onPress={handleOpenDestination}
+          />
+          <CreateTripField
+            icon="calendar"
+            label="여행 기간"
+            value={dateLabel}
+            placeholder="여행 날짜를 선택해주세요"
+            onPress={handleOpenDate}
+          />
+        </View>
+      </ScrollView>
 
       <Pressable
         accessibilityRole="button"
@@ -183,7 +207,9 @@ export default function CreateTripScreen() {
           pressed && canCreate && styles.ctaPressed,
         ]}
       >
-        <Text style={[styles.ctaLabel, !canCreate && styles.ctaLabelDisabled]}>여행 만들기</Text>
+        <Text style={[styles.ctaLabel, !canCreate && styles.ctaLabelDisabled]}>
+          {isCreating ? '여행 만드는 중...' : '여행 만들기'}
+        </Text>
       </Pressable>
     </SafeAreaView>
   );
@@ -226,27 +252,25 @@ const styles = StyleSheet.create({
   header: {
     height: 44,
   },
+  scrollContent: {
+    paddingTop: Spacing['4xl'] * 3,
+    paddingHorizontal: Spacing.xl,
+  },
   copyBlock: {
-    position: 'absolute',
-    top: 163,
-    left: Spacing.xl,
-    width: 270,
+    width: '100%',
   },
   title: {
+    width: 270,
     ...Typography.title1,
     color: Colors.foundation.black,
   },
   description: {
-    width: 165,
     marginTop: Spacing.lg,
     ...Typography.body1Regular,
     color: GREY_700,
   },
   form: {
-    position: 'absolute',
-    top: 360,
-    left: Spacing.xl,
-    right: Spacing.xl,
+    marginTop: Spacing['4xl'] * 2,
     gap: Spacing['3xl'],
   },
   fieldBlock: {

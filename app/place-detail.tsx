@@ -6,11 +6,15 @@ import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
   Alert,
+  ActivityIndicator,
   Animated,
   Easing,
   Image,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
   PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -44,21 +48,42 @@ import {
 } from '@/services/placeDetailDeletionRegistry';
 import { MOCK_ARCHIVE_DETAIL } from '@/constants/mockArchiveDetail';
 import { RECORD_DAY_ENTRIES } from '@/constants/mockRecordDayDetail';
+import {
+  getPlaceCategoryLabel,
+  normalizePlaceCategoryValue,
+} from '@/constants/placeCategories';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 import {
+  buildVisitedAtIso,
   convertDateToPlaceEntryTime,
   extractPhotoTakenAt,
   formatPlaceEntryTime,
+  formatVisitedAtTimeLabel,
   parsePlaceEntryTime,
 } from '@/utils/placeEntryTime';
 import { isSupabaseUuid, usePlaceDetailData } from '@/hooks/usePlaceDetailData';
 import { useDeletePlaceRecord } from '@/hooks/useDeletePlaceRecord';
 import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
 import { useTripDays } from '@/hooks/useTripDays';
+import { usePlacePhotos } from '@/hooks/useSupabasePhotos';
 import { useAuth } from '@/providers/AuthProvider';
 import { updatePlace, type PlaceRow, type UpdatePlacePatch } from '@/services/supabase/places';
 import type { TripDayRow } from '@/services/supabase/tripDays';
-import type { RecordRow } from '@/services/supabase/records';
+import {
+  createRecordForPlace,
+  softDeleteRecord,
+  syncRecordPhotos,
+  updateRecord,
+  type RecordRow,
+  type RecordWithPhotos,
+} from '@/services/supabase/records';
+import {
+  softDeletePhotos,
+  setPlaceCoverPhoto,
+  uploadPlacePhotos,
+  type DeletePhotosResult,
+  type UploadPlacePhotoItem,
+} from '@/services/supabase/photos';
 
 type PlaceDetailRouteParams = {
   tripId?: string;
@@ -80,6 +105,7 @@ type PlaceDetailRouteParams = {
 };
 
 const DESTRUCTIVE = '#EB524D';
+const PHOTO_GRID_COLUMN_COUNT = 3;
 const DATE_LABEL_PATTERN = /^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})(?:\s*(.*))?$/;
 const KOREAN_WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'] as const;
 const RECORD_SWIPE_ACTION_WIDTH = 104;
@@ -196,7 +222,8 @@ function getKoreanCategoryLabel(value?: string) {
     return '';
   }
 
-  return (key && KOREAN_CATEGORY_LABELS[key])
+  return getPlaceCategoryLabel(trimmedValue)
+    || (key && KOREAN_CATEGORY_LABELS[key])
     || (containsKorean(trimmedValue) ? trimmedValue : '장소');
 }
 
@@ -407,30 +434,13 @@ function getSerializablePhotoUris(photos: PlaceDetailPhoto[]): string[] {
     .filter((uri): uri is string => typeof uri === 'string' && uri.length > 0);
 }
 
-function formatSupabaseVisitedTime(value?: string | null) {
-  if (!value) {
-    return undefined;
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return undefined;
-  }
-
-  return formatPlaceEntryTime({
-    hour: date.getUTCHours() % 12 || 12,
-    minute: date.getUTCMinutes(),
-    meridiem: date.getUTCHours() >= 12 ? 'PM' : 'AM',
-  });
-}
-
 function hasDisplayableRecordContent(record: RecordRow) {
   return Boolean(record.text?.trim());
 }
 
 function createSupabasePlaceDetail(
   place: PlaceRow,
-  placeRecords: RecordRow[],
+  placeRecords: RecordWithPhotos[],
   params: PlaceDetailRouteParams,
 ): PlaceDetailData {
   const firstRecord = placeRecords[0];
@@ -438,7 +448,8 @@ function createSupabasePlaceDetail(
   const displayableRecords = placeRecords.filter(hasDisplayableRecordContent);
 
   return {
-    categoryLabel: getParamValue(params.categoryLabel),
+    categoryLabel: getPlaceCategoryLabel(place.category)
+      || getParamValue(params.categoryLabel),
     cityName: place.city ?? getParamValue(params.cityName) ?? '',
     countryName: place.country ?? getParamValue(params.countryName) ?? '',
     dateLabel: visitedAt ?? getParamValue(params.dateLabel) ?? '',
@@ -450,14 +461,21 @@ function createSupabasePlaceDetail(
       createdAt: record.created_at,
       dayId: record.trip_day_id ?? place.trip_day_id ?? getParamValue(params.dayId) ?? '',
       id: record.id,
-      photoIds: [],
+      photoIds: record.record_photos
+        .filter((recordPhoto) => recordPhoto.deleted_at === null)
+        .sort((left, right) => (
+          left.sort_order - right.sort_order
+          || left.created_at.localeCompare(right.created_at)
+          || left.id.localeCompare(right.id)
+        ))
+        .map((recordPhoto) => recordPhoto.photo_id),
       placeId: record.place_id,
       text: record.text ?? undefined,
-      time: formatSupabaseVisitedTime(place.visited_at ?? record.visited_at),
+      time: formatVisitedAtTimeLabel(record.visited_at),
       tripId: record.trip_id,
       updatedAt: record.updated_at,
     })),
-    timeLabel: formatSupabaseVisitedTime(visitedAt),
+    timeLabel: formatVisitedAtTimeLabel(visitedAt),
     tripDateRange: getParamValue(params.dateLabel) ?? '',
     tripId: place.trip_id,
     tripName: getParamValue(params.cityName) ?? getParamValue(params.placeName) ?? 'Trip',
@@ -712,7 +730,7 @@ function getDateKeyFromPlaceDetailLabel(value?: string) {
   ].join('-');
 }
 
-function buildVisitedAtForPlaceUpdate(input: PlaceCreateInput, fallbackDateLabel?: string) {
+function resolveVisitedAtForPlaceUpdate(input: PlaceCreateInput, fallbackDateLabel?: string) {
   const dateKey =
     input.dateKey ??
     getDateKeyFromPlaceDetailLabel(input.dateLabel) ??
@@ -722,27 +740,14 @@ function buildVisitedAtForPlaceUpdate(input: PlaceCreateInput, fallbackDateLabel
     return undefined;
   }
 
-  const parsedTime = input.time ? parsePlaceEntryTime(input.time) : null;
-
-  if (!parsedTime) {
-    return `${dateKey}T00:00:00.000Z`;
-  }
-
-  const hour = parsedTime.meridiem === 'AM'
-    ? parsedTime.hour % 12
-    : (parsedTime.hour % 12) + 12;
-
-  return `${dateKey}T${String(hour).padStart(2, '0')}:${String(parsedTime.minute).padStart(
-    2,
-    '0',
-  )}:00.000Z`;
+  return buildVisitedAtIso(dateKey, input.time);
 }
 
 export default function PlaceDetailScreen() {
   const params = useLocalSearchParams<PlaceDetailRouteParams>();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { canUseSupabaseUserData, user } = useAuth();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const screenWidth = Math.max(320, width);
@@ -798,12 +803,26 @@ export default function PlaceDetailScreen() {
     ],
   );
   const shouldUseSupabasePlaceDetail = isSupabaseUuid(routePlaceId);
+  const isRouteBackedDetectedPlace =
+    routeEntryPoint === 'recordDayDetail' &&
+    Boolean(routePlaceId) &&
+    Boolean(routePlaceName) &&
+    !shouldUseSupabasePlaceDetail;
   const {
     data: supabasePlaceDetailData,
+    isError: isSupabasePlaceDetailError,
     isFetched: hasFetchedSupabasePlaceDetail,
+    isPending: isSupabasePlaceDetailPending,
     refetch: refetchPlaceDetailData,
   } =
     usePlaceDetailData(routePlaceId);
+  const {
+    data: supabasePlacePhotos,
+    isError: isPlacePhotosError,
+    isFetched: hasFetchedPlacePhotos,
+    isPending: isPlacePhotosPending,
+    refetch: refetchPlacePhotos,
+  } = usePlacePhotos(routePlaceId);
   const deletePlaceRecordMutation = useDeletePlaceRecord();
 
   const initialDetail = React.useMemo(
@@ -824,6 +843,14 @@ export default function PlaceDetailScreen() {
         return undefined;
       }
 
+      if (isRouteBackedDetectedPlace) {
+        return createRecordDayFallbackDetail(stableParams);
+      }
+
+      if (canUseSupabaseUserData) {
+        return undefined;
+      }
+
       return (
         isPlaceDetailDeleted(routePlaceId)
         ? undefined
@@ -832,7 +859,9 @@ export default function PlaceDetailScreen() {
       );
     },
     [
+      canUseSupabaseUserData,
       hasFetchedSupabasePlaceDetail,
+      isRouteBackedDetectedPlace,
       routeDayId,
       routePlaceId,
       routeTripId,
@@ -857,6 +886,7 @@ export default function PlaceDetailScreen() {
   const [heroIndex, setHeroIndex] = React.useState(0);
   const [isMoreOpen, setMoreOpen] = React.useState(false);
   const [viewerIndex, setViewerIndex] = React.useState(0);
+  const [isUpdatingCoverPhoto, setUpdatingCoverPhoto] = React.useState(false);
   const [viewerPhotoIds, setViewerPhotoIds] = React.useState<string[] | null>(null);
   const [isViewerViewOnly, setViewerViewOnly] = React.useState(false);
   const [isViewerOpen, setViewerOpen] = React.useState(false);
@@ -873,16 +903,27 @@ export default function PlaceDetailScreen() {
   const [selectedRecordPhotoIds, setSelectedRecordPhotoIds] = React.useState<string[]>([]);
   const [recordDraft, setRecordDraft] = React.useState('');
   const [recordTimeLabel, setRecordTimeLabel] = React.useState(initialDetail?.timeLabel ?? '');
+  const [editingRecordId, setEditingRecordId] = React.useState<string | null>(null);
   const [hasRecordTimeBeenEdited, setRecordTimeEdited] = React.useState(false);
+  const [isRecordSaving, setRecordSaving] = React.useState(false);
+  const [isRecordDeleting, setRecordDeleting] = React.useState(false);
   const [isDeleteConfirmOpen, setDeleteConfirmOpen] = React.useState(false);
-  const [isPhotoDeleteConfirmOpen, setPhotoDeleteConfirmOpen] = React.useState(false);
+  const [isPhotoDeleting, setPhotoDeleting] = React.useState(false);
   const [pendingDeleteRecordId, setPendingDeleteRecordId] = React.useState<string | null>(null);
   const [openSwipeRecordId, setOpenSwipeRecordId] = React.useState<string | null>(null);
   const [isRecordSwipeActive, setRecordSwipeActive] = React.useState(false);
-  const [pendingDeletePhotoIds, setPendingDeletePhotoIds] = React.useState<string[]>([]);
   const [gridSelectionResetSignal, setGridSelectionResetSignal] = React.useState(0);
-  const recordPhotoPickerOpenTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const recordSheetRestoreTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isRecordSavingRef = React.useRef(false);
+  const isRecordDeletingRef = React.useRef(false);
+  const isPhotoUploadingRef = React.useRef(false);
+  const isPhotoDeletingRef = React.useRef(false);
+  const isPhotoScreenMountedRef = React.useRef(true);
+  const [isPhotoUploading, setPhotoUploading] = React.useState(false);
+  const [failedPhotoUploadItems, setFailedPhotoUploadItems] =
+    React.useState<UploadPlacePhotoItem[]>([]);
+  const pendingRecordPhotoGridOpenRef = React.useRef(false);
+  const pendingRecordModalCleanupRef = React.useRef(false);
+  const pendingRecordSheetRestoreRef = React.useRef(false);
   const supabaseTripIdForPlace = shouldUseSupabasePlaceDetail && isSupabaseUuid(initialDetail?.tripId)
     ? initialDetail?.tripId
     : undefined;
@@ -896,7 +937,7 @@ export default function PlaceDetailScreen() {
   detailSyncSnapshotRef.current = detailSyncSnapshot;
   const detailSyncKey = detailSyncSnapshot.key;
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const snapshot = detailSyncSnapshotRef.current;
 
     setPlaceInfo((current) => (
@@ -909,7 +950,32 @@ export default function PlaceDetailScreen() {
     ));
   }, [detailSyncKey]);
 
+  React.useEffect(() => {
+    if (!shouldUseSupabasePlaceDetail || !hasFetchedPlacePhotos) {
+      return;
+    }
+
+    const nextPhotos = (supabasePlacePhotos ?? [])
+      .filter((photo) => Boolean(photo.displayUrl))
+      .map((photo): PlaceDetailPhoto => ({
+        createdAt: photo.created_at,
+        id: photo.id,
+        source: { uri: photo.displayUrl as string },
+        takenAt: photo.taken_at ?? undefined,
+      }));
+
+    setPhotos((current) => (
+      arePhotoListsEqual(current, nextPhotos) ? current : nextPhotos
+    ));
+  }, [
+    detailSyncKey,
+    hasFetchedPlacePhotos,
+    shouldUseSupabasePlaceDetail,
+    supabasePlacePhotos,
+  ]);
+
   const prepareRecordComposer = React.useCallback((photoIds: string[]) => {
+    setEditingRecordId(null);
     setSelectedRecordPhotoIds(photoIds);
     setRecordDraft('');
     const earliestPhotoDate = getEarliestRecordPhotoTakenDate(photoIds, photos);
@@ -921,23 +987,46 @@ export default function PlaceDetailScreen() {
     setRecordTimeEdited(false);
   }, [photos]);
 
+  const openRecordEditor = React.useCallback((recordId: string) => {
+    const record = records.find((item) => item.id === recordId);
+
+    if (!record) {
+      return;
+    }
+
+    setOpenSwipeRecordId(null);
+    pendingRecordModalCleanupRef.current = false;
+    setEditingRecordId(record.id);
+    setSelectedRecordPhotoIds(record.photoIds ?? []);
+    setRecordDraft(record.text ?? '');
+    setRecordTimeLabel(record.time ?? '');
+    setRecordTimeEdited(false);
+    setRecordModalMode('sheet');
+    setRecordModalOpen(true);
+  }, [records]);
+
   const openRecordComposer = React.useCallback((
     photoIds: string[],
     mode: 'sheet' | 'screen',
   ) => {
+    pendingRecordModalCleanupRef.current = false;
     prepareRecordComposer(photoIds);
     setRecordModalMode(mode);
     setRecordModalOpen(true);
   }, [prepareRecordComposer]);
 
   React.useEffect(() => () => {
-    if (recordPhotoPickerOpenTimerRef.current) {
-      clearTimeout(recordPhotoPickerOpenTimerRef.current);
-    }
+    pendingRecordModalCleanupRef.current = false;
+    pendingRecordPhotoGridOpenRef.current = false;
+    pendingRecordSheetRestoreRef.current = false;
+  }, []);
 
-    if (recordSheetRestoreTimerRef.current) {
-      clearTimeout(recordSheetRestoreTimerRef.current);
-    }
+  React.useEffect(() => {
+    isPhotoScreenMountedRef.current = true;
+
+    return () => {
+      isPhotoScreenMountedRef.current = false;
+    };
   }, []);
 
   const initialDetailPlaceId = initialDetail?.placeId;
@@ -966,6 +1055,18 @@ export default function PlaceDetailScreen() {
     () => viewerPhotos.map((photo) => photo.source),
     [viewerPhotos],
   );
+  const failedPlacePhotoCount = React.useMemo(
+    () => (supabasePlacePhotos ?? []).filter(
+      (photo) => photo.displayUrlStatus === 'failed',
+    ).length,
+    [supabasePlacePhotos],
+  );
+  const missingPlacePhotoCount = React.useMemo(
+    () => (supabasePlacePhotos ?? []).filter(
+      (photo) => photo.displayUrlStatus === 'missing',
+    ).length,
+    [supabasePlacePhotos],
+  );
   const selectedRecordPhotos = React.useMemo(
     () => selectedRecordPhotoIds
       .map((photoId) => photos.find((photo) => photo.id === photoId))
@@ -989,6 +1090,13 @@ export default function PlaceDetailScreen() {
 
         if (aTime == null && bTime != null) {
           return 1;
+        }
+
+        const createdAtDifference =
+          getRecordSortValue(a.record) - getRecordSortValue(b.record);
+
+        if (Number.isFinite(createdAtDifference) && createdAtDifference !== 0) {
+          return createdAtDifference;
         }
 
         return a.index - b.index;
@@ -1039,11 +1147,79 @@ export default function PlaceDetailScreen() {
   }, []);
 
   const cancelDeleteRecord = React.useCallback(() => {
+    if (isRecordDeletingRef.current) {
+      return;
+    }
+
     setPendingDeleteRecordId(null);
   }, []);
 
-  const confirmDeleteRecord = React.useCallback(() => {
-    if (!pendingDeleteRecordId) {
+  const confirmDeleteRecord = React.useCallback(async () => {
+    if (
+      !pendingDeleteRecordId ||
+      isRecordDeletingRef.current ||
+      isRecordDeleting
+    ) {
+      return;
+    }
+
+    if (shouldUseSupabasePlaceDetail) {
+      const tripDayId = initialDetail?.dayId || routeDayId || '';
+      const tripId = initialDetail?.tripId || routeTripId || '';
+      const placeId = initialDetail?.placeId || routePlaceId || '';
+
+      if (!tripDayId || !tripId || !placeId) {
+        Alert.alert(
+          '\uAE30\uB85D\uC744 \uC0AD\uC81C\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC5EC\uD589 \uB0A0\uC9DC\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC5B4\uC694. \uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+        );
+        return;
+      }
+
+      isRecordDeletingRef.current = true;
+      setRecordDeleting(true);
+
+      try {
+        await softDeleteRecord(pendingDeleteRecordId, {
+          placeId,
+          tripDayId,
+          tripId,
+        });
+        setRecords((currentRecords) =>
+          currentRecords.filter((record) => record.id !== pendingDeleteRecordId),
+        );
+        setPendingDeleteRecordId(null);
+
+        void Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.placeDetail(user?.id, placeId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, tripDayId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDayRecords(user?.id, tripDayId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripRecords(user?.id, tripId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDays(user?.id, tripId),
+          }),
+        ]).catch((error: unknown) => {
+          console.warn('[place-detail] invalidate after record delete failed', error);
+        });
+      } catch (error) {
+        console.warn('[place-detail] delete record failed', error);
+        Alert.alert(
+          '\uAE30\uB85D\uC744 \uC0AD\uC81C\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+        );
+      } finally {
+        isRecordDeletingRef.current = false;
+        setRecordDeleting(false);
+      }
+
       return;
     }
 
@@ -1051,7 +1227,19 @@ export default function PlaceDetailScreen() {
       currentRecords.filter((record) => record.id !== pendingDeleteRecordId),
     );
     setPendingDeleteRecordId(null);
-  }, [pendingDeleteRecordId]);
+  }, [
+    initialDetail?.dayId,
+    initialDetail?.placeId,
+    initialDetail?.tripId,
+    isRecordDeleting,
+    pendingDeleteRecordId,
+    queryClient,
+    routeDayId,
+    routePlaceId,
+    routeTripId,
+    shouldUseSupabasePlaceDetail,
+    user?.id,
+  ]);
 
   const handleConfirmDeletePlace = React.useCallback(async () => {
     if (!initialDetail) {
@@ -1059,17 +1247,27 @@ export default function PlaceDetailScreen() {
     }
 
     try {
+      let storageCleanupIncomplete = false;
+
       if (shouldUseSupabasePlaceDetail) {
-        await deletePlaceRecordMutation.mutateAsync({
+        const result = await deletePlaceRecordMutation.mutateAsync({
           placeId: initialDetail.placeId,
           tripDayId: initialDetail.dayId || routeDayId || '',
           tripId: initialDetail.tripId || routeTripId || '',
         });
+        storageCleanupIncomplete = result.storageCleanupIncomplete;
       }
 
       markPlaceDetailDeleted(initialDetail.placeId);
       setDeleteConfirmOpen(false);
       router.back();
+
+      if (storageCleanupIncomplete) {
+        Alert.alert(
+          '\uC7A5\uC18C\uB294 \uC0AD\uC81C\uB410\uC5B4\uC694',
+          '\uC77C\uBD80 \uC0AC\uC9C4 \uD30C\uC77C \uC815\uB9AC\uAC00 \uB0A8\uC544 \uC788\uC5B4 \uB2E4\uC74C \uC571 \uC2E4\uD589 \uB54C \uC790\uB3D9\uC73C\uB85C \uB2E4\uC2DC \uC815\uB9AC\uD569\uB2C8\uB2E4.',
+        );
+      }
     } catch (error) {
       console.warn('[place-detail] delete place failed', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1086,6 +1284,52 @@ export default function PlaceDetailScreen() {
     router,
     shouldUseSupabasePlaceDetail,
   ]);
+
+  const isInitialSupabasePlaceDetailLoading = shouldUseSupabasePlaceDetail
+    && !initialDetail
+    && !isSupabasePlaceDetailError
+    && (isSupabasePlaceDetailPending || !hasFetchedSupabasePlaceDetail);
+
+  if (isInitialSupabasePlaceDetailLoading) {
+    return (
+      <SafeAreaView style={styles.root}>
+        <StatusBar style="dark" />
+        <View style={styles.header}>
+          <Pressable accessibilityRole="button" hitSlop={10} onPress={() => router.back()} style={styles.headerButton}>
+            <Feather name="chevron-left" size={28} color={Colors.foundation.black} />
+          </Pressable>
+        </View>
+        <View style={styles.emptyState}>
+          <ActivityIndicator color={Colors.foundation.black} />
+          <Text style={styles.emptyDescription}>{'장소 정보를 불러오는 중이에요'}</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (shouldUseSupabasePlaceDetail && !initialDetail && isSupabasePlaceDetailError) {
+    return (
+      <SafeAreaView style={styles.root}>
+        <StatusBar style="dark" />
+        <View style={styles.header}>
+          <Pressable accessibilityRole="button" hitSlop={10} onPress={() => router.back()} style={styles.headerButton}>
+            <Feather name="chevron-left" size={28} color={Colors.foundation.black} />
+          </Pressable>
+        </View>
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyTitle}>{'장소 정보를 불러오지 못했어요'}</Text>
+          <Text style={styles.emptyDescription}>{'네트워크 상태를 확인한 뒤 다시 시도해주세요.'}</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void refetchPlaceDetailData()}
+            style={styles.photoStatusAction}
+          >
+            <Text style={styles.photoStatusActionText}>{'다시 시도'}</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!initialDetail) {
     return (
@@ -1128,19 +1372,34 @@ export default function PlaceDetailScreen() {
     setGridOpen(true);
   };
 
-  const restoreRecordSheetAfterPhotoGrid = () => {
-    if (recordSheetRestoreTimerRef.current) {
-      clearTimeout(recordSheetRestoreTimerRef.current);
+  const requestRecordSheetRestoreAfterPhotoGrid = () => {
+    if (pendingRecordSheetRestoreRef.current) {
+      return false;
     }
 
-    recordSheetRestoreTimerRef.current = setTimeout(() => {
-      setRecordModalOpen(true);
-      setRecordPhotoPickerTransitioning(false);
-      recordSheetRestoreTimerRef.current = null;
-    }, 120);
+    pendingRecordSheetRestoreRef.current = true;
+    setRecordPhotoPickerTransitioning(true);
+    setGridOpen(false);
+    return true;
+  };
+
+  const handlePhotoGridDidDismiss = () => {
+    if (!pendingRecordSheetRestoreRef.current) {
+      return;
+    }
+
+    pendingRecordSheetRestoreRef.current = false;
+    pendingRecordModalCleanupRef.current = false;
+    setGridSelectionPurpose('recordCreate');
+    setRecordPhotoPickerTransitioning(false);
+    setRecordModalOpen(true);
   };
 
   const handleClosePhotoGrid = () => {
+    if (isPhotoDeletingRef.current) {
+      return;
+    }
+
     if (gridSelectionPurpose === 'coverSelect') {
       setGridOpen(false);
       setGridSelectionPurpose('recordCreate');
@@ -1148,9 +1407,7 @@ export default function PlaceDetailScreen() {
     }
 
     if (gridSelectionPurpose === 'linkRecord') {
-      setGridOpen(false);
-      setGridSelectionPurpose('recordCreate');
-      restoreRecordSheetAfterPhotoGrid();
+      requestRecordSheetRestoreAfterPhotoGrid();
       return;
     }
 
@@ -1165,6 +1422,7 @@ export default function PlaceDetailScreen() {
 
       setGridSelectionInitiallyEnabled(false);
       setGridViewOnly(false);
+      setGridOpen(false);
       router.replace({
         pathname: '/record-day-detail',
         params: {
@@ -1182,9 +1440,11 @@ export default function PlaceDetailScreen() {
     if (params.entryPoint === 'archiveDayDetail' && params.openPhotoGrid === '1') {
       setGridSelectionInitiallyEnabled(false);
       setGridViewOnly(false);
+      setGridOpen(false);
       router.replace({
         pathname: '/day-archive-detail',
         params: {
+          tripId: params.tripId ?? initialDetail.tripId,
           dayId: params.dayId ?? initialDetail.dayId,
         },
       });
@@ -1198,8 +1458,78 @@ export default function PlaceDetailScreen() {
     setHeroIndex(Math.round(event.nativeEvent.contentOffset.x / screenWidth));
   };
 
+  const uploadSelectedPlacePhotos = async (items: UploadPlacePhotoItem[]) => {
+    if (isPhotoUploadingRef.current || items.length === 0) {
+      return;
+    }
+
+    isPhotoUploadingRef.current = true;
+    setPhotoUploading(true);
+
+    try {
+      const uploadResult = await uploadPlacePhotos(items);
+      if (isPhotoScreenMountedRef.current) {
+        setFailedPhotoUploadItems(uploadResult.failedItems);
+      }
+
+      const uploadContext = items[0]?.input;
+      if (uploadContext) {
+        await Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.archivedTravelMoments(user?.id),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripDayPhotos(user?.id, uploadContext.tripDayId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripPhotos(user?.id, uploadContext.tripId),
+          }),
+        ]);
+      }
+
+      const refreshResult = await refetchPlacePhotos();
+      if (!isPhotoScreenMountedRef.current) {
+        return;
+      }
+
+      if (refreshResult.isError) {
+        Alert.alert(
+          '\uC0AC\uC9C4\uC740 \uC800\uC7A5\uB410\uC9C0\uB9CC \uBAA9\uB85D\uC744 \uC0C8\uB85C\uACE0\uCE58\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uD655\uC778\uD574 \uC8FC\uC138\uC694.',
+        );
+        return;
+      }
+
+      if (uploadResult.failedItems.length > 0) {
+        Alert.alert(
+          '\uC77C\uBD80 \uC0AC\uC9C4\uC744 \uCD94\uAC00\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC2E4\uD328\uD55C \uC0AC\uC9C4\uB9CC \uB2E4\uC2DC \uC2DC\uB3C4\uD560 \uC218 \uC788\uC5B4\uC694.',
+          [
+            { text: '\uB098\uC911\uC5D0' },
+            {
+              text: '\uB2E4\uC2DC \uC2DC\uB3C4',
+              onPress: () => {
+                void uploadSelectedPlacePhotos(uploadResult.failedItems);
+              },
+            },
+          ],
+        );
+      }
+    } finally {
+      isPhotoUploadingRef.current = false;
+      if (isPhotoScreenMountedRef.current) {
+        setPhotoUploading(false);
+      }
+    }
+  };
+
   const handleAddPhoto = async () => {
     setMoreOpen(false);
+
+    if (isPhotoUploadingRef.current) {
+      return;
+    }
+
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsMultipleSelection: true,
@@ -1211,47 +1541,310 @@ export default function PlaceDetailScreen() {
       return;
     }
 
-    const addedPhotos = result.assets.map((asset) => {
-      const takenAt = extractPhotoTakenAt(asset);
+    if (!shouldUseSupabasePlaceDetail) {
+      const addedPhotos = result.assets.map((asset) => {
+        const takenAt = extractPhotoTakenAt(asset);
 
-      return {
-        id: makePhotoId(),
-        source: { uri: asset.uri },
-        takenAt: takenAt?.toISOString(),
-      };
-    });
+        return {
+          id: makePhotoId(),
+          source: { uri: asset.uri },
+          takenAt: takenAt?.toISOString(),
+        };
+      });
 
-    setPhotos((currentPhotos) => [...currentPhotos, ...addedPhotos]);
-  };
-
-  const handleSaveRecord = () => {
-    const trimmedText = recordDraft.trim();
-    if (!trimmedText) {
+      setPhotos((currentPhotos) => [...currentPhotos, ...addedPhotos]);
       return;
     }
 
-    setRecords((currentRecords) => [
-      ...currentRecords,
-      {
-        id: `record-${Date.now()}`,
-        tripId: initialDetail.tripId,
-        dayId: initialDetail.dayId,
-        placeId: initialDetail.placeId,
-        time: recordTimeLabel,
-        text: trimmedText,
-        photoIds: selectedRecordPhotoIds,
-        createdAt: new Date().toISOString(),
-      },
-    ]);
+    const tripId = initialDetail.tripId || routeTripId || '';
+    const tripDayId = initialDetail.dayId || routeDayId || '';
+    const placeId = initialDetail.placeId || routePlaceId || '';
+
+    if (!user?.id || !tripId || !tripDayId || !placeId) {
+      Alert.alert(
+        '\uC0AC\uC9C4\uC744 \uCD94\uAC00\uD560 \uC218 \uC5C6\uC5B4\uC694',
+        '\uC5EC\uD589\uACFC \uC7A5\uC18C \uC815\uBCF4\uB97C \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.',
+      );
+      return;
+    }
+
+    const items = result.assets.map((asset): UploadPlacePhotoItem => {
+      const takenAt = extractPhotoTakenAt(asset);
+      const sourceIdentifier = asset.assetId?.trim() || [
+        asset.uri,
+        asset.fileSize ?? '',
+        asset.width,
+        asset.height,
+      ].join(':');
+
+      return {
+        input: {
+          exif: asset.exif,
+          fileName: asset.fileName,
+          fileSize: asset.fileSize,
+          height: asset.height,
+          localUri: asset.uri,
+          mimeType: asset.mimeType,
+          placeId,
+          takenAt: takenAt?.toISOString(),
+          tripDayId,
+          tripId,
+          width: asset.width,
+        },
+        sourceIdentifier,
+      };
+    });
+
+    await uploadSelectedPlacePhotos(items);
+  };
+
+  const resetRecordModalState = () => {
     setRecordDraft('');
     setSelectedRecordPhotoIds([]);
     setRecordTimeLabel(createCurrentTimeLabel());
     setRecordTimeEdited(false);
+    setEditingRecordId(null);
+  };
+
+  const closeRecordModalWithCleanup = () => {
+    pendingRecordPhotoGridOpenRef.current = false;
+    pendingRecordModalCleanupRef.current = true;
     setRecordModalOpen(false);
   };
 
+  const handleSaveRecord = async () => {
+    if (isRecordSavingRef.current || isRecordSaving) {
+      return;
+    }
+
+    const trimmedText = recordDraft.trim();
+    if (!trimmedText) {
+      return;
+    }
+    const editingRecord = editingRecordId
+      ? records.find((record) => record.id === editingRecordId)
+      : undefined;
+
+    if (editingRecordId && !editingRecord) {
+      Alert.alert(
+        '\uAE30\uB85D\uC744 \uC218\uC815\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+        '\uC218\uC815\uD560 \uAE30\uB85D\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC5B4\uC694. \uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+      );
+      return;
+    }
+
+    if (shouldUseSupabasePlaceDetail) {
+      const tripDayId = initialDetail.dayId || routeDayId || '';
+      const tripId = initialDetail.tripId || routeTripId || '';
+
+      if (!tripDayId || !tripId) {
+        Alert.alert(
+          '\uAE30\uB85D\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC5EC\uD589 \uB0A0\uC9DC\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC5B4\uC694. \uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+        );
+        return;
+      }
+
+      isRecordSavingRef.current = true;
+      setRecordSaving(true);
+
+      try {
+        const tripDayDate = placeTripDays?.find(
+          (day) => day.id === tripDayId && day.deleted_at == null,
+        )?.date;
+        const visitedAt = resolveVisitedAtForPlaceUpdate(
+          {
+            dateKey: tripDayDate,
+            place: placeInfo.placeName,
+            time: recordTimeLabel,
+          },
+          placeInfo.dateLabel,
+        ) ?? null;
+        const refreshRecordQueries = () => {
+          void refetchPlaceDetailData();
+          void Promise.all([
+            queryClient.invalidateQueries({
+              queryKey: supabaseQueryKeys.placeDetail(user?.id, initialDetail.placeId),
+            }),
+            queryClient.invalidateQueries({
+              queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, tripDayId),
+            }),
+            queryClient.invalidateQueries({
+              queryKey: supabaseQueryKeys.tripDayRecords(user?.id, tripDayId),
+            }),
+            queryClient.invalidateQueries({
+              queryKey: supabaseQueryKeys.tripRecords(user?.id, tripId),
+            }),
+            queryClient.invalidateQueries({
+              queryKey: supabaseQueryKeys.tripDays(user?.id, tripId),
+            }),
+          ]).catch((error: unknown) => {
+            console.warn('[place-detail] invalidate after record save failed', error);
+          });
+        };
+        const savedRecord = editingRecordId
+          ? await updateRecord(
+            editingRecordId,
+            {
+              text: trimmedText,
+              visited_at: visitedAt,
+            },
+            {
+              placeId: initialDetail.placeId,
+              tripDayId,
+              tripId,
+            },
+          )
+          : await createRecordForPlace({
+            placeId: initialDetail.placeId,
+            text: trimmedText,
+            tripDayId,
+            tripId,
+            visitedAt,
+          });
+
+        let syncedPhotoIds: string[];
+
+        try {
+          const syncResult = await syncRecordPhotos(
+            savedRecord.id,
+            selectedRecordPhotoIds,
+            {
+              placeId: initialDetail.placeId,
+              tripDayId,
+              tripId,
+            },
+          );
+          syncedPhotoIds = syncResult.photoIds;
+        } catch (error) {
+          if (__DEV__) {
+            console.warn('[place-detail] record photo sync failed', {
+              errorMessage: error instanceof Error ? error.message : 'Unknown error',
+              recordSaved: true,
+              stage: 'sync_record_photos',
+            });
+          }
+
+          if (editingRecord) {
+            setRecords((currentRecords) => currentRecords.map((record) => (
+              record.id === savedRecord.id
+                ? {
+                  ...record,
+                  time: formatVisitedAtTimeLabel(savedRecord.visited_at) || recordTimeLabel,
+                  text: savedRecord.text ?? trimmedText,
+                  updatedAt: savedRecord.updated_at,
+                }
+                : record
+            )));
+          } else {
+            setRecords((currentRecords) => [
+              ...currentRecords,
+              {
+                id: savedRecord.id,
+                tripId: savedRecord.trip_id,
+                dayId: savedRecord.trip_day_id ?? tripDayId,
+                placeId: savedRecord.place_id,
+                time: formatVisitedAtTimeLabel(savedRecord.visited_at) || recordTimeLabel,
+                text: savedRecord.text ?? trimmedText,
+                photoIds: [],
+                createdAt: savedRecord.created_at,
+                updatedAt: savedRecord.updated_at,
+              },
+            ]);
+            setEditingRecordId(savedRecord.id);
+          }
+
+          refreshRecordQueries();
+          Alert.alert(
+            '\uAE30\uB85D\uC740 \uC800\uC7A5\uD588\uC9C0\uB9CC \uC0AC\uC9C4\uC744 \uC5F0\uACB0\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+            '\uC0AC\uC9C4 \uC120\uD0DD\uC744 \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+          );
+          return;
+        }
+
+        if (editingRecordId) {
+          setRecords((currentRecords) => currentRecords.map((record) => (
+            record.id === savedRecord.id
+              ? {
+                ...record,
+                photoIds: syncedPhotoIds,
+                time: formatVisitedAtTimeLabel(savedRecord.visited_at) || recordTimeLabel,
+                text: savedRecord.text ?? trimmedText,
+                updatedAt: savedRecord.updated_at,
+              }
+              : record
+          )));
+        } else {
+          setRecords((currentRecords) => [
+            ...currentRecords,
+            {
+              id: savedRecord.id,
+              tripId: savedRecord.trip_id,
+              dayId: savedRecord.trip_day_id ?? tripDayId,
+              placeId: savedRecord.place_id,
+              time: formatVisitedAtTimeLabel(savedRecord.visited_at) || recordTimeLabel,
+              text: savedRecord.text ?? trimmedText,
+              photoIds: syncedPhotoIds,
+              createdAt: savedRecord.created_at,
+              updatedAt: savedRecord.updated_at,
+            },
+          ]);
+        }
+        closeRecordModalWithCleanup();
+        refreshRecordQueries();
+      } catch (error) {
+        if (__DEV__) {
+          console.warn('[place-detail] record body save failed', {
+            errorMessage: error instanceof Error ? error.message : 'Unknown error',
+            recordSaved: false,
+            stage: 'save_record_body',
+          });
+        }
+        Alert.alert(
+          editingRecordId
+            ? '\uAE30\uB85D\uC744 \uC218\uC815\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694'
+            : '\uAE30\uB85D\uC744 \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+        );
+      } finally {
+        isRecordSavingRef.current = false;
+        setRecordSaving(false);
+      }
+
+      return;
+    }
+
+    if (editingRecordId) {
+      setRecords((currentRecords) => currentRecords.map((record) => (
+        record.id === editingRecordId
+          ? {
+            ...record,
+            time: recordTimeLabel,
+            text: trimmedText,
+            updatedAt: new Date().toISOString(),
+          }
+          : record
+      )));
+    } else {
+      setRecords((currentRecords) => [
+        ...currentRecords,
+        {
+          id: `record-${Date.now()}`,
+          tripId: initialDetail.tripId,
+          dayId: initialDetail.dayId,
+          placeId: initialDetail.placeId,
+          time: recordTimeLabel,
+          text: trimmedText,
+          photoIds: selectedRecordPhotoIds,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    }
+    closeRecordModalWithCleanup();
+  };
+
   const handleCloseRecordModal = () => {
-    setRecordModalOpen(false);
+    closeRecordModalWithCleanup();
   };
 
   const handlePressAddRecord = () => {
@@ -1278,32 +1871,39 @@ export default function PlaceDetailScreen() {
   };
 
   const handleOpenRecordPhotoPicker = () => {
-    if (isRecordPhotoPickerTransitioning) {
+    if (isRecordPhotoPickerTransitioning || pendingRecordPhotoGridOpenRef.current) {
       return;
     }
 
-    if (recordPhotoPickerOpenTimerRef.current) {
-      clearTimeout(recordPhotoPickerOpenTimerRef.current);
-    }
-
-    if (recordSheetRestoreTimerRef.current) {
-      clearTimeout(recordSheetRestoreTimerRef.current);
-      recordSheetRestoreTimerRef.current = null;
-    }
-
+    pendingRecordModalCleanupRef.current = false;
+    pendingRecordPhotoGridOpenRef.current = true;
     setRecordPhotoPickerTransitioning(true);
-    setGridOpen(false);
     setGridSelectionPurpose('linkRecord');
     setGridViewOnly(false);
     setGridSelectionInitiallyEnabled(true);
+    Keyboard.dismiss();
     setRecordModalOpen(false);
-    setPhotoGridSessionKey((currentKey) => currentKey + 1);
+  };
 
-    recordPhotoPickerOpenTimerRef.current = setTimeout(() => {
+  const handleRecordModalDidDismiss = () => {
+    if (pendingRecordPhotoGridOpenRef.current) {
+      pendingRecordPhotoGridOpenRef.current = false;
+
+      if (!isPhotoScreenMountedRef.current) {
+        return;
+      }
+
+      setPhotoGridSessionKey((currentKey) => currentKey + 1);
       setGridOpen(true);
-      setRecordPhotoPickerTransitioning(false);
-      recordPhotoPickerOpenTimerRef.current = null;
-    }, 200);
+      return;
+    }
+
+    if (!pendingRecordModalCleanupRef.current) {
+      return;
+    }
+
+    pendingRecordModalCleanupRef.current = false;
+    resetRecordModalState();
   };
 
   const handleUnlinkRecordPhoto = (photoId: string) => {
@@ -1336,7 +1936,7 @@ export default function PlaceDetailScreen() {
       countryName: input.countryName ?? placeInfo.countryName,
       dateLabel: nextDateLabel,
       timeLabel: input.time ?? placeInfo.timeLabel,
-      categoryLabel: input.category ?? placeInfo.categoryLabel,
+      categoryLabel: normalizePlaceCategoryValue(input.category) ?? placeInfo.categoryLabel,
     };
 
     if (shouldUseSupabasePlaceDetail) {
@@ -1344,11 +1944,12 @@ export default function PlaceDetailScreen() {
         const previousTripDayId = initialDetail.dayId || routeDayId || '';
         const nextTripDayId = input.dayId ?? previousTripDayId;
         const patch: UpdatePlacePatch = {
+          category: normalizePlaceCategoryValue(input.category) ?? null,
           city: nextPlaceInfo.cityName || null,
           country: nextPlaceInfo.countryName || null,
           name: nextPlaceInfo.placeName.trim() || placeInfo.placeName,
         };
-        const visitedAt = buildVisitedAtForPlaceUpdate(
+        const visitedAt = resolveVisitedAtForPlaceUpdate(
           {
             ...input,
             dateLabel: nextDateLabelSource ?? input.dateLabel,
@@ -1382,7 +1983,7 @@ export default function PlaceDetailScreen() {
           supabaseQueryKeys.placeDetail(user?.id, initialDetail.placeId),
           (
             current:
-              | { place: PlaceRow | null; records: RecordRow[] }
+              | { place: PlaceRow | null; records: RecordWithPhotos[] }
               | undefined,
           ) => {
             if (!current?.place) {
@@ -1406,6 +2007,9 @@ export default function PlaceDetailScreen() {
 
         void Promise.all([
           queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.archivedTravelMoments(user?.id),
+          }),
+          queryClient.invalidateQueries({
             queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, previousTripDayId),
           }),
           queryClient.invalidateQueries({
@@ -1426,6 +2030,18 @@ export default function PlaceDetailScreen() {
           }),
           queryClient.invalidateQueries({
             queryKey: supabaseQueryKeys.tripDays(user?.id, initialDetail.tripId || routeTripId || ''),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripPlaces(
+              user?.id,
+              initialDetail.tripId || routeTripId || '',
+            ),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: supabaseQueryKeys.tripRecords(
+              user?.id,
+              initialDetail.tripId || routeTripId || '',
+            ),
           }),
         ]).catch((error: unknown) => {
           console.warn('[place-detail] invalidate after place update failed', error);
@@ -1454,18 +2070,223 @@ export default function PlaceDetailScreen() {
     setGridOpen(true);
   };
 
-  const handleSetCoverPhoto = (photoIndex: number) => {
-    const targetPhoto = viewerPhotos[photoIndex];
+  const handleSetCoverPhoto = async (photoId?: string) => {
+    if (!photoId || isUpdatingCoverPhoto) {
+      return;
+    }
+
+    const targetPhoto = photos.find((photo) => photo.id === photoId);
+
     if (!targetPhoto) {
       return;
     }
 
-    setPhotos((currentPhotos) => [
-      targetPhoto,
-      ...currentPhotos.filter((photo) => photo.id !== targetPhoto.id),
-    ]);
+    if (!shouldUseSupabasePlaceDetail) {
+      setPhotos((currentPhotos) => [
+        targetPhoto,
+        ...currentPhotos.filter((photo) => photo.id !== targetPhoto.id),
+      ]);
+      setHeroIndex(0);
+      setViewerIndex(0);
+      setGridOpen(false);
+      setGridSelectionPurpose('recordCreate');
+      return;
+    }
+
+    setUpdatingCoverPhoto(true);
+
+    try {
+      const result = await setPlaceCoverPhoto(initialDetail.placeId, photoId);
+      const reorderPhotos = (currentPhotos: PlaceDetailPhoto[] = []) => [
+        ...currentPhotos.filter((photo) => photo.id === result.coverPhotoId),
+        ...currentPhotos.filter((photo) => photo.id !== result.coverPhotoId),
+      ];
+
+      setPhotos(reorderPhotos);
+      setHeroIndex(0);
+      setViewerIndex(0);
+      setGridOpen(false);
+      setGridSelectionPurpose('recordCreate');
+      queryClient.setQueryData(
+        supabaseQueryKeys.placePhotos(user?.id, initialDetail.placeId),
+        (current: PlaceDetailPhoto[] | undefined) => reorderPhotos(current),
+      );
+      queryClient.setQueryData(
+        supabaseQueryKeys.placeDetail(user?.id, initialDetail.placeId),
+        (current: { place: PlaceRow | null; records: RecordWithPhotos[] } | undefined) =>
+          current?.place
+            ? {
+              ...current,
+              place: { ...current.place, cover_photo_id: result.coverPhotoId },
+            }
+            : current,
+      );
+
+      void Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.placePhotos(user?.id, initialDetail.placeId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.placeDetail(user?.id, initialDetail.placeId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, initialDetail.dayId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripPlaces(user?.id, initialDetail.tripId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.archivedTravelMoments(user?.id),
+        }),
+      ]).catch((error: unknown) => {
+        console.warn('[place-detail] invalidate after cover update failed', error);
+      });
+    } catch (error) {
+      console.warn('[place-detail] update cover photo failed', error);
+      Alert.alert(
+        '대표사진을 변경하지 못했어요',
+        '잠시 후 다시 시도해주세요.',
+      );
+    } finally {
+      setUpdatingCoverPhoto(false);
+    }
+  };
+
+  const removeDeletedPhotosFromScreen = (photoIds: string[]) => {
+    const photoIdSet = new Set(photoIds);
+    const remainingViewerPhotoIds = (viewerPhotoIds ?? photos.map((photo) => photo.id))
+      .filter((photoId) => !photoIdSet.has(photoId));
+
+    setPhotos((currentPhotos) => currentPhotos.filter((photo) => !photoIdSet.has(photo.id)));
+    setRecords((currentRecords) => currentRecords.map((record) => ({
+      ...record,
+      photoIds: (record.photoIds ?? []).filter((photoId) => !photoIdSet.has(photoId)),
+    })));
+    setViewerPhotoIds((currentIds) => (
+      currentIds ? currentIds.filter((photoId) => !photoIdSet.has(photoId)) : null
+    ));
     setHeroIndex(0);
     setViewerIndex(0);
+
+    if (remainingViewerPhotoIds.length === 0) {
+      setViewerOpen(false);
+    }
+  };
+
+  const invalidatePhotoDeleteQueries = async (result: DeletePhotosResult) => {
+    const tripIds = [...new Set(result.results.map((item) => item.tripId))];
+    const tripDayIds = [
+      ...new Set(
+        result.results
+          .map((item) => item.tripDayId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const placeIds = [
+      ...new Set(
+        result.results
+          .map((item) => item.placeId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const invalidations = [
+      queryClient.invalidateQueries({
+        queryKey: supabaseQueryKeys.archivedTravelMoments(user?.id),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: supabaseQueryKeys.myTrips(user?.id),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: supabaseQueryKeys.recentTripsRoot(user?.id),
+      }),
+      ...tripIds.flatMap((tripId) => [
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripDetail(user?.id, tripId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripDays(user?.id, tripId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripPhotos(user?.id, tripId),
+        }),
+      ]),
+      ...tripDayIds.flatMap((tripDayId) => [
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripDayPhotos(user?.id, tripDayId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.tripDayPlaces(user?.id, tripDayId),
+        }),
+      ]),
+      ...placeIds.flatMap((placeId) => [
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.placePhotos(user?.id, placeId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.placeDetail(user?.id, placeId),
+        }),
+      ]),
+    ];
+
+    await Promise.allSettled(invalidations);
+  };
+
+  const runSupabasePhotoDelete = async (photoIds: string[]) => {
+    if (isPhotoDeletingRef.current || photoIds.length === 0) {
+      return;
+    }
+
+    isPhotoDeletingRef.current = true;
+    setPhotoDeleting(true);
+
+    try {
+      const result = await softDeletePhotos(photoIds);
+      const deletedPhotoIds = result.results.map((item) => item.photoId);
+
+      if (deletedPhotoIds.length > 0) {
+        removeDeletedPhotosFromScreen(deletedPhotoIds);
+        await invalidatePhotoDeleteQueries(result);
+      }
+
+      const retryPhotoIds = [
+        ...new Set([
+          ...result.failed.map((item) => item.photoId),
+          ...result.storageCleanupFailedPhotoIds,
+        ]),
+      ];
+
+      if (retryPhotoIds.length > 0) {
+        const hasStorageCleanupFailure =
+          result.storageCleanupFailedPhotoIds.length > 0;
+        Alert.alert(
+          hasStorageCleanupFailure
+            ? '\uC0AC\uC9C4 \uD30C\uC77C \uC815\uB9AC\uAC00 \uD544\uC694\uD574\uC694'
+            : '\uC77C\uBD80 \uC0AC\uC9C4\uC744 \uC0AD\uC81C\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+          hasStorageCleanupFailure
+            ? '\uC0AC\uC9C4 \uAE30\uB85D\uC740 \uC0AD\uC81C\uB410\uC9C0\uB9CC \uD30C\uC77C \uC815\uB9AC\uAC00 \uC644\uB8CC\uB418\uC9C0 \uC54A\uC558\uC5B4\uC694.'
+            : '\uC7A0\uC2DC \uD6C4 \uC2E4\uD328\uD55C \uC0AC\uC9C4\uB9CC \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+          [
+            { text: '\uB098\uC911\uC5D0', style: 'cancel' },
+            {
+              text: '\uB2E4\uC2DC \uC2DC\uB3C4',
+              onPress: () => {
+                void runSupabasePhotoDelete(retryPhotoIds);
+              },
+            },
+          ],
+        );
+      }
+
+    } catch {
+      Alert.alert(
+        '\uC0AC\uC9C4\uC744 \uC0AD\uC81C\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694',
+        '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
+      );
+    } finally {
+      isPhotoDeletingRef.current = false;
+      setPhotoDeleting(false);
+      setGridSelectionResetSignal((signal) => signal + 1);
+    }
   };
 
   const handleDeleteViewerPhoto = (photoIndex: number) => {
@@ -1480,24 +2301,12 @@ export default function PlaceDetailScreen() {
         text: '\uC0AD\uC81C',
         style: 'destructive',
         onPress: () => {
-          const remainingViewerPhotoIds = (viewerPhotoIds ?? photos.map((photo) => photo.id))
-            .filter((photoId) => photoId !== targetPhoto.id);
-
-          setPhotos((currentPhotos) => currentPhotos.filter((photo) => photo.id !== targetPhoto.id));
-          setRecords((currentRecords) => currentRecords.map((record) => ({
-            ...record,
-            photoIds: (record.photoIds ?? []).filter((photoId) => photoId !== targetPhoto.id),
-          })));
-          setViewerPhotoIds((currentIds) => (
-            currentIds ? currentIds.filter((photoId) => photoId !== targetPhoto.id) : null
-          ));
-          setHeroIndex(0);
-          if (remainingViewerPhotoIds.length === 0) {
-            setViewerOpen(false);
+          if (shouldUseSupabasePlaceDetail) {
+            void runSupabasePhotoDelete([targetPhoto.id]);
             return;
           }
 
-          setViewerIndex(Math.min(photoIndex, remainingViewerPhotoIds.length - 1));
+          removeDeletedPhotosFromScreen([targetPhoto.id]);
         },
       },
     ]);
@@ -1521,19 +2330,18 @@ export default function PlaceDetailScreen() {
   };
 
   const requestDeleteGridPhotos = (photoIds: string[]) => {
-    if (photoIds.length === 0) {
+    const targetPhotoIds = [...new Set(photoIds)];
+
+    if (targetPhotoIds.length === 0) {
       return;
     }
 
-    setPendingDeletePhotoIds(photoIds);
-    setPhotoDeleteConfirmOpen(true);
-  };
-
-  const confirmDeleteGridPhotos = () => {
-    handleDeleteGridPhotos(pendingDeletePhotoIds);
-    setPendingDeletePhotoIds([]);
-    setPhotoDeleteConfirmOpen(false);
-    setGridSelectionResetSignal((signal) => signal + 1);
+    if (shouldUseSupabasePlaceDetail) {
+      void runSupabasePhotoDelete(targetPhotoIds);
+    } else {
+      handleDeleteGridPhotos(targetPhotoIds);
+      setGridSelectionResetSignal((signal) => signal + 1);
+    }
   };
 
   const navigateToDay = () => {
@@ -1646,7 +2454,11 @@ export default function PlaceDetailScreen() {
           <View style={styles.sectionHeader}>
             <View style={styles.sectionTitleRow}>
               <Text style={styles.sectionTitle}>{'\uC0AC\uC9C4'}</Text>
-              <Text style={styles.sectionCount}>{photos.length}{'\uC7A5'}</Text>
+              <Text style={styles.sectionCount}>
+                {isPhotoUploading
+                  ? '\uCD94\uAC00 \uC911'
+                  : `${photos.length}\uC7A5`}
+              </Text>
             </View>
             <Pressable accessibilityRole="button" onPress={() => openPhotoGrid(false)} style={styles.viewAllButton}>
               <Text style={styles.viewAllText}>{'\uC804\uCCB4\uBCF4\uAE30'}</Text>
@@ -1654,10 +2466,56 @@ export default function PlaceDetailScreen() {
             </Pressable>
           </View>
 
+          {shouldUseSupabasePlaceDetail && isPlacePhotosPending ? (
+            <View style={styles.photoStatus}>
+              <Text style={styles.photoStatusText}>
+                {'\uC800\uC7A5\uB41C \uC0AC\uC9C4\uC744 \uBD88\uB7EC\uC624\uB294 \uC911\uC774\uC5D0\uC694.'}
+              </Text>
+            </View>
+          ) : isPlacePhotosError || failedPlacePhotoCount > 0 ? (
+            <View style={styles.photoStatus}>
+              <Text style={styles.photoStatusText}>
+                {'\uC77C\uBD80 \uC0AC\uC9C4\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694.'}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  void refetchPlacePhotos();
+                }}
+                style={styles.photoStatusAction}
+              >
+                <Text style={styles.photoStatusActionText}>{'\uB2E4\uC2DC \uC2DC\uB3C4'}</Text>
+              </Pressable>
+            </View>
+          ) : missingPlacePhotoCount > 0 ? (
+            <View style={styles.photoStatus}>
+              <Text style={styles.photoStatusText}>
+                {'\uD45C\uC2DC\uD560 \uC218 \uC5C6\uB294 \uC0AC\uC9C4\uC774 \uC788\uC5B4\uC694.'}
+              </Text>
+            </View>
+          ) : failedPhotoUploadItems.length > 0 ? (
+            <View style={styles.photoStatus}>
+              <Text style={styles.photoStatusText}>
+                {'\uC77C\uBD80 \uC0AC\uC9C4\uC744 \uCD94\uAC00\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694.'}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                disabled={isPhotoUploading}
+                onPress={() => {
+                  void uploadSelectedPlacePhotos(failedPhotoUploadItems);
+                }}
+                style={styles.photoStatusAction}
+              >
+                <Text style={styles.photoStatusActionText}>{'\uC2E4\uD328 \uC0AC\uC9C4 \uB2E4\uC2DC \uC2DC\uB3C4'}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.thumbnailScroll}>
             <View style={styles.thumbnailRow}>
               <Pressable
                 accessibilityRole="button"
+                disabled={isPhotoUploading}
                 onPress={handleAddPhoto}
                 style={[styles.photoThumb, styles.photoAddThumb]}
               >
@@ -1684,25 +2542,35 @@ export default function PlaceDetailScreen() {
             </Pressable>
           </View>
 
-          <View style={styles.recordList}>
-            {sortedRecords.map((record, index) => {
+          <View>
+            {sortedRecords.length === 0 ? (
+              <View style={styles.recordsEmptyState}>
+                <Text style={styles.recordsEmptyTitle}>아직 작성한 기록이 없어요</Text>
+                <Text style={styles.recordsEmptyDescription}>
+                  기억하고 싶은 순간을 기록으로 남겨보세요.
+                </Text>
+              </View>
+            ) : sortedRecords.map((record, index) => {
               const recordPhoto = record.photoIds?.[0]
                 ? photos.find((photo) => photo.id === record.photoIds?.[0])
                 : undefined;
               const extraPhotoCount = Math.max((record.photoIds?.length ?? 0) - 1, 0);
+              const hasPhotos = Boolean(recordPhoto);
 
               return (
                 <SwipeableRecordItem
+                  hasPhotos={hasPhotos}
                   key={record.id}
                   recordId={record.id}
                   isLast={index === sortedRecords.length - 1}
                   isSwipeOpen={openSwipeRecordId === record.id}
                   onCloseSwipe={handleCloseSwipeRecord}
                   onOpenSwipe={setOpenSwipeRecordId}
+                  onPressEdit={openRecordEditor}
                   onRequestDelete={requestDeleteRecord}
                   onSwipeEnd={() => setRecordSwipeActive(false)}
                   onSwipeStart={() => setRecordSwipeActive(true)}
-                  timeLabel={record.time ?? placeInfo.timeLabel ?? ''}
+                  timeLabel={record.time ?? ''}
                 >
                   {record.text ? <Text style={styles.recordText}>{record.text}</Text> : null}
                   {recordPhoto ? (
@@ -1725,16 +2593,16 @@ export default function PlaceDetailScreen() {
       <PhotoGridModal
         key={photoGridSessionKey}
         clearSelectionSignal={gridSelectionResetSignal}
+        isDeleting={isPhotoDeleting}
         initialSelectionMode={isGridSelectionInitiallyEnabled}
         initialSelectedPhotoIds={gridSelectionPurpose === 'linkRecord' ? selectedRecordPhotoIds : undefined}
         onAddPhoto={handleAddPhoto}
         onClose={handleClosePhotoGrid}
+        onDidDismiss={handlePhotoGridDidDismiss}
         onRequestDeletePhotos={requestDeleteGridPhotos}
         onPressPhoto={(index) => {
           if (gridSelectionPurpose === 'coverSelect') {
-            handleSetCoverPhoto(index);
-            setGridOpen(false);
-            setGridSelectionPurpose('recordCreate');
+            void handleSetCoverPhoto(photos[index]?.id);
             return;
           }
 
@@ -1742,7 +2610,10 @@ export default function PlaceDetailScreen() {
         }}
         onStartRecord={(photoIds) => {
           if (gridSelectionPurpose === 'linkRecord') {
-            setRecordPhotoPickerTransitioning(true);
+            if (pendingRecordSheetRestoreRef.current) {
+              return;
+            }
+
             setSelectedRecordPhotoIds(photoIds);
             if (!hasRecordTimeBeenEdited) {
               const earliestPhotoDate = getEarliestRecordPhotoTakenDate(photoIds, photos);
@@ -1751,9 +2622,7 @@ export default function PlaceDetailScreen() {
                 setRecordTimeLabel(formatPlaceEntryTime(convertDateToPlaceEntryTime(earliestPhotoDate)));
               }
             }
-            setGridOpen(false);
-            setGridSelectionPurpose('recordCreate');
-            restoreRecordSheetAfterPhotoGrid();
+            requestRecordSheetRestoreAfterPhotoGrid();
             return;
           }
 
@@ -1782,7 +2651,7 @@ export default function PlaceDetailScreen() {
             key: 'cover',
             icon: 'image-outline',
             label: '\uB300\uD45C\uC0AC\uC9C4 \uBCC0\uACBD',
-            onPress: (index) => handleSetCoverPhoto(index),
+            onPress: (index) => void handleSetCoverPhoto(viewerPhotos[index]?.id),
           },
           {
             key: 'info',
@@ -1839,9 +2708,7 @@ export default function PlaceDetailScreen() {
             icon: 'image-outline',
             label: '\uB300\uD45C\uC0AC\uC9C4 \uBCC0\uACBD',
             onPress: (index) => {
-              const targetPhoto = viewerPhotos[index];
-              const photoIndex = photos.findIndex((photo) => photo.id === targetPhoto?.id);
-              handleSetCoverPhoto(photoIndex);
+              void handleSetCoverPhoto(viewerPhotos[index]?.id);
             },
           },
           {
@@ -1924,15 +2791,19 @@ export default function PlaceDetailScreen() {
       />
 
       <RecordCreateModal
+        allowPhotoChanges
         draft={recordDraft}
         mode={recordModalMode}
         onChangeDraft={setRecordDraft}
         onChangeTime={handleChangeRecordTime}
         onClose={handleCloseRecordModal}
+        onDidDismiss={handleRecordModalDidDismiss}
         onOpenPhotoPicker={handleOpenRecordPhotoPicker}
         onRemovePhoto={handleUnlinkRecordPhoto}
         onSave={handleSaveRecord}
+        isSaving={isRecordSaving}
         photos={selectedRecordPhotos}
+        title={editingRecordId ? '\uAE30\uB85D \uC218\uC815' : '\uAE30\uB85D \uCD94\uAC00'}
         timeLabel={recordTimeLabel}
         visible={isRecordModalOpen}
       />
@@ -1943,17 +2814,8 @@ export default function PlaceDetailScreen() {
         visible={isDeleteConfirmOpen}
       />
 
-      <ConfirmPhotoDeleteModal
-        count={pendingDeletePhotoIds.length}
-        onCancel={() => {
-          setPendingDeletePhotoIds([]);
-          setPhotoDeleteConfirmOpen(false);
-        }}
-        onDelete={confirmDeleteGridPhotos}
-        visible={isPhotoDeleteConfirmOpen}
-      />
-
       <ConfirmRecordDeleteModal
+        isDeleting={isRecordDeleting}
         onCancel={cancelDeleteRecord}
         onDelete={confirmDeleteRecord}
         visible={pendingDeleteRecordId != null}
@@ -1980,10 +2842,12 @@ function MenuRow({ icon, label, destructive = false, onPress }: MenuRowProps) {
 
 interface SwipeableRecordItemProps {
   children: React.ReactNode;
+  hasPhotos: boolean;
   isLast: boolean;
   isSwipeOpen: boolean;
   onCloseSwipe: () => void;
   onOpenSwipe: (recordId: string) => void;
+  onPressEdit: (recordId: string) => void;
   onRequestDelete: (recordId: string) => void;
   onSwipeEnd: () => void;
   onSwipeStart: () => void;
@@ -1993,10 +2857,12 @@ interface SwipeableRecordItemProps {
 
 const SwipeableRecordItem = React.memo(function SwipeableRecordItem({
   children,
+  hasPhotos,
   isLast,
   isSwipeOpen,
   onCloseSwipe,
   onOpenSwipe,
+  onPressEdit,
   onRequestDelete,
   onSwipeEnd,
   onSwipeStart,
@@ -2133,7 +2999,14 @@ const SwipeableRecordItem = React.memo(function SwipeableRecordItem({
   return (
     <View
       onLayout={(event) => setRowWidth(event.nativeEvent.layout.width)}
-      style={styles.recordSwipeContainer}
+      style={[
+        styles.recordSwipeContainer,
+        !isLast && (
+          hasPhotos
+            ? styles.recordSpacingWithPhotos
+            : styles.recordSpacingTextOnly
+        ),
+      ]}
     >
       <Animated.View
         style={[
@@ -2163,13 +3036,22 @@ const SwipeableRecordItem = React.memo(function SwipeableRecordItem({
         ]}
       >
         <Pressable
+          accessibilityLabel={'\uAE30\uB85D \uC218\uC815'}
+          accessibilityRole="button"
           delayLongPress={320}
           onLongPress={handleDeletePress}
+          onPress={() => onPressEdit(recordId)}
           style={styles.recordItemPressable}
         >
           <View style={styles.recordTimeColumn}>
             <Text style={styles.recordTime}>{timeLabel}</Text>
-            <View style={[styles.recordLine, isLast && styles.recordLineLast]} />
+            <View
+              style={[
+                styles.recordLine,
+                isLast && styles.recordLineLast,
+                !hasPhotos && styles.recordLineTextOnly,
+              ]}
+            />
           </View>
 
           <View style={styles.recordBody}>{children}</View>
@@ -2185,9 +3067,11 @@ interface PhotoGridModalProps {
   coverPhotoId?: string;
   initialSelectionMode: boolean;
   initialSelectedPhotoIds?: string[];
+  isDeleting: boolean;
   mode?: 'default' | 'cover-select' | 'selectForRecord';
   onAddPhoto: () => void;
   onClose: () => void;
+  onDidDismiss?: () => void;
   onRequestDeletePhotos: (photoIds: string[]) => void;
   onPressPhoto: (index: number) => void;
   onStartRecord: (photoIds: string[]) => void;
@@ -2205,9 +3089,11 @@ function PhotoGridModal({
   coverPhotoId,
   initialSelectionMode,
   initialSelectedPhotoIds,
+  isDeleting,
   mode = 'default',
   onAddPhoto,
   onClose,
+  onDidDismiss,
   onRequestDeletePhotos,
   onPressPhoto,
   onStartRecord,
@@ -2223,21 +3109,47 @@ function PhotoGridModal({
   const isRecordSelectMode = mode === 'selectForRecord';
   const [isSelectionMode, setSelectionMode] = React.useState(initialSelectionMode);
   const [selectedPhotoIds, setSelectedPhotoIds] = React.useState<string[]>([]);
+  const [pendingDeletePhotoIds, setPendingDeletePhotoIds] = React.useState<string[]>([]);
   const [isPresented, setPresented] = React.useState(visible);
   const [isInlineViewerOpen, setInlineViewerOpen] = React.useState(false);
   const [inlineViewerIndex, setInlineViewerIndex] = React.useState(0);
   const slideX = React.useRef(new Animated.Value(visible ? 0 : width)).current;
+  const dismissPendingRef = React.useRef(false);
+  const onDidDismissRef = React.useRef(onDidDismiss);
+  const previousClearSelectionSignalRef = React.useRef(clearSelectionSignal);
+  const photoGridContentWidth = Math.max(0, width - (Spacing.xl * 2));
+  const photoGridTileSize = Math.floor(
+    (
+      photoGridContentWidth
+      - (Spacing.xs * (PHOTO_GRID_COLUMN_COUNT - 1))
+    ) / PHOTO_GRID_COLUMN_COUNT,
+  );
+  const photoGridTileStyle = React.useMemo(
+    () => ({
+      height: photoGridTileSize,
+      width: photoGridTileSize,
+    }),
+    [photoGridTileSize],
+  );
+  const showsAddPhotoTile =
+    !isSelectionMode && !isCoverSelectMode && !isRecordSelectMode;
+
+  React.useEffect(() => {
+    onDidDismissRef.current = onDidDismiss;
+  }, [onDidDismiss]);
 
   React.useEffect(() => {
     if (visible) {
       setSelectionMode(initialSelectionMode);
       setSelectedPhotoIds(initialSelectedPhotoIds ?? []);
+      setPendingDeletePhotoIds([]);
       setInlineViewerOpen(false);
     }
   }, [initialSelectedPhotoIds, initialSelectionMode, visible]);
 
   React.useEffect(() => {
     if (visible) {
+      dismissPendingRef.current = false;
       setPresented(true);
       slideX.setValue(width);
       Animated.timing(slideX, {
@@ -2253,21 +3165,37 @@ function PhotoGridModal({
       return;
     }
 
+    dismissPendingRef.current = true;
     Animated.timing(slideX, {
       toValue: width,
       duration: transitionDuration,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start(({ finished }) => {
-      if (finished) {
+      if (finished && dismissPendingRef.current) {
         setPresented(false);
       }
     });
   }, [isPresented, slideX, transitionDuration, visible, width]);
 
   React.useEffect(() => {
+    if (isPresented || visible || !dismissPendingRef.current) {
+      return;
+    }
+
+    dismissPendingRef.current = false;
+    onDidDismissRef.current?.();
+  }, [isPresented, visible]);
+
+  React.useEffect(() => {
+    if (previousClearSelectionSignalRef.current === clearSelectionSignal) {
+      return;
+    }
+
+    previousClearSelectionSignalRef.current = clearSelectionSignal;
     setSelectionMode(false);
     setSelectedPhotoIds([]);
+    setPendingDeletePhotoIds([]);
   }, [clearSelectionSignal]);
 
   const togglePhoto = (photoId: string) => {
@@ -2287,14 +3215,25 @@ function PhotoGridModal({
   };
 
   const handlePressDeleteSelected = () => {
-    if (selectedPhotoIds.length === 0) {
+    const targetPhotoIds = [...new Set(selectedPhotoIds)];
+
+    if (targetPhotoIds.length === 0 || isDeleting) {
       return;
     }
 
-    onRequestDeletePhotos(selectedPhotoIds);
+    setPendingDeletePhotoIds(targetPhotoIds);
   };
 
   const handleRequestClose = () => {
+    if (isDeleting) {
+      return;
+    }
+
+    if (pendingDeletePhotoIds.length > 0) {
+      setPendingDeletePhotoIds([]);
+      return;
+    }
+
     if (isInlineViewerOpen) {
       setInlineViewerOpen(false);
       return;
@@ -2324,7 +3263,12 @@ function PhotoGridModal({
         ]}
       >
         <View style={styles.modalHeader}>
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={onClose} style={styles.headerButton}>
+          <Pressable
+            accessibilityRole="button"
+            hitSlop={10}
+            onPress={handleRequestClose}
+            style={styles.headerButton}
+          >
             <Feather name="chevron-left" size={28} color={Colors.foundation.black} />
           </Pressable>
           <Text style={styles.modalTitle}>
@@ -2364,17 +3308,17 @@ function PhotoGridModal({
             { paddingBottom: showSelectionActionBar ? insets.bottom + 96 : Spacing.xl },
           ]}
         >
-          {!isSelectionMode && !isCoverSelectMode && !isRecordSelectMode ? (
+          {showsAddPhotoTile ? (
             <Pressable
               accessibilityRole="button"
               onPress={onAddPhoto}
-              style={[styles.gridPhoto, styles.gridAddPhoto]}
+              style={[styles.gridPhoto, photoGridTileStyle, styles.gridAddPhoto]}
             >
               <Feather name="plus" size={28} color={Colors.foundation.grey500} />
               <Text style={styles.gridAddPhotoText}>{'\uC0AC\uC9C4 \uCD94\uAC00'}</Text>
             </Pressable>
           ) : null}
-          {photos.length === 0 ? (
+          {photos.length === 0 && !showsAddPhotoTile ? (
             <View style={styles.gridEmptyState}>
               <Text style={styles.gridEmptyText}>
                 {isCoverSelectMode
@@ -2404,7 +3348,7 @@ function PhotoGridModal({
                   setInlineViewerIndex(index);
                   setInlineViewerOpen(true);
                 }}
-                style={styles.gridPhoto}
+                style={[styles.gridPhoto, photoGridTileStyle]}
               >
                 <Image source={photo.source} style={styles.gridPhotoImage} resizeMode="cover" />
                 {(isSelectionMode || isCoverSelectMode || isRecordSelectMode) && isSelected ? <View style={styles.gridSelectedOverlay} /> : null}
@@ -2451,6 +3395,43 @@ function PhotoGridModal({
           renderActionSheet={renderViewerActionSheet}
           visible={isInlineViewerOpen}
         />
+        {pendingDeletePhotoIds.length > 0 ? (
+          <View style={[styles.overlay, styles.photoDeleteInlineOverlay]}>
+            <View style={styles.deleteModal}>
+              <Text style={styles.deleteTitle}>
+                {'\uC120\uD0DD\uD55C \uC0AC\uC9C4\uC744 \uC0AD\uC81C\uD560\uAE4C\uC694?'}
+              </Text>
+              <Text style={styles.deleteDescription}>
+                {pendingDeletePhotoIds.length}
+                {'\uC7A5\uC758 \uC0AC\uC9C4\uC740 \uAE30\uAE30 \uC0AC\uC9C4\uCCA9\uC5D0\uC11C\uB294 \uC0AD\uC81C\uB418\uC9C0 \uC54A\uACE0, Travu\uC758 \uD604\uC7AC \uC7A5\uC18C \uC0AC\uC9C4 \uBAA9\uB85D\uC5D0\uC11C\uB9CC \uC0AD\uC81C\uB429\uB2C8\uB2E4.'}
+              </Text>
+              <View style={styles.deleteButtonRow}>
+                <Pressable
+                  disabled={isDeleting}
+                  onPress={() => setPendingDeletePhotoIds([])}
+                  style={styles.secondaryButton}
+                >
+                  <Text style={styles.secondaryButtonText}>{'\uCDE8\uC18C'}</Text>
+                </Pressable>
+                <Pressable
+                  disabled={isDeleting}
+                  onPress={() => {
+                    const targetPhotoIds = [...pendingDeletePhotoIds];
+                    onRequestDeletePhotos(targetPhotoIds);
+                  }}
+                  style={[
+                    styles.destructiveButton,
+                    isDeleting && styles.destructiveButtonDisabled,
+                  ]}
+                >
+                  <Text style={styles.destructiveButtonText}>
+                    {isDeleting ? '\uC0AD\uC81C \uC911...' : '\uC0AD\uC81C'}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        ) : null}
       </Animated.View>
     </Modal>
   );
@@ -2464,12 +3445,16 @@ interface RecordCreateModalProps {
   timeLabel?: string;
   presentation?: 'modal' | 'inline';
   allowPhotoPicker?: boolean;
+  allowPhotoChanges?: boolean;
+  title?: string;
   onChangeDraft: (value: string) => void;
   onChangeTime: (value: string) => void;
   onClose: () => void;
+  onDidDismiss?: () => void;
   onOpenPhotoPicker: () => void;
   onRemovePhoto: (photoId: string) => void;
-  onSave: () => void;
+  onSave: () => Promise<void> | void;
+  isSaving?: boolean;
 }
 
 function RecordCreateModal({
@@ -2480,22 +3465,77 @@ function RecordCreateModal({
   timeLabel,
   presentation = 'modal',
   allowPhotoPicker = true,
+  allowPhotoChanges = true,
+  title = '\uAE30\uB85D \uCD94\uAC00',
   onChangeDraft,
   onChangeTime,
   onClose,
+  onDidDismiss,
   onOpenPhotoPicker,
   onRemovePhoto,
   onSave,
+  isSaving = false,
 }: RecordCreateModalProps) {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const [isTimePickerOpen, setTimePickerOpen] = React.useState(false);
   const [isSheetPresented, setSheetPresented] = React.useState(visible);
+  const [isKeyboardVisible, setKeyboardVisible] = React.useState(false);
+  const [keyboardTopY, setKeyboardTopY] = React.useState(windowHeight);
   const dimOpacity = React.useRef(new Animated.Value(0)).current;
   const sheetTranslateY = React.useRef(new Animated.Value(320)).current;
+  const formScrollRef = React.useRef<ScrollView>(null);
+  const recordInputOffsetYRef = React.useRef(0);
+  const dismissPendingRef = React.useRef(false);
+  const isSheetPresentedRef = React.useRef(visible);
+  const onDidDismissRef = React.useRef(onDidDismiss);
   const isScreenMode = mode === 'screen';
   const isInlinePresentation = presentation === 'inline';
-  const saveDisabled = !draft.trim();
+  const saveDisabled = isSaving || !draft.trim();
   const showMemoPlaceholder = draft.length === 0;
+  const keyboardBottomOffset = isKeyboardVisible
+    ? Math.max(windowHeight - keyboardTopY, 0)
+    : 0;
+  const keyboardSheetTopClearance = insets.top + Spacing['3xl'];
+  const keyboardSheetMaxHeight = Math.max(
+    windowHeight - keyboardBottomOffset - keyboardSheetTopClearance,
+    0,
+  );
+
+  React.useEffect(() => {
+    onDidDismissRef.current = onDidDismiss;
+  }, [onDidDismiss]);
+
+  const scrollRecordInputIntoView = React.useCallback(() => {
+    requestAnimationFrame(() => {
+      formScrollRef.current?.scrollTo({
+        animated: true,
+        y: Math.max(recordInputOffsetYRef.current - Spacing.lg, 0),
+      });
+    });
+  }, []);
+
+  React.useEffect(() => {
+    const keyboardShowEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const keyboardHideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSubscription = Keyboard.addListener(keyboardShowEvent, (event) => {
+      Keyboard.scheduleLayoutAnimation(event);
+      setKeyboardTopY(event.endCoordinates.screenY);
+      setKeyboardVisible(true);
+      scrollRecordInputIntoView();
+    });
+    const hideSubscription = Keyboard.addListener(keyboardHideEvent, (event) => {
+      Keyboard.scheduleLayoutAnimation(event);
+      setKeyboardVisible(false);
+      setKeyboardTopY(windowHeight);
+      formScrollRef.current?.scrollTo({ animated: true, y: 0 });
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [scrollRecordInputIntoView, windowHeight]);
 
   React.useEffect(() => {
     if (isScreenMode) {
@@ -2503,6 +3543,8 @@ function RecordCreateModal({
     }
 
     if (visible) {
+      dismissPendingRef.current = false;
+      isSheetPresentedRef.current = true;
       setSheetPresented(true);
       dimOpacity.setValue(0);
       sheetTranslateY.setValue(320);
@@ -2523,6 +3565,11 @@ function RecordCreateModal({
       return undefined;
     }
 
+    if (!isSheetPresentedRef.current) {
+      return undefined;
+    }
+
+    dismissPendingRef.current = true;
     Animated.parallel([
       Animated.timing(dimOpacity, {
         toValue: 0,
@@ -2537,7 +3584,8 @@ function RecordCreateModal({
         useNativeDriver: true,
       }),
     ]).start(({ finished }) => {
-      if (finished) {
+      if (finished && dismissPendingRef.current) {
+        isSheetPresentedRef.current = false;
         setSheetPresented(false);
       }
     });
@@ -2545,95 +3593,148 @@ function RecordCreateModal({
     return undefined;
   }, [dimOpacity, isScreenMode, sheetTranslateY, visible]);
 
+  React.useEffect(() => {
+    if (
+      isInlinePresentation
+      || isScreenMode
+      || isSheetPresented
+      || visible
+      || !dismissPendingRef.current
+    ) {
+      return;
+    }
+
+    dismissPendingRef.current = false;
+    onDidDismissRef.current?.();
+  }, [isInlinePresentation, isScreenMode, isSheetPresented, visible]);
+
+  const handleSavePress = React.useCallback(() => {
+    Keyboard.dismiss();
+    void onSave();
+  }, [onSave]);
+  const handleBackdropPress = React.useCallback(() => {
+    if (isKeyboardVisible) {
+      Keyboard.dismiss();
+      return;
+    }
+
+    onClose();
+  }, [isKeyboardVisible, onClose]);
+
   const content = (
     <View style={isScreenMode ? styles.recordScreenContent : styles.recordSheetContent}>
-      <View style={styles.recordModalHeader}>
-        {isScreenMode ? (
-          <Pressable accessibilityRole="button" hitSlop={10} onPress={onClose} style={styles.recordCloseButton}>
-            <Feather name="chevron-left" size={28} color={Colors.foundation.black} />
-          </Pressable>
-        ) : (
+      <ScrollView
+        contentContainerStyle={
+          isScreenMode
+            ? styles.recordScreenScrollContent
+            : styles.recordSheetScrollContent
+        }
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        keyboardShouldPersistTaps="handled"
+        ref={formScrollRef}
+        showsVerticalScrollIndicator={false}
+        style={isScreenMode ? styles.recordScreenScroll : styles.recordSheetScroll}
+      >
+        <View style={styles.recordModalHeader}>
+          {isScreenMode ? (
+            <Pressable accessibilityRole="button" hitSlop={10} onPress={onClose} style={styles.recordCloseButton}>
+              <Feather name="chevron-left" size={28} color={Colors.foundation.black} />
+            </Pressable>
+          ) : (
+            <View style={styles.recordCloseButton} />
+          )}
+          <Text style={styles.recordModalTitle}>{title}</Text>
           <View style={styles.recordCloseButton} />
-        )}
-        <Text style={styles.recordModalTitle}>{'\uAE30\uB85D \uCD94\uAC00'}</Text>
-        <View style={styles.recordCloseButton} />
-      </View>
-
-      <View style={styles.selectedPhotosBlock}>
-        <View style={styles.selectedPhotosHeader}>
-          <Text style={styles.selectedPhotosLabel}>{'\uC0AC\uC9C4 \uC5F0\uACB0'}</Text>
-          <Text style={styles.selectedPhotosOptional}>{'\uC120\uD0DD \uC0AC\uD56D'}</Text>
         </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.selectedPhotoRow}>
-            {allowPhotoPicker ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={onOpenPhotoPicker}
-                style={[styles.selectedPhotoThumb, styles.linkPhotoButton]}
-              >
-                <Feather name="plus" size={20} color={Colors.foundation.grey600} />
-                <Text style={styles.linkPhotoButtonText}>{'\uC0AC\uC9C4 \uCD94\uAC00'}</Text>
-              </Pressable>
-            ) : null}
-            {photos.map((photo) => (
-              <View key={photo.id} style={styles.linkedPhotoThumbWrap}>
-                <Image resizeMode="cover" source={photo.source} style={styles.selectedPhotoThumb} />
+
+        <View style={styles.selectedPhotosBlock}>
+          <View style={styles.selectedPhotosHeader}>
+            <Text style={styles.selectedPhotosLabel}>{'\uC0AC\uC9C4 \uC5F0\uACB0'}</Text>
+            <Text style={styles.selectedPhotosOptional}>{'\uC120\uD0DD \uC0AC\uD56D'}</Text>
+          </View>
+          <ScrollView
+            horizontal
+            keyboardShouldPersistTaps="handled"
+            showsHorizontalScrollIndicator={false}
+          >
+            <View style={styles.selectedPhotoRow}>
+              {allowPhotoPicker && allowPhotoChanges ? (
                 <Pressable
                   accessibilityRole="button"
-                  hitSlop={8}
-                  onPress={() => onRemovePhoto(photo.id)}
-                  style={styles.unlinkPhotoButton}
+                  onPress={onOpenPhotoPicker}
+                  style={[styles.selectedPhotoThumb, styles.linkPhotoButton]}
                 >
-                  <Feather name="x" size={12} color={Colors.foundation.white} />
+                  <Feather name="plus" size={20} color={Colors.foundation.grey600} />
+                  <Text style={styles.linkPhotoButtonText}>{'\uC0AC\uC9C4 \uCD94\uAC00'}</Text>
                 </Pressable>
-              </View>
-            ))}
+              ) : null}
+              {photos.map((photo) => (
+                <View key={photo.id} style={styles.linkedPhotoThumbWrap}>
+                  <Image resizeMode="cover" source={photo.source} style={styles.selectedPhotoThumb} />
+                  {allowPhotoChanges ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      hitSlop={8}
+                      onPress={() => onRemovePhoto(photo.id)}
+                      style={styles.unlinkPhotoButton}
+                    >
+                      <Feather name="x" size={12} color={Colors.foundation.white} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          </ScrollView>
+        </View>
+
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setTimePickerOpen(true)}
+          style={styles.timeRow}
+        >
+          <Text style={styles.timeLabel}>{'\uBC29\uBB38 \uC2DC\uAC04'}</Text>
+          <View style={styles.timeValueRow}>
+            <Text style={styles.timeValue}>{timeLabel ?? '\uC2DC\uAC04 \uBBF8\uC815'}</Text>
+            <Feather name="chevron-right" size={18} color={Colors.foundation.grey500} />
           </View>
-        </ScrollView>
-      </View>
+        </Pressable>
 
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => setTimePickerOpen(true)}
-        style={styles.timeRow}
-      >
-        <Text style={styles.timeLabel}>{'\uBC29\uBB38 \uC2DC\uAC04'}</Text>
-        <View style={styles.timeValueRow}>
-          <Text style={styles.timeValue}>{timeLabel ?? '\uC2DC\uAC04 \uBBF8\uC815'}</Text>
-          <Feather name="chevron-right" size={18} color={Colors.foundation.grey500} />
+        <View
+          onLayout={(event) => {
+            recordInputOffsetYRef.current = event.nativeEvent.layout.y;
+          }}
+          style={styles.memoBlock}
+        >
+          <Text style={styles.memoLabel}>{'\uAE30\uB85D'}</Text>
+          <View style={styles.recordInputFrame}>
+            <AppTextInput
+              multiline
+              maxLength={1000}
+              onChangeText={onChangeDraft}
+              onFocus={scrollRecordInputIntoView}
+              placeholder=""
+              placeholderTextColor={Colors.foundation.grey500}
+              style={styles.recordInput}
+              value={draft}
+            />
+            {showMemoPlaceholder ? (
+              <Text pointerEvents="none" style={styles.recordInputPlaceholder}>
+                {'\uC774 \uC7A5\uC18C\uC5D0\uC11C \uC5B4\uB5A4 \uC21C\uAC04\uC744 \uAE30\uC5B5\uD558\uB098\uC694?'}
+              </Text>
+            ) : null}
+          </View>
+          <Text style={styles.memoCount}>{draft.length}/1000</Text>
         </View>
-      </Pressable>
 
-      <View style={styles.memoBlock}>
-        <Text style={styles.memoLabel}>{'\uAE30\uB85D'}</Text>
-        <View style={styles.recordInputFrame}>
-          <AppTextInput
-            multiline
-            maxLength={1000}
-            onChangeText={onChangeDraft}
-            placeholder=""
-            placeholderTextColor={Colors.foundation.grey500}
-            style={styles.recordInput}
-            value={draft}
-          />
-          {showMemoPlaceholder ? (
-            <Text pointerEvents="none" style={styles.recordInputPlaceholder}>
-              {'\uC774 \uC7A5\uC18C\uC5D0\uC11C \uC5B4\uB5A4 \uC21C\uAC04\uC744 \uAE30\uC5B5\uD558\uB098\uC694?'}
-            </Text>
-          ) : null}
-        </View>
-        <Text style={styles.memoCount}>{draft.length}/1000</Text>
-      </View>
-
-      <Pressable
-        accessibilityRole="button"
-        disabled={saveDisabled}
-        onPress={onSave}
-        style={[styles.saveButton, saveDisabled && styles.saveButtonDisabled]}
-      >
-        <Text style={styles.saveButtonText}>{'\uC800\uC7A5\uD558\uAE30'}</Text>
-      </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={saveDisabled}
+          onPress={handleSavePress}
+          style={[styles.saveButton, saveDisabled && styles.saveButtonDisabled]}
+        >
+          <Text style={styles.saveButtonText}>{'\uC800\uC7A5\uD558\uAE30'}</Text>
+        </Pressable>
+      </ScrollView>
       <TimeWheelPickerModal
         onClose={() => setTimePickerOpen(false)}
         onConfirm={(nextTime) => {
@@ -2649,7 +3750,14 @@ function RecordCreateModal({
   if (isScreenMode) {
     return (
       <Modal animationType="slide" visible={visible} onRequestClose={onClose}>
-        <SafeAreaView style={styles.recordScreen}>{content}</SafeAreaView>
+        <SafeAreaView style={styles.recordScreen}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.recordKeyboardView}
+          >
+            {content}
+          </KeyboardAvoidingView>
+        </SafeAreaView>
       </Modal>
     );
   }
@@ -2657,11 +3765,15 @@ function RecordCreateModal({
   const sheetContent = (
     <View style={styles.sheetOverlay}>
       <Animated.View style={[styles.sheetDim, { opacity: dimOpacity }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <Pressable style={StyleSheet.absoluteFill} onPress={handleBackdropPress} />
       </Animated.View>
       <Animated.View
         style={[
           styles.recordSheet,
+          isKeyboardVisible && {
+            marginBottom: keyboardBottomOffset,
+            maxHeight: keyboardSheetMaxHeight,
+          },
           {
             paddingBottom: insets.bottom + Spacing.xl,
             transform: [{ translateY: sheetTranslateY }],
@@ -2692,7 +3804,8 @@ function RecordCreateModal({
 interface ConfirmDeleteModalProps {
   visible: boolean;
   onCancel: () => void;
-  onDelete: () => void;
+  onDelete: () => Promise<void> | void;
+  isDeleting?: boolean;
 }
 
 function ConfirmDeleteModal({ visible, onCancel, onDelete }: ConfirmDeleteModalProps) {
@@ -2718,51 +3831,37 @@ function ConfirmDeleteModal({ visible, onCancel, onDelete }: ConfirmDeleteModalP
   );
 }
 
-function ConfirmRecordDeleteModal({ visible, onCancel, onDelete }: ConfirmDeleteModalProps) {
+function ConfirmRecordDeleteModal({
+  visible,
+  onCancel,
+  onDelete,
+  isDeleting = false,
+}: ConfirmDeleteModalProps) {
   return (
     <Modal animationType="fade" transparent visible={visible} onRequestClose={onCancel}>
       <View style={styles.overlay}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} />
+        <Pressable
+          disabled={isDeleting}
+          style={StyleSheet.absoluteFill}
+          onPress={onCancel}
+        />
         <View style={styles.deleteModal}>
-          <Text style={styles.deleteTitle}>{'\uC0AD\uC81C\uD558\uC2DC\uACA0\uC2B5\uB2C8\uAE4C?'}</Text>
+          <Text style={styles.deleteTitle}>{'\uAE30\uB85D\uC744 \uC0AD\uC81C\uD560\uAE4C\uC694?'}</Text>
           <Text style={styles.deleteDescription}>
-            {'\uC774 \uAE30\uB85D\uC740 \uC0AD\uC81C \uD6C4 \uBCF5\uAD6C\uD560 \uC218 \uC5C6\uC5B4\uC694.'}
+            {'\uC0AD\uC81C\uD55C \uAE30\uB85D\uC740 \uC774 \uC7A5\uC18C\uC5D0\uC11C \uB354 \uC774\uC0C1 \uD45C\uC2DC\uB418\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.'}
           </Text>
           <View style={styles.deleteButtonRow}>
-            <Pressable onPress={onCancel} style={styles.secondaryButton}>
+            <Pressable disabled={isDeleting} onPress={onCancel} style={styles.secondaryButton}>
               <Text style={styles.secondaryButtonText}>{'\uCDE8\uC18C'}</Text>
             </Pressable>
-            <Pressable onPress={onDelete} style={styles.destructiveButton}>
-              <Text style={styles.destructiveButtonText}>{'\uC0AD\uC81C'}</Text>
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-interface ConfirmPhotoDeleteModalProps {
-  visible: boolean;
-  count: number;
-  onCancel: () => void;
-  onDelete: () => void;
-}
-
-function ConfirmPhotoDeleteModal({ visible, count, onCancel, onDelete }: ConfirmPhotoDeleteModalProps) {
-  return (
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={onCancel}>
-      <View style={styles.overlay}>
-        <View style={styles.deleteModal}>
-          <Text style={styles.deleteTitle}>{'\uC120\uD0DD\uD55C \uC0AC\uC9C4\uC744 \uC0AD\uC81C\uD560\uAE4C\uC694?'}</Text>
-          <Text style={styles.deleteDescription}>
-            {count}{'\uC7A5\uC758 \uC0AC\uC9C4\uC740 \uAE30\uAE30 \uC0AC\uC9C4\uCCA9\uC5D0\uC11C\uB294 \uC0AD\uC81C\uB418\uC9C0 \uC54A\uACE0, Travu\uC758 \uD604\uC7AC \uC7A5\uC18C \uC0AC\uC9C4 \uBAA9\uB85D\uC5D0\uC11C\uB9CC \uC0AD\uC81C\uB429\uB2C8\uB2E4.'}
-          </Text>
-          <View style={styles.deleteButtonRow}>
-            <Pressable onPress={onCancel} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>{'\uCDE8\uC18C'}</Text>
-            </Pressable>
-            <Pressable onPress={onDelete} style={styles.destructiveButton}>
+            <Pressable
+              disabled={isDeleting}
+              onPress={onDelete}
+              style={[
+                styles.destructiveButton,
+                isDeleting && styles.destructiveButtonDisabled,
+              ]}
+            >
               <Text style={styles.destructiveButtonText}>{'\uC0AD\uC81C'}</Text>
             </Pressable>
           </View>
@@ -2920,6 +4019,22 @@ const styles = StyleSheet.create({
     ...Typography.body2Regular,
     color: Colors.foundation.black,
   },
+  photoStatus: {
+    alignItems: 'flex-start',
+    gap: Spacing.xs,
+  },
+  photoStatusText: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+  },
+  photoStatusAction: {
+    minHeight: Spacing['3xl'],
+    justifyContent: 'center',
+  },
+  photoStatusActionText: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.black,
+  },
   thumbnailScroll: {
     marginHorizontal: -Spacing.xl,
     paddingHorizontal: Spacing.xl,
@@ -2961,13 +4076,16 @@ const styles = StyleSheet.create({
     ...Typography.captionEmphasized,
     color: Colors.foundation.black,
   },
-  recordList: {
-    gap: Spacing.xl,
-  },
   recordSwipeContainer: {
     position: 'relative',
     overflow: 'hidden',
     borderRadius: Radius.xs,
+  },
+  recordSpacingWithPhotos: {
+    marginBottom: Spacing.xl,
+  },
+  recordSpacingTextOnly: {
+    marginBottom: Spacing.md,
   },
   recordDeleteBackground: {
     position: 'absolute',
@@ -3016,6 +4134,9 @@ const styles = StyleSheet.create({
   },
   recordLineLast: {
     minHeight: 36,
+  },
+  recordLineTextOnly: {
+    minHeight: Spacing.md,
   },
   recordBody: {
     flex: 1,
@@ -3094,6 +4215,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   photoGrid: {
+    width: '100%',
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.xs,
@@ -3111,8 +4233,7 @@ const styles = StyleSheet.create({
     color: Colors.foundation.grey500,
   },
   gridPhoto: {
-    width: '32%',
-    aspectRatio: 1,
+    flexShrink: 0,
     overflow: 'hidden',
     borderRadius: Radius.xs,
     backgroundColor: Colors.foundation.grey100,
@@ -3194,6 +4315,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
     backgroundColor: 'rgba(0, 0, 0, 0.22)',
   },
+  photoDeleteInlineOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 70,
+  },
   sheetOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -3220,6 +4345,13 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.foundation.grey300,
   },
   recordSheetContent: {
+    flexShrink: 1,
+  },
+  recordSheetScroll: {
+    flexShrink: 1,
+  },
+  recordSheetScrollContent: {
+    flexGrow: 1,
     gap: Spacing.lg,
     padding: Spacing.xl,
   },
@@ -3227,10 +4359,20 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.light.bgScreen,
   },
+  recordKeyboardView: {
+    flex: 1,
+  },
   recordScreenContent: {
     flex: 1,
+  },
+  recordScreenScroll: {
+    flex: 1,
+  },
+  recordScreenScrollContent: {
+    flexGrow: 1,
     gap: Spacing.xl,
     paddingHorizontal: Spacing.xl,
+    paddingBottom: Spacing.xl,
   },
   recordModalHeader: {
     minHeight: 44,
@@ -3415,6 +4557,9 @@ const styles = StyleSheet.create({
     borderRadius: Radius.sm,
     backgroundColor: DESTRUCTIVE,
   },
+  destructiveButtonDisabled: {
+    backgroundColor: Colors.foundation.grey300,
+  },
   destructiveButtonText: {
     ...Typography.body2Emphasized,
     color: Colors.foundation.white,
@@ -3431,6 +4576,23 @@ const styles = StyleSheet.create({
     color: Colors.foundation.black,
   },
   emptyDescription: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+    textAlign: 'center',
+  },
+  recordsEmptyState: {
+    minHeight: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+    paddingHorizontal: Spacing.xl,
+  },
+  recordsEmptyTitle: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+  },
+  recordsEmptyDescription: {
     ...Typography.body2Regular,
     color: Colors.foundation.grey600,
     textAlign: 'center',

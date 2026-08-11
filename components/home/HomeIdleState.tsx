@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
+  ActivityIndicator,
   Image,
   Platform,
   Pressable,
@@ -11,6 +12,7 @@ import {
   ScrollView,
   StyleSheet,
   View,
+  type ImageSourcePropType,
 } from 'react-native';
 
 import Text from '@/components/common/AppText';
@@ -21,7 +23,6 @@ import PhotoImportResultsCard from '@/components/home/PhotoImportResultsCard';
 import PhotoTripDetectionProgressCard from '@/components/home/PhotoTripDetectionProgressCard';
 import RecentTripsSection from '@/components/home/RecentTripsSection';
 import PhotoImportCompleteModal from '@/components/onboarding/PhotoImportCompleteModal';
-import { FIGMA_IMAGES } from '@/constants/figmaImages';
 import {
   getPendingDetectedTrip,
   getRecentTrips,
@@ -36,7 +37,7 @@ import {
   type IdleRecentTrip,
 } from '@/constants/mockIdleHomeData';
 import { addSavedIdleDetectedTrip, useSavedMyPageTrips } from '@/constants/savedMyPageTrips';
-import { Colors, FontFamily, Typography } from '@/constants/theme';
+import { Colors, FontFamily, Spacing, Typography } from '@/constants/theme';
 import type { HomeSummaryTripInput } from '@/utils/supabaseTripMappers';
 
 const HERO_HEIGHT = 299;
@@ -60,7 +61,6 @@ const MONTH_LABELS = [
   'NOVEMBER',
   'DECEMBER',
 ] as const;
-const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 const MULTI_WORD_CITY_NAMES = new Set([
   'ho chi minh',
   'hong kong',
@@ -97,8 +97,10 @@ type MonthlySummaryDateRange = {
 };
 
 interface HomeIdleStateProps {
+  heroImage: ImageSourcePropType;
   onPressStartTrip?: () => void;
   headerTop?: number;
+  headerLocationLabel: string;
   isFirstUserEmptyState?: boolean;
   showPhotoImportResultsCard?: boolean;
   showPhotoTripDetectionProgressCard?: boolean;
@@ -110,12 +112,19 @@ interface HomeIdleStateProps {
   onCloseImportCompleteModal?: () => void;
   onPressViewImportResults?: () => void;
   supabaseRecentTrips?: IdleRecentTrip[];
+  supabasePastMoments?: IdlePastMoment[];
   supabaseSummaryTrips?: HomeSummaryTripInput[];
+  isSupplementalDataLoading?: boolean;
+  isSupplementalDataError?: boolean;
+  onRetrySupplementalData?: () => Promise<void> | void;
+  onRefresh?: () => Promise<void> | void;
 }
 
 export default function HomeIdleState({
+  heroImage,
   onPressStartTrip,
   headerTop = 0,
+  headerLocationLabel,
   isFirstUserEmptyState = false,
   showPhotoImportResultsCard = false,
   showPhotoTripDetectionProgressCard = false,
@@ -127,16 +136,20 @@ export default function HomeIdleState({
   onCloseImportCompleteModal,
   onPressViewImportResults,
   supabaseRecentTrips,
+  supabasePastMoments,
   supabaseSummaryTrips,
+  isSupplementalDataLoading = false,
+  isSupplementalDataError = false,
+  onRetrySupplementalData,
+  onRefresh,
 }: HomeIdleStateProps) {
   const router = useRouter();
   const savedMyPageTrips = useSavedMyPageTrips();
   const [detectedTrips, setDetectedTrips] = React.useState<DetectedTrip[]>([]);
   const [isRefreshing, setRefreshing] = React.useState(false);
   const today = React.useMemo(() => new Date(), []);
-  const heroDateLabel = React.useMemo(() => formatIdleHeroDate(today), [today]);
   const summaryTrips =
-    supabaseSummaryTrips && supabaseSummaryTrips.length > 0
+    supabaseSummaryTrips !== undefined
       ? supabaseSummaryTrips
       : savedMyPageTrips;
   const monthlySummary = React.useMemo(
@@ -152,7 +165,7 @@ export default function HomeIdleState({
 
   const recentTrips = React.useMemo(
     () => {
-      if (supabaseRecentTrips && supabaseRecentTrips.length > 0) {
+      if (supabaseRecentTrips !== undefined) {
         return getRecentTrips(supabaseRecentTrips);
       }
 
@@ -170,8 +183,11 @@ export default function HomeIdleState({
   );
 
   const pastMoments = React.useMemo(
-    () => getTravelMoments(MOCK_PAST_MOMENTS, recentTripIds),
-    [recentTripIds],
+    () => getTravelMoments(
+      supabasePastMoments !== undefined ? supabasePastMoments : MOCK_PAST_MOMENTS,
+      recentTripIds,
+    ),
+    [recentTripIds, supabasePastMoments],
   );
 
   const handleSaveDetectedTrip = React.useCallback((trip: DetectedTrip) => {
@@ -181,13 +197,15 @@ export default function HomeIdleState({
     );
   }, []);
 
-  const handleRefresh = React.useCallback(() => {
+  const handleRefresh = React.useCallback(async () => {
     setRefreshing(true);
 
-    requestAnimationFrame(() => {
+    try {
+      await onRefresh?.();
+    } finally {
       setRefreshing(false);
-    });
-  }, []);
+    }
+  }, [onRefresh]);
 
   const handlePressRecentTrip = React.useCallback((tripId: string) => {
     router.push({
@@ -233,7 +251,7 @@ export default function HomeIdleState({
       <View style={styles.fixedHeroArea}>
         <View style={styles.hero}>
           <Image
-            source={FIGMA_IMAGES.home.idleHeroParis}
+            source={heroImage}
             style={styles.heroImage}
             resizeMode="cover"
           />
@@ -253,12 +271,14 @@ export default function HomeIdleState({
           <View style={[styles.heroHeader, { top: headerTop }]}>
             <View style={styles.locationRow}>
               <Ionicons name="location-outline" size={16} color={Colors.foundation.white} />
-              <Text style={styles.locationLabel}>Seoul</Text>
+              <Text
+                style={styles.locationLabel}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {headerLocationLabel}
+              </Text>
             </View>
-
-            <Text style={styles.heroDate} pointerEvents="none">
-              {heroDateLabel}
-            </Text>
 
             <Pressable
               accessibilityRole="button"
@@ -268,7 +288,7 @@ export default function HomeIdleState({
               onPress={onPressStartTrip}
             >
               <Image
-                source={FIGMA_IMAGES.home.idleHeroParis}
+                source={heroImage}
                 style={styles.startButtonBackdropImage}
                 resizeMode="cover"
                 blurRadius={14}
@@ -364,6 +384,29 @@ export default function HomeIdleState({
             />
           ) : null}
 
+          {!isFirstUserEmptyState &&
+          recentTrips.length === 0 &&
+          pastMoments.length === 0 &&
+          isSupplementalDataLoading ? (
+            <View style={styles.supplementalState}>
+              <ActivityIndicator color={Colors.foundation.black} />
+              <Text style={styles.supplementalStateText}>여행 기록을 불러오는 중이에요</Text>
+            </View>
+          ) : null}
+
+          {!isFirstUserEmptyState &&
+          recentTrips.length === 0 &&
+          pastMoments.length === 0 &&
+          !isSupplementalDataLoading &&
+          isSupplementalDataError ? (
+            <View style={styles.supplementalState}>
+              <Text style={styles.supplementalStateText}>여행 기록을 불러오지 못했어요</Text>
+              <Pressable accessibilityRole="button" onPress={onRetrySupplementalData}>
+                <Text style={styles.supplementalRetryText}>다시 시도</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
           {!isFirstUserEmptyState && (recentTrips.length > 0 || pastMoments.length > 0) ? (
             <>
               {recentTrips.length > 0 ? (
@@ -401,12 +444,6 @@ export default function HomeIdleState({
 }
 
 function noop() {}
-
-function formatIdleHeroDate(date: Date) {
-  const day = date.getDate();
-
-  return `${date.getMonth() + 1}. ${day} ${WEEKDAY_LABELS[date.getDay()]}`;
-}
 
 function getMonthRange(date: Date) {
   const year = date.getFullYear();
@@ -725,31 +762,23 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   locationRow: {
-    width: 67,
+    flex: 1,
+    minWidth: 0,
     height: 27.05,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    marginRight: Spacing.md,
     zIndex: 1,
   },
   locationLabel: {
-    width: 45,
+    flexShrink: 1,
+    minWidth: 0,
     height: 24,
     fontFamily: 'Sansita Swashed',
     fontSize: 18,
     lineHeight: 24,
     fontWeight: '700',
-    color: Colors.foundation.white,
-  },
-  heroDate: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 10,
-    fontFamily: FontFamily.pretendardSemiBold,
-    fontSize: 18,
-    lineHeight: 24,
-    textAlign: 'center',
     color: Colors.foundation.white,
   },
   startButton: {
@@ -894,5 +923,18 @@ const styles = StyleSheet.create({
   },
   recentTripsWithoutDetected: {
     marginTop: 0,
+  },
+  supplementalState: {
+    alignItems: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing['2xl'],
+  },
+  supplementalStateText: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey700,
+  },
+  supplementalRetryText: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.black,
   },
 });

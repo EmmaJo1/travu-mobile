@@ -2,7 +2,7 @@ import { Feather } from '@expo/vector-icons';
 import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
@@ -36,17 +36,25 @@ export default function TripCreatedScreen() {
   const homeLinkBottom = ctaBottom + CTA_HEIGHT + Spacing['2xl'];
 
   const handleGoHome = React.useCallback(() => {
-    router.replace('/(tabs)' as Href);
+    router.dismissTo('/(tabs)' as Href);
   }, [router]);
 
   const handleOpenTrip = React.useCallback(() => {
-    router.replace({
-      pathname: '/day-archive-detail',
-      params: {
-        tripId: tripId ?? `manual-${Date.now()}`,
-        entryPoint: 'manualCreate',
-      },
-    } as Href);
+    if (!tripId) {
+      Alert.alert('저장된 여행을 찾을 수 없어요.', '홈으로 이동한 뒤 여행 목록에서 다시 확인해 주세요.');
+      return;
+    }
+
+    router.dismissTo('/(tabs)' as Href);
+    requestAnimationFrame(() => {
+      router.push({
+        pathname: '/day-archive-detail',
+        params: {
+          tripId,
+          entryPoint: 'manualCreate',
+        },
+      } as Href);
+    });
   }, [router, tripId]);
 
   return (
@@ -74,7 +82,7 @@ export default function TripCreatedScreen() {
           <Feather name="check" size={32} color={Colors.foundation.white} />
         </View>
         <Text style={styles.title}>여행을 만들었어요</Text>
-        <Text style={styles.description}>선택한 여행지와 기간으로{'\n'}여행 기록을 정리할 수 있어요</Text>
+        <Text style={styles.description}>선택한 여행지와 기간으로{`\n`}여행 기록을 정리할 수 있어요</Text>
 
         <View style={styles.summaryCard}>
           <SummaryRow label="여행지" value={destinationLabel} />

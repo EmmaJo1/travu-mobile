@@ -18,21 +18,90 @@
  */
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
-import { type Href, router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Alert, Animated, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+  Alert,
+  Animated,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import AppTextInput from '@/components/common/AppTextInput';
 import Text from '@/components/common/AppText';
 
 import { Path, Svg } from 'react-native-svg';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import SheetActionButton from '@/components/common/SheetActionButton';
 import { LEGAL_DOCUMENTS } from '@/constants/legalDocuments';
-import { Colors, FontFamily, Typography } from '@/constants/theme';
+import { Colors, FontFamily, Radius, Spacing, Typography } from '@/constants/theme';
 import { useAuth } from '@/providers/AuthProvider';
+import { acceptRequiredLegalDocuments } from '@/services/supabase/users';
 
-type SheetType = 'none' | 'terms' | 'privacy' | 'consent';
-type PendingAuthProvider = 'google' | 'apple' | null;
+type SheetType = 'none' | 'age' | 'terms' | 'privacy' | 'consent';
+type AuthProviderName = 'google' | 'apple';
+
+type BirthDateEligibility = 'eligible' | 'invalid' | 'underage';
+
+const MIN_BIRTH_YEAR = 1900;
+const MINIMUM_AGE = 14;
+
+function evaluateBirthDateEligibility(
+  yearText: string,
+  monthText: string,
+  dayText: string,
+  today = new Date(),
+): BirthDateEligibility {
+  if (!/^\d{4}$/.test(yearText) || !/^\d{1,2}$/.test(monthText) || !/^\d{1,2}$/.test(dayText)) {
+    return 'invalid';
+  }
+
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const birthDate = new Date(year, month - 1, day);
+
+  if (
+    year < MIN_BIRTH_YEAR ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    birthDate.getFullYear() !== year ||
+    birthDate.getMonth() !== month - 1 ||
+    birthDate.getDate() !== day
+  ) {
+    return 'invalid';
+  }
+
+  const isFutureDate =
+    year > today.getFullYear() ||
+    (
+      year === today.getFullYear() &&
+      (
+        month > today.getMonth() + 1 ||
+        (month === today.getMonth() + 1 && day > today.getDate())
+      )
+    );
+
+  if (isFutureDate) {
+    return 'invalid';
+  }
+
+  let age = today.getFullYear() - year;
+  const birthdayHasPassed =
+    today.getMonth() + 1 > month ||
+    (today.getMonth() + 1 === month && today.getDate() >= day);
+
+  if (!birthdayHasPassed) {
+    age -= 1;
+  }
+
+  return age >= MINIMUM_AGE ? 'eligible' : 'underage';
+}
 
 /** 공식 Google G 로고 — 18×18 viewBox 기반 4색 SVG 경로 */
 function GoogleLogo() {
@@ -70,6 +139,15 @@ function GoogleLogo() {
  */
 function SheetModal({
   sheet,
+  birthYear,
+  birthMonth,
+  birthDay,
+  ageError,
+  onChangeBirthYear,
+  onChangeBirthMonth,
+  onChangeBirthDay,
+  onConfirmAge,
+  onCloseAge,
   onClose,
   onOpenTerms,
   onOpenPrivacy,
@@ -83,6 +161,15 @@ function SheetModal({
   paddingBottom,
 }: {
   sheet: SheetType;
+  birthYear: string;
+  birthMonth: string;
+  birthDay: string;
+  ageError: string | null;
+  onChangeBirthYear: (value: string) => void;
+  onChangeBirthMonth: (value: string) => void;
+  onChangeBirthDay: (value: string) => void;
+  onConfirmAge: () => void;
+  onCloseAge: () => void;
   onClose: () => void;
   onOpenTerms: () => void;
   onOpenPrivacy: () => void;
@@ -148,12 +235,20 @@ function SheetModal({
   if (!isOpen && !presented) return null;
 
   const isTall = sheet === 'terms' || sheet === 'privacy';
+  const handleDismissRequest = sheet === 'age'
+    ? onCloseAge
+    : sheet === 'consent'
+      ? onClose
+      : onBackToConsent;
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <View style={styles.modalWrapper}>
+    <Modal visible transparent animationType="none" onRequestClose={handleDismissRequest}>
+      <KeyboardAvoidingView
+        style={styles.modalWrapper}
+        behavior={sheet === 'age' && Platform.OS === 'ios' ? 'padding' : undefined}
+      >
         <Animated.View style={[styles.dimmedBase, { opacity: dimOpacity }]}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+          <Pressable style={StyleSheet.absoluteFill} onPress={handleDismissRequest} />
         </Animated.View>
 
         <Animated.View
@@ -162,7 +257,20 @@ function SheetModal({
             isTall && styles.bottomSheetTall,
             { paddingBottom, transform: [{ translateY: sheetTransY }] },
           ]}
-        >
+          >
+          {sheet === 'age' && (
+            <AgeVerificationContent
+              year={birthYear}
+              month={birthMonth}
+              day={birthDay}
+              error={ageError}
+              onChangeYear={onChangeBirthYear}
+              onChangeMonth={onChangeBirthMonth}
+              onChangeDay={onChangeBirthDay}
+              onConfirm={onConfirmAge}
+              onClose={onCloseAge}
+            />
+          )}
           {sheet === 'consent' && (
             <ConsentContent
               agreedTerms={agreedTerms}
@@ -191,8 +299,109 @@ function SheetModal({
             />
           )}
         </Animated.View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
+  );
+}
+
+function AgeVerificationContent({
+  year,
+  month,
+  day,
+  error,
+  onChangeYear,
+  onChangeMonth,
+  onChangeDay,
+  onConfirm,
+  onClose,
+}: {
+  year: string;
+  month: string;
+  day: string;
+  error: string | null;
+  onChangeYear: (value: string) => void;
+  onChangeMonth: (value: string) => void;
+  onChangeDay: (value: string) => void;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const monthInputRef = useRef<React.ElementRef<typeof AppTextInput>>(null);
+  const dayInputRef = useRef<React.ElementRef<typeof AppTextInput>>(null);
+  const hasCompleteInput = year.length === 4 && month.length > 0 && day.length > 0;
+
+  const normalizeDigits = (value: string, maxLength: number) =>
+    value.replace(/\D/g, '').slice(0, maxLength);
+
+  return (
+    <>
+      <TouchableOpacity style={styles.closeBtn} onPress={onClose} hitSlop={12}>
+        <Ionicons name="close" size={20} color={Colors.foundation.black} />
+      </TouchableOpacity>
+      <Text style={styles.sheetTitle}>이용 가능 연령 확인</Text>
+      <Text style={styles.sheetDesc}>
+        Travu는 만 14세 이상만 이용할 수 있어요.{`\n`}
+        이용 가능 연령 확인을 위해 생년월일을 입력해주세요.
+      </Text>
+      <View style={styles.birthDateInputs}>
+        <View style={styles.birthDateFieldWide}>
+          <AppTextInput
+            value={year}
+            onChangeText={(value) => onChangeYear(normalizeDigits(value, 4))}
+            placeholder="YYYY"
+            placeholderTextColor={Colors.light.textPlaceholder}
+            keyboardType="number-pad"
+            inputMode="numeric"
+            maxLength={4}
+            returnKeyType="next"
+            onSubmitEditing={() => monthInputRef.current?.focus()}
+            style={styles.birthDateInput}
+            accessibilityLabel="출생 연도"
+          />
+          <Text style={styles.birthDateUnit}>년</Text>
+        </View>
+        <View style={styles.birthDateField}>
+          <AppTextInput
+            ref={monthInputRef}
+            value={month}
+            onChangeText={(value) => onChangeMonth(normalizeDigits(value, 2))}
+            placeholder="MM"
+            placeholderTextColor={Colors.light.textPlaceholder}
+            keyboardType="number-pad"
+            inputMode="numeric"
+            maxLength={2}
+            returnKeyType="next"
+            onSubmitEditing={() => dayInputRef.current?.focus()}
+            style={styles.birthDateInput}
+            accessibilityLabel="출생 월"
+          />
+          <Text style={styles.birthDateUnit}>월</Text>
+        </View>
+        <View style={styles.birthDateField}>
+          <AppTextInput
+            ref={dayInputRef}
+            value={day}
+            onChangeText={(value) => onChangeDay(normalizeDigits(value, 2))}
+            placeholder="DD"
+            placeholderTextColor={Colors.light.textPlaceholder}
+            keyboardType="number-pad"
+            inputMode="numeric"
+            maxLength={2}
+            returnKeyType="done"
+            onSubmitEditing={onConfirm}
+            style={styles.birthDateInput}
+            accessibilityLabel="출생 일"
+          />
+          <Text style={styles.birthDateUnit}>일</Text>
+        </View>
+      </View>
+      {error ? <Text style={styles.ageError}>{error}</Text> : null}
+      <SheetActionButton
+        label="확인"
+        onPress={onConfirm}
+        active={hasCompleteInput}
+        style={styles.agreeBtn}
+      />
+    </>
   );
 }
 
@@ -269,39 +478,128 @@ function DetailContent({ title, body, onClose }: { title: string; body: string; 
 
 export default function AuthStartScreen() {
   const insets = useSafeAreaInsets();
-  const { signInWithApple, signInWithGoogle } = useAuth();
+  const {
+    isAuthenticated,
+    profile,
+    profileStatus,
+    setProfileSnapshot,
+    signInWithApple,
+    signInWithGoogle,
+    signOut,
+  } = useAuth();
   const [sheet, setSheet] = useState<SheetType>('none');
-  const [agreedTerms, setAgreedTerms] = useState(true);
-  const [agreedPrivacy, setAgreedPrivacy] = useState(true);
-  const [pendingAuthProvider, setPendingAuthProvider] = useState<PendingAuthProvider>(null);
+  const [agreedTerms, setAgreedTerms] = useState(false);
+  const [agreedPrivacy, setAgreedPrivacy] = useState(false);
+  const [birthYear, setBirthYear] = useState('');
+  const [birthMonth, setBirthMonth] = useState('');
+  const [birthDay, setBirthDay] = useState('');
+  const [ageError, setAgeError] = useState<string | null>(null);
+  const [ageEligibilityConfirmed, setAgeEligibilityConfirmed] = useState(false);
+  const [pendingAuthProvider, setPendingAuthProvider] = useState<AuthProviderName | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = useRef(false);
+  const isMountedRef = useRef(true);
+  const isConsentDismissalPendingRef = useRef(false);
 
   const canProceed = agreedTerms && agreedPrivacy;
 
-  const openConsentSheet = (provider: Exclude<PendingAuthProvider, null>) => {
-    if (isSubmitting) return;
+  useEffect(() => () => {
+    isMountedRef.current = false;
+  }, []);
 
-    setPendingAuthProvider(provider);
-    setSheet('consent');
+  useEffect(() => {
+    const shouldShowConsent = isAuthenticated
+      && profileStatus === 'resolved'
+      && profile?.onboarding_status === 'pending'
+      && !(profile.terms_accepted_at && profile.privacy_accepted_at);
+
+    if (shouldShowConsent && !isConsentDismissalPendingRef.current) {
+      setAgreedTerms(false);
+      setAgreedPrivacy(false);
+      setSheet('consent');
+    }
+  }, [isAuthenticated, profile, profileStatus]);
+
+  const beginSubmitting = () => {
+    if (isSubmittingRef.current) {
+      return false;
+    }
+
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+    return true;
   };
 
-  const closeSheet = () => {
+  const finishSubmitting = () => {
+    isSubmittingRef.current = false;
+    if (isMountedRef.current) {
+      setIsSubmitting(false);
+    }
+  };
+
+  const clearBirthDateInput = () => {
+    setBirthYear('');
+    setBirthMonth('');
+    setBirthDay('');
+  };
+
+  const closeAgeSheet = () => {
     setSheet('none');
     setPendingAuthProvider(null);
+    setAgeError(null);
+    clearBirthDateInput();
+  };
+
+  const closeConsentSheet = () => {
+    if (!beginSubmitting()) {
+      return;
+    }
+
+    isConsentDismissalPendingRef.current = true;
+    setSheet('none');
+    setAgreedTerms(false);
+    setAgreedPrivacy(false);
+
+    void signOut().catch((error: unknown) => {
+      console.warn('[auth-start] sign out after consent dismissal failed', error);
+      if (isMountedRef.current) {
+        isConsentDismissalPendingRef.current = false;
+        setSheet('consent');
+        Alert.alert(
+          '로그인 상태를 정리하지 못했어요',
+          '잠시 후 다시 시도해주세요.',
+        );
+      }
+    }).finally(finishSubmitting);
   };
 
   const handleAgree = async () => {
-    if (!canProceed) return;
-    if (!pendingAuthProvider || isSubmittingRef.current) return;
+    if (!canProceed || profile?.onboarding_status !== 'pending' || !beginSubmitting()) {
+      return;
+    }
 
-    const provider = pendingAuthProvider;
-    isSubmittingRef.current = true;
-    setIsSubmitting(true);
+    try {
+      const nextProfile = await acceptRequiredLegalDocuments();
+      setProfileSnapshot(nextProfile);
+      setSheet('none');
+    } catch (error) {
+      console.warn('[auth-start] legal consent save failed', error);
+      Alert.alert(
+        '약관 동의를 저장하지 못했어요',
+        '잠시 후 다시 시도해주세요.',
+      );
+    } finally {
+      finishSubmitting();
+    }
+  };
+
+  const executeProviderSignIn = async (provider: AuthProviderName) => {
+    if (!beginSubmitting()) {
+      return;
+    }
 
     try {
       if (provider === 'apple' && Constants.appOwnership === 'expo') {
-        setSheet('none');
         Alert.alert(
           '개발 빌드가 필요해요',
           'Apple 로그인은 development build에서 테스트할 수 있어요.',
@@ -309,23 +607,59 @@ export default function AuthStartScreen() {
         return;
       }
 
-      setSheet('none');
-      const didSignIn = provider === 'google'
+      const result = provider === 'google'
         ? await signInWithGoogle()
         : await signInWithApple();
 
-      if (didSignIn) {
-        router.replace('/onboarding' as Href);
+      if (result.status !== 'authenticated') {
+        return;
       }
-    } catch {
+    } catch (error) {
+      console.warn(`[auth-start] ${provider} sign in failed`, error);
       Alert.alert(
         '\uB85C\uADF8\uC778\uC744 \uC644\uB8CC\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694.',
         '\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.',
       );
     } finally {
-      isSubmittingRef.current = false;
-      setPendingAuthProvider(null);
-      setIsSubmitting(false);
+      finishSubmitting();
+    }
+  };
+
+  const handleProviderSignIn = (provider: AuthProviderName) => {
+    if (!ageEligibilityConfirmed) {
+      setPendingAuthProvider(provider);
+      setAgeError(null);
+      clearBirthDateInput();
+      setSheet('age');
+      return;
+    }
+
+    void executeProviderSignIn(provider);
+  };
+
+  const handleConfirmAge = () => {
+    const eligibility = evaluateBirthDateEligibility(birthYear, birthMonth, birthDay);
+
+    if (eligibility === 'invalid') {
+      setAgeError('올바른 생년월일을 입력해주세요.');
+      return;
+    }
+
+    clearBirthDateInput();
+
+    if (eligibility === 'underage') {
+      setAgeError('Travu는 만 14세 이상부터 이용할 수 있어요.');
+      return;
+    }
+
+    const provider = pendingAuthProvider;
+    setAgeEligibilityConfirmed(true);
+    setPendingAuthProvider(null);
+    setAgeError(null);
+    setSheet('none');
+
+    if (provider) {
+      void executeProviderSignIn(provider);
     }
   };
 
@@ -345,7 +679,8 @@ export default function AuthStartScreen() {
           <TouchableOpacity
             style={[styles.socialBtn, styles.appleBtn]}
             activeOpacity={0.85}
-            onPress={() => openConsentSheet('apple')}
+            disabled={isSubmitting}
+            onPress={() => handleProviderSignIn('apple')}
           >
             <Ionicons name="logo-apple" size={24} color="#FFFFFF" style={styles.appleIcon} />
             <Text style={[styles.socialLabel, styles.appleBtnLabel]}>Apple로 시작하기</Text>
@@ -354,7 +689,8 @@ export default function AuthStartScreen() {
           <TouchableOpacity
             style={[styles.socialBtn, styles.googleBtn]}
             activeOpacity={0.85}
-            onPress={() => openConsentSheet('google')}
+            disabled={isSubmitting}
+            onPress={() => handleProviderSignIn('google')}
           >
             <View style={styles.googleIcon}>
               <GoogleLogo />
@@ -367,7 +703,25 @@ export default function AuthStartScreen() {
       {/* ── 단일 Modal — 모든 시트를 하나의 Modal 안에서 처리 ── */}
       <SheetModal
         sheet={sheet}
-        onClose={closeSheet}
+        birthYear={birthYear}
+        birthMonth={birthMonth}
+        birthDay={birthDay}
+        ageError={ageError}
+        onChangeBirthYear={(value) => {
+          setBirthYear(value);
+          setAgeError(null);
+        }}
+        onChangeBirthMonth={(value) => {
+          setBirthMonth(value);
+          setAgeError(null);
+        }}
+        onChangeBirthDay={(value) => {
+          setBirthDay(value);
+          setAgeError(null);
+        }}
+        onConfirmAge={handleConfirmAge}
+        onCloseAge={closeAgeSheet}
+        onClose={closeConsentSheet}
         onOpenTerms={() => setSheet('terms')}
         onOpenPrivacy={() => setSheet('privacy')}
         onBackToConsent={() => setSheet('consent')}
@@ -376,7 +730,7 @@ export default function AuthStartScreen() {
         agreedPrivacy={agreedPrivacy}
         onToggleTerms={() => setAgreedTerms(v => !v)}
         onTogglePrivacy={() => setAgreedPrivacy(v => !v)}
-        canProceed={canProceed}
+        canProceed={canProceed && !isSubmitting}
         paddingBottom={insets.bottom + 16}
       />
     </SafeAreaView>
@@ -509,6 +863,45 @@ const styles = StyleSheet.create({
     color: Colors.foundation.grey500,
     marginTop: -4,
     textAlign: 'center',
+  },
+  birthDateInputs: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  birthDateFieldWide: {
+    flex: 1.35,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  birthDateField: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  birthDateInput: {
+    ...Typography.body1Regular,
+    flex: 1,
+    minWidth: 0,
+    height: 48,
+    borderWidth: 1,
+    borderColor: Colors.light.borderStrong,
+    borderRadius: Radius.sm,
+    color: Colors.foundation.black,
+    textAlign: 'center',
+    paddingHorizontal: Spacing.xs,
+  },
+  birthDateUnit: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+    flexShrink: 0,
+  },
+  ageError: {
+    ...Typography.captionRegular,
+    color: '#D13434',
+    textAlign: 'center',
+    marginTop: -Spacing.sm,
   },
   checkList: {
     gap: 0,

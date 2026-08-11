@@ -14,12 +14,16 @@ import {
 
 export type AuthProfile = Tables<'users'>;
 
-type NativeSignInResult = {
+export type AuthSessionResult = {
   devBypass?: boolean;
-  profile: AuthProfile | null;
+  suggestedProfileName?: string | null;
   session: Session | null;
   user: User | null;
 };
+
+export type AppleAccountDeletionAuthorizationResult =
+  | { status: 'cancelled' }
+  | { authorizationCode: string; status: 'authorized' };
 
 type UserMetadata = {
   avatar_url?: unknown;
@@ -95,12 +99,24 @@ function getDefaultProfileImageUrl(user: User) {
   );
 }
 
-function createEmptySignInResult(): NativeSignInResult {
+function createEmptySignInResult(): AuthSessionResult {
   return {
-    profile: null,
     session: null,
     user: null,
   };
+}
+
+function getAppleCredentialName(fullName: AppleAuthentication.AppleAuthenticationFullName | null) {
+  if (!fullName) {
+    return null;
+  }
+
+  const name = [fullName.givenName, fullName.middleName, fullName.familyName]
+    .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+    .map((part) => part.trim())
+    .join(' ');
+
+  return name || null;
 }
 
 function isGoogleSignInCancel(error: unknown) {
@@ -167,7 +183,7 @@ async function configureGoogleSignIn(googleSignIn: GoogleSignInModule) {
 async function signInWithNativeIdToken(
   provider: 'google' | 'apple',
   token: string,
-): Promise<NativeSignInResult> {
+): Promise<AuthSessionResult> {
   const { data, error } = await supabase.auth.signInWithIdToken({
     provider,
     token,
@@ -177,10 +193,8 @@ async function signInWithNativeIdToken(
 
   const session = data.session;
   const user = session?.user ?? null;
-  const profile = user ? await ensureUserProfile(user) : null;
 
   return {
-    profile,
     session,
     user,
   };
@@ -192,7 +206,7 @@ function getUrlParam(url: string, key: string) {
   return parsedUrl.searchParams.get(key) ?? hashParams.get(key);
 }
 
-async function completeOAuthSession(callbackUrl: string): Promise<NativeSignInResult> {
+async function completeOAuthSession(callbackUrl: string): Promise<AuthSessionResult> {
   const code = getUrlParam(callbackUrl, 'code');
 
   if (code) {
@@ -201,10 +215,8 @@ async function completeOAuthSession(callbackUrl: string): Promise<NativeSignInRe
 
     const session = data.session;
     const user = session?.user ?? null;
-    const profile = user ? await ensureUserProfile(user) : null;
 
     return {
-      profile,
       session,
       user,
     };
@@ -225,16 +237,14 @@ async function completeOAuthSession(callbackUrl: string): Promise<NativeSignInRe
 
   const session = data.session;
   const user = session?.user ?? null;
-  const profile = user ? await ensureUserProfile(user) : null;
 
   return {
-    profile,
     session,
     user,
   };
 }
 
-async function signInWithGoogleOAuth(): Promise<NativeSignInResult> {
+async function signInWithGoogleOAuth(): Promise<AuthSessionResult> {
   const redirectTo = AUTH_CALLBACK_URL;
   console.info(`Expo Go OAuth redirectTo: ${redirectTo}`);
 
@@ -334,7 +344,12 @@ export async function signInWithApple() {
       return createEmptySignInResult();
     }
 
-    return signInWithNativeIdToken('apple', credential.identityToken);
+    const result = await signInWithNativeIdToken('apple', credential.identityToken);
+
+    return {
+      ...result,
+      suggestedProfileName: getAppleCredentialName(credential.fullName),
+    };
   } catch (error) {
     if (isAppleSignInCancel(error)) {
       return createEmptySignInResult();
@@ -342,6 +357,46 @@ export async function signInWithApple() {
 
     throw error;
   }
+}
+
+export async function getAppleAccountDeletionAuthorizationCode(): Promise<
+  AppleAccountDeletionAuthorizationResult
+> {
+  if (isExpoGo() || Platform.OS !== 'ios') {
+    throw new Error('APPLE_REAUTH_UNAVAILABLE');
+  }
+
+  if (!(await AppleAuthentication.isAvailableAsync())) {
+    throw new Error('APPLE_REAUTH_UNAVAILABLE');
+  }
+
+  try {
+    const credential = await AppleAuthentication.signInAsync({
+      requestedScopes: [],
+    });
+    const authorizationCode = credential.authorizationCode?.trim();
+
+    if (!authorizationCode) {
+      throw new Error('APPLE_REAUTH_FAILED');
+    }
+
+    return { authorizationCode, status: 'authorized' };
+  } catch (error) {
+    if (isAppleSignInCancel(error)) {
+      return { status: 'cancelled' };
+    }
+
+    throw error;
+  }
+}
+
+export async function clearLocalAuthSession() {
+  if (hasConfiguredGoogleSignIn) {
+    const googleSignIn = await loadGoogleSignInModule().catch(() => null);
+    await googleSignIn?.signOut().catch(() => {});
+  }
+
+  await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
 }
 
 export async function signOut() {
@@ -354,7 +409,10 @@ export async function signOut() {
   throwIfError(error);
 }
 
-export async function ensureUserProfile(user: User): Promise<AuthProfile> {
+export async function ensureUserProfile(
+  user: User,
+  suggestedProfileName?: string | null,
+): Promise<AuthProfile> {
   const existingProfile = await fetchUserById(user.id);
 
   if (existingProfile) {
@@ -363,7 +421,7 @@ export async function ensureUserProfile(user: User): Promise<AuthProfile> {
 
   return upsertUserProfile({
     id: user.id,
-    name: getDefaultProfileName(user),
+    name: suggestedProfileName?.trim() || getDefaultProfileName(user),
     profile_image_url: getDefaultProfileImageUrl(user),
   });
 }

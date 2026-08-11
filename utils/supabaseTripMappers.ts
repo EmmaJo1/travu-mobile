@@ -1,9 +1,10 @@
-import { MOCK_MY_PAGE_TRIPS, type MyPageTrip } from '@/constants/mockMyPageTrips';
+import type { MyPageTrip } from '@/constants/mockMyPageTrips';
 import type { IdleRecentTrip } from '@/constants/mockIdleHomeData';
+import type { TripDayRow } from '@/services/supabase/tripDays';
 import type { TripRow } from '@/services/supabase/trips';
+import { formatTripDateRangeLabel } from '@/utils/tripDateRange';
 
-const FALLBACK_TRIP_COVER = MOCK_MY_PAGE_TRIPS[0].coverImage;
-const FALLBACK_TRIP_TITLE = MOCK_MY_PAGE_TRIPS[0].title || 'TRAVEL';
+const FALLBACK_TRIP_TITLE = 'TRAVEL';
 
 export type HomeSummaryTripInput = {
   city?: string | null;
@@ -36,40 +37,6 @@ function getDateParts(value?: string | null) {
   return { day, month, year };
 }
 
-function formatDatePart(value?: string | null, includeYear = true) {
-  const parts = getDateParts(value);
-
-  if (!parts) {
-    return '';
-  }
-
-  return includeYear
-    ? `${parts.year}.${parts.month}.${parts.day}`
-    : `${parts.month}.${parts.day}`;
-}
-
-function formatTripDateRange(trip: TripRow) {
-  const start = formatDatePart(trip.start_date);
-
-  if (!start) {
-    return formatDatePart(trip.created_at?.slice(0, 10)) || '';
-  }
-
-  if (trip.is_end_date_undecided || !trip.end_date) {
-    return start;
-  }
-
-  const startParts = getDateParts(trip.start_date);
-  const endParts = getDateParts(trip.end_date);
-
-  if (!startParts || !endParts) {
-    return start;
-  }
-
-  const includeEndYear = startParts.year !== endParts.year;
-  return `${start}-${formatDatePart(trip.end_date, includeEndYear)}`;
-}
-
 function getInclusiveDayCount(startDate?: string | null, endDate?: string | null) {
   const startParts = getDateParts(startDate);
   const endParts = getDateParts(endDate);
@@ -87,9 +54,9 @@ function getInclusiveDayCount(startDate?: string | null, endDate?: string | null
 
 function getDisplayCity(trip: TripRow) {
   return (
+    normalizeText(trip.destination_city_ko) ||
     normalizeText(trip.destination_city) ||
     normalizeText(trip.title) ||
-    normalizeText(trip.destination_city_ko) ||
     FALLBACK_TRIP_TITLE
   );
 }
@@ -108,10 +75,15 @@ function getDisplayCountry(trip: TripRow) {
   return normalizeText(trip.destination_country_ko) || normalizeText(trip.destination_country);
 }
 
-export function mapSupabaseTripToMyPageTrip(trip: TripRow): MyPageTrip {
+export function mapSupabaseTripToMyPageTrip(
+  trip: TripRow,
+  tripDays?: TripDayRow[] | null,
+): MyPageTrip {
   const city = getDisplayCity(trip);
   const country = getDisplayCountry(trip);
   const safeTitle = getTripBookTitle(trip);
+  const coverImageUrl =
+    normalizeText(trip.book_cover_display_url) || normalizeText(trip.cover_display_url);
 
   return {
     id: trip.id,
@@ -120,15 +92,21 @@ export function mapSupabaseTripToMyPageTrip(trip: TripRow): MyPageTrip {
     country,
     visitedCities: city ? [city] : [],
     visitedCountries: country ? [country] : [],
-    dateRangeLabel: formatTripDateRange(trip),
-    coverImage: FALLBACK_TRIP_COVER,
-    daysCount: getInclusiveDayCount(trip.start_date, trip.end_date),
-    photoCount: 0,
+    dateRangeLabel: formatTripDateRangeLabel({
+      createdAt: trip.created_at,
+      endDate: trip.end_date,
+      startDate: trip.start_date,
+    }, tripDays),
+    coverImage: coverImageUrl
+      ? { uri: coverImageUrl }
+      : undefined,
+    daysCount: tripDays?.length ?? getInclusiveDayCount(trip.start_date, trip.end_date),
+    photoCount: trip.active_photo_count ?? 0,
   };
 }
 
 export function mapSupabaseTripsToMyPageTrips(trips: TripRow[]): MyPageTrip[] {
-  return trips.map(mapSupabaseTripToMyPageTrip);
+  return trips.map((trip) => mapSupabaseTripToMyPageTrip(trip));
 }
 
 export function mapSupabaseTripToIdleRecentTrip(trip: TripRow): IdleRecentTrip {
@@ -140,9 +118,15 @@ export function mapSupabaseTripToIdleRecentTrip(trip: TripRow): IdleRecentTrip {
     tripId: trip.id,
     city,
     country,
-    dateRange: formatTripDateRange(trip),
-    image: FALLBACK_TRIP_COVER,
-    photoCount: 0,
+    dateRange: formatTripDateRangeLabel({
+      createdAt: trip.created_at,
+      endDate: trip.end_date,
+      startDate: trip.start_date,
+    }),
+    image: trip.cover_display_url
+      ? { uri: trip.cover_display_url }
+      : undefined,
+    photoCount: trip.active_photo_count ?? 0,
     placeCount: 0,
     startDate: trip.start_date ?? undefined,
     endDate: trip.end_date ?? trip.start_date ?? undefined,
@@ -160,7 +144,11 @@ export function mapSupabaseTripToHomeSummaryTrip(trip: TripRow): HomeSummaryTrip
   return {
     city,
     cityName: trip.destination_city_ko,
-    dateRangeLabel: formatTripDateRange(trip),
+    dateRangeLabel: formatTripDateRangeLabel({
+      createdAt: trip.created_at,
+      endDate: trip.end_date,
+      startDate: trip.start_date,
+    }),
     destinationName: city,
     endDate: trip.end_date,
     isEndDateUndecided: trip.is_end_date_undecided,

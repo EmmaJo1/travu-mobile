@@ -4,6 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   PanResponder,
@@ -22,6 +23,11 @@ import Text from '@/components/common/AppText';
 import { PlaceSearchContent, type PlaceOption } from '@/components/common/PlaceSearchModal';
 import ManualPlaceEntryView from '@/components/record/ManualPlaceEntryView';
 import TimeWheelPickerModal from '@/components/record/TimeWheelPickerModal';
+import {
+  getPlaceCategoryLabel,
+  normalizePlaceCategoryValue,
+  PLACE_CATEGORY_OPTIONS,
+} from '@/constants/placeCategories';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 import type { SelectedPlace } from '@/services/placeSearch/types';
 import {
@@ -46,6 +52,7 @@ export interface PlaceCreateInput {
   latitude?: number;
   longitude?: number;
   text?: string;
+  photoAssets?: ImagePicker.ImagePickerAsset[];
   photoUris?: string[];
   photoSources?: ImageSourcePropType[];
   dayId?: string;
@@ -80,11 +87,14 @@ interface PlaceCreateModalProps {
   tripLongitude?: number;
   dayOptions?: PlaceEntryDayOption[];
   selectedDayId?: string;
+  requireTripDay?: boolean;
   showPhotoSection?: boolean;
   showRecordField?: boolean;
+  showOptionalRecordSection?: boolean;
   showCategoryField?: boolean;
   titleLabel?: string;
   submitLabel?: string;
+  submittingLabel?: string;
 }
 
 interface SelectFieldProps {
@@ -194,7 +204,6 @@ type PickerPage =
 
 type CalendarView = 'days' | 'years' | 'months';
 
-const CATEGORIES = ['관광명소', '음식점', '카페', '숙소', '쇼핑', '기타'];
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'] as const;
 const CALENDAR_MONTHS = Array.from({ length: 12 }, (_, index) => index);
 const CALENDAR_SWIPE_THRESHOLD = 40;
@@ -267,7 +276,11 @@ function toDateKey(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function parseDayOptionDate(day: PlaceEntryDayOption): Date | null {
+function parseDayOptionDate(day?: PlaceEntryDayOption): Date | null {
+  if (!day) {
+    return null;
+  }
+
   const matched = day.dateLabel.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})$/);
 
   if (!matched) {
@@ -346,6 +359,8 @@ function formatDayFieldValue(day?: PlaceEntryDayOption) {
   return `${day.dayNumber}일차 · ${day.dateLabel} ${day.weekdayLabel}`;
 }
 
+const PLACE_PHOTO_PICKER_QUALITY = 0.8;
+
 export default function PlaceCreateModal({
   visible,
   onClose,
@@ -353,25 +368,30 @@ export default function PlaceCreateModal({
   onDelete,
   initialValue,
   mode = 'create',
-  tripId = 'mock-trip',
-  dayId = 'mock-day',
+  tripId = '',
+  dayId = '',
   tripDestinationName,
   tripDestinationCountry,
   tripLatitude,
   tripLongitude,
   dayOptions = [],
   selectedDayId,
+  requireTripDay = false,
   showPhotoSection = true,
   showRecordField = false,
+  showOptionalRecordSection = false,
   showCategoryField = true,
   titleLabel,
   submitLabel,
+  submittingLabel,
 }: PlaceCreateModalProps) {
   const [place, setPlace] = useState('');
   const [time, setTime] = useState('');
   const [category, setCategory] = useState('');
   const [city, setCity] = useState('');
   const [text, setText] = useState('');
+  const [isOptionalRecordExpanded, setOptionalRecordExpanded] = useState(false);
+  const [photoAssets, setPhotoAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [photoUris, setPhotoUris] = useState<string[]>([]);
   const [photoSources, setPhotoSources] = useState<ImageSourcePropType[]>([]);
   const [pickerPage, setPickerPage] = useState<PickerPage>('form');
@@ -386,6 +406,11 @@ export default function PlaceCreateModal({
   const [calendarView, setCalendarView] = useState<CalendarView>('days');
   const [yearSelectorHeight, setYearSelectorHeight] = useState(0);
   const yearSelectorRef = useRef<ScrollView>(null);
+  const formScrollRef = useRef<ScrollView>(null);
+  const optionalRecordInputRef = useRef<TextInput>(null);
+  const isRecordInputFocusedRef = useRef(false);
+  const pendingOptionalRecordFocusRef = useRef(false);
+  const recordScrollFrameRef = useRef<number | null>(null);
   const normalizedPropDayOptions = useMemo(() => normalizeDayOptions(dayOptions), [dayOptions]);
   const availableDayOptions = useMemo(
     () => normalizeDayOptions([...dayOptions, ...customDayOptions]),
@@ -396,6 +421,21 @@ export default function PlaceCreateModal({
     [],
   );
   const activeYearIndex = Math.max(0, calendarYears.indexOf(calendarMonth.getFullYear()));
+
+  const scrollToFocusedRecord = useCallback(() => {
+    if (!isRecordInputFocusedRef.current || pickerPage !== 'form') {
+      return;
+    }
+
+    if (recordScrollFrameRef.current != null) {
+      cancelAnimationFrame(recordScrollFrameRef.current);
+    }
+
+    recordScrollFrameRef.current = requestAnimationFrame(() => {
+      recordScrollFrameRef.current = null;
+      formScrollRef.current?.scrollToEnd({ animated: true });
+    });
+  }, [pickerPage]);
 
   const getInitialSelectedDay = useCallback(() => {
     const initialDayId = initialValue?.dayId ?? selectedDayId;
@@ -412,9 +452,11 @@ export default function PlaceCreateModal({
     setSelectedPlace(nextPlace);
     setPlace(nextPlace?.placeName ?? '');
     setTime(initialValue?.time ?? '');
-    setCategory(initialValue?.category ?? '');
+    setCategory(normalizePlaceCategoryValue(initialValue?.category) ?? '');
     setCity(nextPlace?.cityName ?? '');
     setText(initialValue?.text ?? '');
+    setOptionalRecordExpanded(Boolean(initialValue?.text?.trim()));
+    setPhotoAssets(initialValue?.photoAssets ?? []);
     setPhotoUris(initialValue?.photoUris ?? []);
     setPhotoSources(initialValue?.photoSources ?? []);
     setTimeWheelVisible(false);
@@ -435,9 +477,11 @@ export default function PlaceCreateModal({
       setSelectedPlace(nextPlace);
       setPlace(nextPlace?.placeName ?? '');
       setTime(initialValue?.time ?? '');
-      setCategory(initialValue?.category ?? '');
+      setCategory(normalizePlaceCategoryValue(initialValue?.category) ?? '');
       setCity(nextPlace?.cityName ?? '');
       setText(initialValue?.text ?? '');
+      setOptionalRecordExpanded(Boolean(initialValue?.text?.trim()));
+      setPhotoAssets(initialValue?.photoAssets ?? []);
       setPhotoUris(initialValue?.photoUris ?? []);
       setPhotoSources(initialValue?.photoSources ?? []);
       setTimeWheelVisible(false);
@@ -448,8 +492,51 @@ export default function PlaceCreateModal({
       setCalendarMonth(parseDayOptionDate(nextDay ?? dayOptions[0]) ?? new Date());
       setCalendarView('days');
       setPickerPage('form');
+      isRecordInputFocusedRef.current = false;
+      pendingOptionalRecordFocusRef.current = false;
+
+      const frame = requestAnimationFrame(() => {
+        formScrollRef.current?.scrollTo({ y: 0, animated: false });
+      });
+
+      return () => cancelAnimationFrame(frame);
     }
   }, [visible, initialValue, dayOptions, selectedDayId, getInitialSelectedDay, isSubmitting]);
+
+  useEffect(() => {
+    if (!visible) {
+      isRecordInputFocusedRef.current = false;
+      pendingOptionalRecordFocusRef.current = false;
+      return;
+    }
+
+    const keyboardEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const keyboardSubscription = Keyboard.addListener(keyboardEvent, scrollToFocusedRecord);
+
+    return () => keyboardSubscription.remove();
+  }, [scrollToFocusedRecord, visible]);
+
+  useEffect(() => {
+    if (!isOptionalRecordExpanded || !pendingOptionalRecordFocusRef.current) {
+      return;
+    }
+
+    pendingOptionalRecordFocusRef.current = false;
+    const frame = requestAnimationFrame(() => {
+      optionalRecordInputRef.current?.focus();
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [isOptionalRecordExpanded]);
+
+  useEffect(
+    () => () => {
+      if (recordScrollFrameRef.current != null) {
+        cancelAnimationFrame(recordScrollFrameRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (pickerPage !== 'date-picker' || calendarView !== 'years' || yearSelectorHeight <= 0) {
@@ -470,8 +557,26 @@ export default function PlaceCreateModal({
   }, [activeYearIndex, calendarView, pickerPage, yearSelectorHeight]);
 
   const handleClose = () => {
+    if (isSubmitting) {
+      return;
+    }
+
+    isRecordInputFocusedRef.current = false;
+    pendingOptionalRecordFocusRef.current = false;
     resetFields();
     onClose();
+  };
+
+  const handleToggleOptionalRecord = () => {
+    if (isOptionalRecordExpanded) {
+      pendingOptionalRecordFocusRef.current = false;
+      optionalRecordInputRef.current?.blur();
+      setOptionalRecordExpanded(false);
+      return;
+    }
+
+    pendingOptionalRecordFocusRef.current = true;
+    setOptionalRecordExpanded(true);
   };
 
   const handleSubmit = async () => {
@@ -481,7 +586,11 @@ export default function PlaceCreateModal({
 
     const trimmedPlace = (selectedPlace?.placeName ?? place).trim();
 
-    if (!trimmedPlace || (availableDayOptions.length > 0 && !selectedDay)) {
+    if (
+      !trimmedPlace ||
+      (availableDayOptions.length > 0 && !selectedDay) ||
+      (requireTripDay && !selectedDay)
+    ) {
       return;
     }
 
@@ -501,6 +610,9 @@ export default function PlaceCreateModal({
         category: category.trim() || undefined,
         city: resolvedPlace.cityName,
         text: text.trim() || undefined,
+        photoAssets: photoUris
+          .map((uri) => photoAssets.find((asset) => asset.uri === uri))
+          .filter((asset): asset is ImagePicker.ImagePickerAsset => Boolean(asset)),
         photoUris: photoUris.length > 0 ? photoUris : undefined,
         photoSources: photoSources.length > 0 ? photoSources : undefined,
         dayId: selectedDay?.id,
@@ -516,8 +628,21 @@ export default function PlaceCreateModal({
 
   const canSubmit =
     !isSubmitting &&
+    (mode !== 'edit' ||
+      (selectedPlace?.placeName ?? place).trim() !==
+        (initialValue?.placeName ?? initialValue?.place ?? '').trim() ||
+      time.trim() !== (initialValue?.time ?? '').trim() ||
+      category !== (normalizePlaceCategoryValue(initialValue?.category) ?? '') ||
+      city.trim() !== (initialValue?.cityName ?? initialValue?.city ?? '').trim() ||
+      text.trim() !== (initialValue?.text ?? '').trim() ||
+      selectedDay?.id !== (initialValue?.dayId ?? selectedDayId) ||
+      photoUris.join('|') !== (initialValue?.photoUris ?? []).join('|') ||
+      photoSources.length !== (initialValue?.photoSources ?? []).length ||
+      photoAssets.map((asset) => asset.uri).join('|') !==
+        (initialValue?.photoAssets ?? []).map((asset) => asset.uri).join('|')) &&
     (selectedPlace?.placeName ?? place).trim().length > 0 &&
-    (availableDayOptions.length === 0 || Boolean(selectedDay));
+    (availableDayOptions.length === 0 || Boolean(selectedDay)) &&
+    (!requireTripDay || Boolean(selectedDay));
 
   const applySelectedPlace = (nextPlace: SelectedPlace) => {
     setSelectedPlace(nextPlace);
@@ -638,7 +763,7 @@ export default function PlaceCreateModal({
         mediaTypes: ['images'],
         allowsMultipleSelection: true,
         selectionLimit: 0,
-        quality: 1,
+        quality: PLACE_PHOTO_PICKER_QUALITY,
         exif: true,
       });
 
@@ -654,6 +779,17 @@ export default function PlaceCreateModal({
         }
       }
 
+      setPhotoAssets((current) => {
+        const assetsByIdentifier = new Map(
+          current.map((asset) => [asset.uri, asset]),
+        );
+
+        result.assets.forEach((asset) => {
+          assetsByIdentifier.set(asset.uri, asset);
+        });
+
+        return [...assetsByIdentifier.values()];
+      });
       setPhotoUris((current) => [
         ...new Set([...current, ...result.assets.map((asset) => asset.uri)]),
       ]);
@@ -671,6 +807,14 @@ export default function PlaceCreateModal({
     onDelete(initialValue.id);
     resetFields();
   };
+  const travelDayField = availableDayOptions.length > 0 ? (
+    <SelectField
+      label="여행일자"
+      onPress={() => setPickerPage('travel-day')}
+      placeholder="여행일자를 선택하세요"
+      value={formatDayFieldValue(selectedDay)}
+    />
+  ) : null;
 
   return (
     <Modal
@@ -726,15 +870,18 @@ export default function PlaceCreateModal({
           {pickerPage === 'form' && (
             <>
               <ScrollView
+                ref={formScrollRef}
                 contentContainerStyle={styles.form}
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
               >
-                {showPhotoSection && !showRecordField ? (
+                {showPhotoSection ? (
                   <PhotoField
                     onAddPress={handleAddPhotos}
                     onRemovePress={(uri) => {
                       setPhotoUris((current) => current.filter((item) => item !== uri));
+                      setPhotoAssets((current) => current.filter((asset) => asset.uri !== uri));
                     }}
                     onRemoveSourcePress={(index) => {
                       setPhotoSources((current) =>
@@ -745,6 +892,7 @@ export default function PlaceCreateModal({
                     photoUris={photoUris}
                   />
                 ) : null}
+                {showOptionalRecordSection ? travelDayField : null}
                 <SelectField
                   label="장소"
                   onPress={() => setPickerPage('place-search')}
@@ -752,14 +900,7 @@ export default function PlaceCreateModal({
                   subtitle={getPlaceSubtitle(selectedPlace)}
                   value={selectedPlace?.placeName ?? place}
                 />
-                {availableDayOptions.length > 0 ? (
-                  <SelectField
-                    label="여행일자"
-                    onPress={() => setPickerPage('travel-day')}
-                    placeholder="여행일자를 선택하세요"
-                    value={formatDayFieldValue(selectedDay)}
-                  />
-                ) : null}
+                {!showOptionalRecordSection ? travelDayField : null}
                 <SelectField
                   label="방문 시간"
                   onPress={openTimePicker}
@@ -780,27 +921,52 @@ export default function PlaceCreateModal({
                     />
                   </View>
                 ) : null}
+                {showOptionalRecordSection ? (
+                  <View style={styles.field}>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      activeOpacity={0.7}
+                      onPress={handleToggleOptionalRecord}
+                      style={styles.optionalRecordToggle}
+                    >
+                      <View style={styles.optionalRecordTitleRow}>
+                        <Text style={styles.optionalRecordLabel}>기록 추가</Text>
+                        <Text style={styles.optionalRecordHint}>(선택)</Text>
+                      </View>
+                      <Ionicons
+                        color={Colors.foundation.grey500}
+                        name={isOptionalRecordExpanded ? 'chevron-up' : 'chevron-down'}
+                        size={18}
+                      />
+                    </TouchableOpacity>
+                    {isOptionalRecordExpanded ? (
+                      <TextInput
+                        ref={optionalRecordInputRef}
+                        multiline
+                        onChangeText={setText}
+                        onContentSizeChange={scrollToFocusedRecord}
+                        onBlur={() => {
+                          isRecordInputFocusedRef.current = false;
+                        }}
+                        onFocus={() => {
+                          isRecordInputFocusedRef.current = true;
+                          scrollToFocusedRecord();
+                        }}
+                        placeholder="이 장소에서 기억하고 싶은 것을 남겨보세요"
+                        placeholderTextColor={Colors.foundation.grey500}
+                        style={styles.recordInput}
+                        textAlignVertical="top"
+                        value={text}
+                      />
+                    ) : null}
+                  </View>
+                ) : null}
                 {showCategoryField ? (
                   <SelectField
                     label="카테고리"
                     onPress={() => setPickerPage('category')}
                     placeholder="카테고리를 선택하세요"
-                    value={category}
-                  />
-                ) : null}
-                {showPhotoSection && showRecordField ? (
-                  <PhotoField
-                    onAddPress={handleAddPhotos}
-                    onRemovePress={(uri) => {
-                      setPhotoUris((current) => current.filter((item) => item !== uri));
-                    }}
-                    onRemoveSourcePress={(index) => {
-                      setPhotoSources((current) =>
-                        current.filter((_, sourceIndex) => sourceIndex !== index),
-                      );
-                    }}
-                    photoSources={photoSources}
-                    photoUris={photoUris}
+                    value={getPlaceCategoryLabel(category)}
                   />
                 ) : null}
               </ScrollView>
@@ -808,7 +974,12 @@ export default function PlaceCreateModal({
               {mode === 'edit' ? (
                 <View style={styles.editFooter}>
                   <AuthActionButton
-                    label={submitLabel ?? '수정 완료'}
+                    disabled={isSubmitting}
+                    label={
+                      isSubmitting && photoAssets.length > 0 && submittingLabel
+                        ? submittingLabel
+                        : submitLabel ?? '수정 완료'
+                    }
                     onPress={handleSubmit}
                     state={canSubmit ? 'on' : 'off'}
                   />
@@ -827,7 +998,12 @@ export default function PlaceCreateModal({
                 </View>
               ) : (
                 <AuthActionButton
-                  label={submitLabel ?? '추가하기'}
+                  disabled={isSubmitting}
+                  label={
+                    isSubmitting && photoAssets.length > 0 && submittingLabel
+                      ? submittingLabel
+                      : submitLabel ?? '추가하기'
+                  }
                   onPress={handleSubmit}
                   state={canSubmit ? 'on' : 'off'}
                 />
@@ -862,21 +1038,21 @@ export default function PlaceCreateModal({
 
           {pickerPage === 'category' && (
             <View style={styles.categoryList}>
-              {CATEGORIES.map((item) => (
+              {PLACE_CATEGORY_OPTIONS.map((item) => (
                 <TouchableOpacity
-                  key={item}
+                  key={item.value}
                   activeOpacity={0.7}
                   onPress={() => {
-                    setCategory(item);
+                    setCategory(item.value);
                     setPickerPage('form');
                   }}
                   style={[
                     styles.categoryOption,
-                    category === item && styles.categoryOptionSelected,
+                    category === item.value && styles.categoryOptionSelected,
                   ]}
                 >
-                  <Text style={styles.categoryText}>{item}</Text>
-                  {category === item && (
+                  <Text style={styles.categoryText}>{item.label}</Text>
+                  {category === item.value && (
                     <Ionicons color={Colors.foundation.black} name="checkmark" size={18} />
                   )}
                 </TouchableOpacity>
@@ -1252,6 +1428,25 @@ const styles = StyleSheet.create({
     borderRadius: Radius.sm,
     ...Typography.body2Regular,
     color: Colors.foundation.black,
+  },
+  optionalRecordToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.sm,
+  },
+  optionalRecordTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  optionalRecordLabel: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+  },
+  optionalRecordHint: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey500,
   },
   categoryList: {
     gap: Spacing.xs,

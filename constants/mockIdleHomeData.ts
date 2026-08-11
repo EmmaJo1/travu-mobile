@@ -24,7 +24,7 @@ export interface IdleRecentTrip {
   dateRange: string;
   placeCount?: number;
   photoCount?: number;
-  image: ImageSourcePropType;
+  image?: ImageSourcePropType;
   startDate?: string;
   endDate?: string;
   status?: 'saved';

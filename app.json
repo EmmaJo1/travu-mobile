@@ -17,6 +17,7 @@
       }
     },
     "android": {
+      "package": "com.emmajo.travu",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -60,6 +61,12 @@
       ],
       "expo-web-browser",
       "expo-apple-authentication",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "현재 위치를 이용해 여행지를 빠르게 설정합니다."
+        }
+      ],
       [
         "@react-native-google-signin/google-signin",
         {

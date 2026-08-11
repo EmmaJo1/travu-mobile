@@ -35,6 +35,10 @@ export interface Database {
           bio: string | null;
           travel_styles: string[];
           profile_image_url: string | null;
+          onboarding_status: 'pending' | 'completed' | 'skipped';
+          onboarding_completed_at: string | null;
+          terms_accepted_at: string | null;
+          privacy_accepted_at: string | null;
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
@@ -52,6 +56,10 @@ export interface Database {
           bio?: string | null;
           travel_styles?: string[];
           profile_image_url?: string | null;
+          onboarding_status?: 'pending' | 'completed' | 'skipped';
+          onboarding_completed_at?: string | null;
+          terms_accepted_at?: string | null;
+          privacy_accepted_at?: string | null;
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
@@ -131,6 +139,7 @@ export interface Database {
       };
       trip_days: {
         Row: {
+          cover_photo_id: string | null;
           id: string;
           trip_id: string;
           date: string;
@@ -140,6 +149,7 @@ export interface Database {
           deleted_at: string | null;
         };
         Insert: {
+          cover_photo_id?: string | null;
           id?: string;
           trip_id: string;
           date: string;
@@ -149,6 +159,48 @@ export interface Database {
           deleted_at?: string | null;
         };
         Update: Partial<Database['public']['Tables']['trip_days']['Insert']>;
+        Relationships: [
+          {
+            foreignKeyName: 'trip_days_cover_photo_id_fkey';
+            columns: ['cover_photo_id'];
+            isOneToOne: false;
+            referencedRelation: 'photos';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      trip_destinations: {
+        Row: {
+          id: string;
+          trip_id: string;
+          destination_key: string;
+          name: string;
+          name_ko: string | null;
+          country: string | null;
+          country_ko: string | null;
+          destination_type: 'city' | 'country';
+          sort_order: number;
+          is_primary: boolean;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          trip_id: string;
+          destination_key: string;
+          name: string;
+          name_ko?: string | null;
+          country?: string | null;
+          country_ko?: string | null;
+          destination_type?: 'city' | 'country';
+          sort_order: number;
+          is_primary?: boolean;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: Partial<Database['public']['Tables']['trip_destinations']['Insert']>;
         Relationships: [];
       };
       places: {
@@ -162,6 +214,7 @@ export interface Database {
           memo: string | null;
           address: string | null;
           city: string | null;
+          category: 'attraction' | 'restaurant' | 'cafe' | 'lodging' | 'shopping' | 'other' | null;
           country: string | null;
           city_ko: string | null;
           country_ko: string | null;
@@ -189,6 +242,7 @@ export interface Database {
           memo?: string | null;
           address?: string | null;
           city?: string | null;
+          category?: Database['public']['Tables']['places']['Row']['category'];
           country?: string | null;
           city_ko?: string | null;
           country_ko?: string | null;
@@ -216,6 +270,12 @@ export interface Database {
           trip_id: string | null;
           trip_day_id: string | null;
           place_id: string | null;
+          storage_path: string | null;
+          file_name: string | null;
+          mime_type: string | null;
+          width: number | null;
+          height: number | null;
+          file_size: number | null;
           image_url: string | null;
           thumbnail_url: string | null;
           local_uri: string | null;
@@ -237,6 +297,12 @@ export interface Database {
           trip_id?: string | null;
           trip_day_id?: string | null;
           place_id?: string | null;
+          storage_path?: string | null;
+          file_name?: string | null;
+          mime_type?: string | null;
+          width?: number | null;
+          height?: number | null;
+          file_size?: number | null;
           image_url?: string | null;
           thumbnail_url?: string | null;
           local_uri?: string | null;
@@ -303,11 +369,167 @@ export interface Database {
           deleted_at?: string | null;
         };
         Update: Partial<Database['public']['Tables']['record_photos']['Insert']>;
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: 'record_photos_photo_id_fkey';
+            columns: ['photo_id'];
+            isOneToOne: false;
+            referencedRelation: 'photos';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'record_photos_record_id_fkey';
+            columns: ['record_id'];
+            isOneToOne: false;
+            referencedRelation: 'records';
+            referencedColumns: ['id'];
+          },
+        ];
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      hard_delete_account_data: {
+        Args: {
+          p_user_id: string;
+        };
+        Returns: {
+          deleted_destination_count: number;
+          deleted_photo_count: number;
+          deleted_photo_import_job_count: number;
+          deleted_place_count: number;
+          deleted_record_count: number;
+          deleted_record_photo_count: number;
+          deleted_trip_count: number;
+          deleted_trip_day_count: number;
+        }[];
+      };
+      ensure_photo_covers_for_trip: {
+        Args: {
+          p_trip_id: string;
+        };
+        Returns: {
+          active_photo_count: number;
+          trip_cover_photo_id: string | null;
+          trip_id: string;
+          updated_place_count: number;
+        }[];
+      };
+      list_pending_photo_storage_cleanup: {
+        Args: {
+          p_limit?: number;
+        };
+        Returns: {
+          photo_id: string;
+          storage_path: string;
+          trip_id: string;
+        }[];
+      };
+      list_account_storage_objects: {
+        Args: {
+          p_limit?: number;
+          p_user_id: string;
+        };
+        Returns: {
+          bucket_id: string;
+          object_name: string;
+        }[];
+      };
+      set_place_cover_photo: {
+        Args: {
+          p_photo_id: string;
+          p_place_id: string;
+        };
+        Returns: {
+          cover_photo_id: string;
+          place_id: string;
+        }[];
+      };
+      set_trip_cover_photo: {
+        Args: {
+          p_photo_id: string;
+          p_trip_id: string;
+        };
+        Returns: {
+          cover_photo_id: string;
+          trip_id: string;
+        }[];
+      };
+      set_trip_day_cover_photo: {
+        Args: {
+          p_photo_id: string;
+          p_trip_day_id: string;
+        };
+        Returns: {
+          cover_photo_id: string;
+          trip_day_id: string;
+        }[];
+      };
+      soft_delete_photo: {
+        Args: {
+          p_photo_id: string;
+        };
+        Returns: {
+          already_deleted: boolean;
+          photo_id: string;
+          place_cover_photo_id: string | null;
+          place_id: string | null;
+          storage_path: string | null;
+          trip_cover_photo_id: string | null;
+          trip_day_id: string | null;
+          trip_id: string;
+        }[];
+      };
+      soft_delete_place_tree: {
+        Args: {
+          p_place_id: string;
+        };
+        Returns: {
+          already_deleted: boolean;
+          deleted_at: string;
+          deleted_photo_count: number;
+          deleted_record_count: number;
+          deleted_record_photo_count: number;
+          place_id: string;
+          trip_cover_photo_id: string | null;
+          trip_day_id: string | null;
+          trip_id: string;
+        }[];
+      };
+      soft_delete_record_photo_links: {
+        Args: {
+          p_photo_ids: string[];
+          p_record_id: string;
+        };
+        Returns: {
+          deleted_photo_count: number;
+          requested_photo_count: number;
+        }[];
+      };
+      soft_delete_trip_tree: {
+        Args: {
+          p_trip_id: string;
+        };
+        Returns: {
+          already_deleted: boolean;
+          deleted_at: string;
+          deleted_destination_count: number;
+          deleted_photo_count: number;
+          deleted_place_count: number;
+          deleted_record_count: number;
+          deleted_record_photo_count: number;
+          deleted_trip_day_count: number;
+          trip_id: string;
+        }[];
+      };
+      sync_active_trip_destinations: {
+        Args: {
+          p_trip_id: string;
+          p_destinations: Json;
+        };
+        Returns: Database['public']['Tables']['trip_destinations']['Row'][];
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };

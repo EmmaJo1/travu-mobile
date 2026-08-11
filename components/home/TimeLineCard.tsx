@@ -18,8 +18,9 @@ export interface TimeLineCardProps {
   cityLabel: string;
   memoCount: number;
   photoCount: number;
-  imageSource: ImageSourcePropType;
+  imageSource?: ImageSourcePropType;
   isLast?: boolean;
+  onLongPress?: () => void;
   onPress?: () => void;
 }
 
@@ -31,8 +32,10 @@ export default function TimeLineCard({
   memoCount,
   photoCount,
   imageSource,
+  onLongPress,
   onPress,
 }: TimeLineCardProps) {
+  const longPressTriggeredRef = React.useRef(false);
   const normalizedTimeLabel = timeLabel.trim();
   const timeMatch = normalizedTimeLabel.match(/^(.+?)\s*(AM|PM)$/i);
   const normalizedTimeText = (timeMatch?.[1] ?? normalizedTimeLabel).trim();
@@ -41,10 +44,25 @@ export default function TimeLineCard({
 
   return (
     <Pressable
-      accessibilityRole={onPress ? 'button' : undefined}
+      accessibilityRole={onPress || onLongPress ? 'button' : undefined}
       accessibilityLabel={`${placeName} 상세 보기`}
-      disabled={!onPress}
-      onPress={onPress}
+      accessibilityHint={onLongPress ? '길게 누르면 장소를 삭제할 수 있어요' : undefined}
+      delayLongPress={500}
+      disabled={!onPress && !onLongPress}
+      onLongPress={() => {
+        longPressTriggeredRef.current = true;
+        onLongPress?.();
+      }}
+      onPress={() => {
+        if (longPressTriggeredRef.current) {
+          return;
+        }
+
+        onPress?.();
+      }}
+      onPressIn={() => {
+        longPressTriggeredRef.current = false;
+      }}
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
     >
       <View style={styles.leftContent}>
@@ -91,12 +109,16 @@ export default function TimeLineCard({
         </View>
       </View>
 
-      <Image
-        source={imageSource}
-        style={styles.thumbnail}
-        resizeMode="cover"
-        accessibilityLabel={`${placeName} 대표 이미지`}
-      />
+      {imageSource ? (
+        <Image
+          source={imageSource}
+          style={styles.thumbnail}
+          resizeMode="cover"
+          accessibilityLabel={`${placeName} 대표 이미지`}
+        />
+      ) : (
+        <View style={[styles.thumbnail, styles.thumbnailPlaceholder]} />
+      )}
     </Pressable>
   );
 }
@@ -223,5 +245,8 @@ const styles = StyleSheet.create({
     height: 72,
     borderRadius: Radius.xs,
     backgroundColor: Colors.foundation.white,
+  },
+  thumbnailPlaceholder: {
+    backgroundColor: Colors.foundation.grey100,
   },
 });
