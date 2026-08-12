@@ -1,0 +1,374 @@
+import { type Href, useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import React from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import Text from '@/components/common/AppText';
+import ScreenHeader from '@/components/nav/ScreenHeader';
+import DetectedTripCandidateCard from '@/components/photo-import/DetectedTripCandidateCard';
+import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
+import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
+import { getDetectedTripSaveUserMessage } from '@/services/photoImport/saveDetectedTripDraft';
+import type { PhotoImportTripCandidate } from '@/services/photoImport/types';
+
+const BACKGROUND = Colors.light.bgScreen;
+const GREY_700 = '#595959';
+const CARD_HEIGHT = 99;
+const CARD_GAP = 8;
+const LIST_TOP = 195;
+const LINK_HEIGHT = 20;
+const LINK_DEFAULT_GAP = 32;
+const LINK_MIN_GAP = 16;
+const LINK_TO_CTA_GAP = 24;
+const CTA_HEIGHT = 48;
+const CTA_BOTTOM_MIN = 16;
+
+function getCandidateStartTime(candidate: PhotoImportTripCandidate) {
+  const startDate = candidate.debugMetadata?.startDate;
+
+  if (!startDate) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const [year, month, day] = startDate.split('-').map(Number);
+
+  if (!year || !month || !day) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return new Date(year, month - 1, day).getTime();
+}
+
+function getCandidateEndTime(candidate: PhotoImportTripCandidate) {
+  const endDate = candidate.debugMetadata?.endDate;
+
+  if (!endDate) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const [year, month, day] = endDate.split('-').map(Number);
+
+  if (!year || !month || !day) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return new Date(year, month - 1, day).getTime();
+}
+
+function getOutOfOrderPairCount(candidatesToCheck: PhotoImportTripCandidate[]) {
+  let outOfOrderPairCount = 0;
+
+  for (let index = 1; index < candidatesToCheck.length; index += 1) {
+    const previous = candidatesToCheck[index - 1];
+    const current = candidatesToCheck[index];
+    const startDiff = getCandidateStartTime(previous) - getCandidateStartTime(current);
+    const endDiff = getCandidateEndTime(previous) - getCandidateEndTime(current);
+
+    if (startDiff > 0 || (startDiff === 0 && endDiff > 0)) {
+      outOfOrderPairCount += 1;
+    }
+  }
+
+  return outOfOrderPairCount;
+}
+
+export default function DetectedTrips() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { height: screenHeight } = useWindowDimensions();
+  const {
+    candidates,
+    selectedCandidateIds,
+    toggleCandidate,
+    openPhotoImportResults,
+    photoSaveProgress,
+    saveSelectedPhotoImportResults,
+  } = usePhotoImportFlow();
+  const [isSaving, setIsSaving] = React.useState(false);
+  const sortedCandidates = React.useMemo(
+    () => candidates
+      .map((candidate, index) => ({ candidate, index }))
+      .sort((left, right) => {
+        const startDiff = getCandidateStartTime(left.candidate) - getCandidateStartTime(right.candidate);
+
+        if (startDiff !== 0) {
+          return startDiff;
+        }
+
+        const endDiff = getCandidateEndTime(left.candidate) - getCandidateEndTime(right.candidate);
+
+        if (endDiff !== 0) {
+          return endDiff;
+        }
+
+        return left.index - right.index;
+      })
+      .map(({ candidate }) => candidate),
+    [candidates],
+  );
+  React.useEffect(() => {
+    openPhotoImportResults();
+  }, [openPhotoImportResults]);
+
+  React.useEffect(() => {
+    if (!__DEV__) {
+      return;
+    }
+
+    const missingDateCount = sortedCandidates.filter(
+      (candidate) => !candidate.debugMetadata?.startDate,
+    ).length;
+
+    console.info('[detected-trips] sort order', {
+      detectedCandidateStableSortSummary: true,
+      detectedCandidateListLimitApplied: false,
+      detectedCandidateFirstStartDate: sortedCandidates[0]?.debugMetadata?.startDate,
+      detectedCandidateLastStartDate: sortedCandidates[sortedCandidates.length - 1]?.debugMetadata?.startDate,
+      detectedCandidateMissingDateCount: missingDateCount,
+      detectedCandidateNewestStartDate: sortedCandidates[sortedCandidates.length - 1]?.debugMetadata?.startDate,
+      detectedCandidateOldestStartDate: sortedCandidates[0]?.debugMetadata?.startDate,
+      detectedCandidateRenderedCount: sortedCandidates.length,
+      detectedCandidateSortOrder: 'oldest_first',
+      detectedCandidateTotalBeforeListLimit: candidates.length,
+      isAscending: getOutOfOrderPairCount(sortedCandidates) === 0,
+      outOfOrderPairCount: getOutOfOrderPairCount(sortedCandidates),
+      scanAttemptId: sortedCandidates[0]?.debugMetadata?.scanAttemptId,
+      stage: 'detected_trips_render',
+    });
+  }, [candidates.length, sortedCandidates]);
+
+  const selectedCount = selectedCandidateIds.length;
+  const saveProgressLabel = photoSaveProgress
+    ? `${photoSaveProgress.phase === 'preparing' ? '원본 사진 준비 중' : '사진 저장 중'} · ${photoSaveProgress.completedCount.toLocaleString()} / ${photoSaveProgress.totalCount.toLocaleString()}`
+    : '저장하는 중...';
+  const canSave = selectedCount > 0;
+  const ctaBottom = Math.max(insets.bottom + 8, CTA_BOTTOM_MIN);
+  const ctaTop = screenHeight - ctaBottom - CTA_HEIGHT;
+  const maxLinkTop = ctaTop - LINK_TO_CTA_GAP - LINK_HEIGHT;
+  const listNaturalHeight = Math.max(
+    0,
+    sortedCandidates.length * CARD_HEIGHT + Math.max(0, sortedCandidates.length - 1) * CARD_GAP,
+  );
+  const maxListHeight = Math.max(CARD_HEIGHT, maxLinkTop - LIST_TOP - LINK_MIN_GAP);
+  const listHeight = Math.min(listNaturalHeight, maxListHeight);
+  const isListScrollable = listNaturalHeight > maxListHeight;
+  const linkTop = Math.min(
+    LIST_TOP + listHeight + (isListScrollable ? LINK_MIN_GAP : LINK_DEFAULT_GAP),
+    maxLinkTop,
+  );
+
+  const handleSave = React.useCallback(async () => {
+    if (!canSave || isSaving) {
+      return;
+    }
+
+    setIsSaving(true);
+
+    try {
+      await saveSelectedPhotoImportResults(selectedCandidateIds);
+      router.replace('/(tabs)' as Href);
+    } catch (error) {
+      setIsSaving(false);
+      const message = getDetectedTripSaveUserMessage(error);
+      Alert.alert(message.title, message.message);
+    }
+  }, [canSave, isSaving, router, saveSelectedPhotoImportResults, selectedCandidateIds]);
+
+  const handleOpenCandidate = React.useCallback(
+    (candidateId: string) => {
+      const candidateTitle = sortedCandidates.find((candidate) => candidate.id === candidateId)?.city;
+
+      router.push({
+        pathname: '/record-day-detail',
+        params: {
+          cityName: candidateTitle,
+          displayTitle: candidateTitle,
+          entryPoint: 'detectedTrips',
+          tripTitle: candidateTitle,
+          tripId: candidateId,
+        },
+      } as Href);
+    },
+    [router, sortedCandidates],
+  );
+
+  const handleOpenManualCreate = React.useCallback(() => {
+    router.push('/create-trip' as Href);
+  }, [router]);
+
+  const renderCandidate = React.useCallback(
+    ({ item }: { item: PhotoImportTripCandidate }) => (
+      <DetectedTripCandidateCard
+        city={item.city}
+        country={item.country}
+        dateRange={item.dateRange}
+        photoCount={item.photoCount}
+        image={item.image}
+        selected={selectedCandidateIds.includes(item.id)}
+        disabled={isSaving}
+        onPress={() => handleOpenCandidate(item.id)}
+        onToggle={() => toggleCandidate(item.id)}
+      />
+    ),
+    [handleOpenCandidate, isSaving, selectedCandidateIds, toggleCandidate],
+  );
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <StatusBar style="dark" />
+      <ScreenHeader title="발견된 여행" onBackPress={() => router.back()} style={styles.header} />
+
+      <View style={styles.copyBlock}>
+        <Text style={styles.title}>{sortedCandidates.length} 개의 여행 후보</Text>
+        <Text style={styles.description}>저장하고 싶은 여행을 선택해주세요</Text>
+      </View>
+
+      <View style={[styles.listFrame, { height: listHeight }]}>
+        <FlatList
+          data={sortedCandidates}
+          keyExtractor={(item) => item.id}
+          renderItem={renderCandidate}
+          ItemSeparatorComponent={CandidateSeparator}
+          showsVerticalScrollIndicator={false}
+          bounces={isListScrollable}
+          scrollEnabled={isListScrollable}
+        />
+      </View>
+
+      <View style={[styles.manualLinkRow, { top: linkTop }]}>
+        <Text style={styles.manualText}>찾는 여행이 없나요?</Text>
+        <Pressable accessibilityRole="button" hitSlop={8} onPress={handleOpenManualCreate}>
+          <Text style={styles.manualLink}>직접 여행 추가하기</Text>
+        </Pressable>
+      </View>
+
+      <Pressable
+        accessibilityRole="button"
+        disabled={!canSave || isSaving}
+        onPress={handleSave}
+        style={({ pressed }) => [
+          styles.fixedButton,
+          { bottom: ctaBottom },
+          canSave ? styles.fixedButtonActive : styles.fixedButtonDisabled,
+          pressed && canSave && styles.buttonPressed,
+        ]}
+      >
+        {isSaving ? (
+          <View style={styles.savingContent}>
+            <ActivityIndicator size="small" color={Colors.foundation.grey600} />
+            <Text style={styles.fixedButtonSavingLabel}>{saveProgressLabel}</Text>
+          </View>
+        ) : (
+          <Text style={[styles.fixedButtonLabel, !canSave && styles.fixedButtonLabelDisabled]}>
+            선택한 여행 {selectedCount}개 저장하기
+          </Text>
+        )}
+      </Pressable>
+    </SafeAreaView>
+  );
+}
+
+function CandidateSeparator() {
+  return <View style={styles.cardSeparator} />;
+}
+
+const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: BACKGROUND,
+  },
+  header: {
+    height: 44,
+  },
+  copyBlock: {
+    position: 'absolute',
+    top: 127,
+    left: Spacing.xl,
+    right: Spacing.xl,
+  },
+  title: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+  },
+  description: {
+    marginTop: 2,
+    ...Typography.body2Regular,
+    color: GREY_700,
+  },
+  listFrame: {
+    position: 'absolute',
+    top: LIST_TOP,
+    left: Spacing.xl,
+    right: Spacing.xl,
+    overflow: 'hidden',
+  },
+  cardSeparator: {
+    height: CARD_GAP,
+  },
+  manualLinkRow: {
+    position: 'absolute',
+    left: Spacing.xl,
+    right: Spacing.xl,
+    height: LINK_HEIGHT,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+  },
+  manualText: {
+    ...Typography.body2Regular,
+    color: GREY_700,
+  },
+  manualLink: {
+    ...Typography.body2Emphasized,
+    color: GREY_700,
+    textDecorationLine: 'underline',
+  },
+  fixedButton: {
+    position: 'absolute',
+    left: 35,
+    right: 35,
+    height: CTA_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radius.sm,
+  },
+  fixedButtonActive: {
+    backgroundColor: Colors.foundation.black,
+  },
+  fixedButtonDisabled: {
+    borderWidth: 1,
+    borderColor: Colors.light.borderDefault,
+    backgroundColor: Colors.foundation.white,
+  },
+  fixedButtonLabel: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.white,
+    textAlign: 'center',
+  },
+  fixedButtonLabelDisabled: {
+    color: Colors.light.textDisabled,
+  },
+  fixedButtonSavingLabel: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.grey600,
+  },
+  savingContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+  },
+  buttonPressed: {
+    opacity: 0.84,
+  },
+});

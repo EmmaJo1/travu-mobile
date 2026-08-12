@@ -23,6 +23,7 @@ export interface ArchiveDetailPlace {
   category?: string;
   city?: string;
   memo?: string;
+  records?: string[];
   rating?: number;
   images: ImageSourcePropType[];
 }
@@ -34,7 +35,7 @@ export interface ArchiveDetailData {
   dateRangeLabel: string;
   heroTitle: string;
   /** User-editable hero photo. The blurred backdrop reuses this same image. */
-  photoFrameImage: ImageSourcePropType;
+  photoFrameImage?: ImageSourcePropType;
   selectedDay: {
     dayNumber: number;
     dateLabel: string;
@@ -50,14 +51,14 @@ export interface ArchiveDetailData {
 
 /** Figma day-archive-detail — Day 선택 시트 mock (Paris 2025.8.25–9.1) */
 export const ARCHIVE_DAY_OPTIONS: DaySelectorItem[] = [
-  { id: 'archive-day-1', dayNumber: 1, dateLabel: '2025.8.25', weekdayLabel: '월', photoCount: 28 },
-  { id: 'archive-day-2', dayNumber: 2, dateLabel: '2025.8.26', weekdayLabel: '화', photoCount: 42 },
-  { id: 'archive-day-3', dayNumber: 3, dateLabel: '2025.8.27', weekdayLabel: '수', photoCount: 36 },
-  { id: 'archive-day-4', dayNumber: 4, dateLabel: '2025.8.28', weekdayLabel: '목', photoCount: 31 },
-  { id: 'archive-day-5', dayNumber: 5, dateLabel: '2025.8.29', weekdayLabel: '금', photoCount: 45 },
-  { id: 'archive-day-6', dayNumber: 6, dateLabel: '2025.8.30', weekdayLabel: '토', photoCount: 52 },
-  { id: 'archive-day-7', dayNumber: 7, dateLabel: '2025.8.31', weekdayLabel: '일', photoCount: 38 },
-  { id: 'archive-day-8', dayNumber: 8, dateLabel: '2025.9.1', weekdayLabel: '월', photoCount: 40 },
+  { id: 'archive-day-1', dayNumber: 1, dateLabel: '2025. 8. 25', weekdayLabel: 'Mon', photoCount: 28 },
+  { id: 'archive-day-2', dayNumber: 2, dateLabel: '2025. 8. 26', weekdayLabel: 'Tue', photoCount: 42 },
+  { id: 'archive-day-3', dayNumber: 3, dateLabel: '2025. 8. 27', weekdayLabel: 'Wed', photoCount: 36 },
+  { id: 'archive-day-4', dayNumber: 4, dateLabel: '2025. 8. 28', weekdayLabel: 'Thu', photoCount: 31 },
+  { id: 'archive-day-5', dayNumber: 5, dateLabel: '2025. 8. 29', weekdayLabel: 'Fri', photoCount: 45 },
+  { id: 'archive-day-6', dayNumber: 6, dateLabel: '2025. 8. 30', weekdayLabel: 'Sat', photoCount: 52 },
+  { id: 'archive-day-7', dayNumber: 7, dateLabel: '2025. 8. 31', weekdayLabel: 'Sun', photoCount: 38 },
+  { id: 'archive-day-8', dayNumber: 8, dateLabel: '2025. 9. 1', weekdayLabel: 'Mon', photoCount: 40 },
 ];
 
 export function formatArchiveDayLabel(day: DaySelectorItem): string {
@@ -74,7 +75,7 @@ export const MOCK_ARCHIVE_DETAIL: ArchiveDetailData = {
   photoFrameImage: IMG.photoFrame,
   selectedDay: {
     dayNumber: 2,
-    dateLabel: '2025.8.26 화',
+    dateLabel: '2025. 8. 26 Tue',
   },
   stats: {
     daysCount: 8,
@@ -119,13 +120,17 @@ export const MOCK_ARCHIVE_DETAIL: ArchiveDetailData = {
 export function toPlaceEntries(places: ArchiveDetailPlace[]): PlaceEntry[] {
   return places.map((place) => ({
     id: place.id,
+    placeName: place.name,
+    cityName: place.city,
+    countryName: MOCK_ARCHIVE_DETAIL.country,
     time: place.timeLabel,
     place: place.name,
     category: place.category,
     city: place.city,
-    text: place.memo,
+    text: place.records?.[0] ?? place.memo,
     rating: place.rating,
     photoSources: place.images,
-    onEdit: () => {},
+    photoCount: place.images.length,
+    recordCount: place.records?.length ?? (place.memo ? 1 : 0),
   }));
 }

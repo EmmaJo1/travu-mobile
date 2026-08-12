@@ -35,7 +35,7 @@ const CONTENT_LEFT = 16;
 const CONTENT_WIDTH = 64;
 const THUMB = ComponentTokens.TripListCard;
 const THUMB_LEFT = 16;
-const THUMB_TOP = 38;
+const THUMB_TOP = 33;
 
 export interface TripListItem {
   id: string;
@@ -54,14 +54,20 @@ export interface TripListItem {
 interface TripListCardProps {
   trip: TripListItem;
   onPress: () => void;
+  onLongPress?: () => void;
   style?: StyleProp<ViewStyle>;
 }
 
-export default function TripListCard({ trip, onPress, style }: TripListCardProps) {
+export default function TripListCard({ trip, onPress, onLongPress, style }: TripListCardProps) {
   const thumbnailSource = trip.coverImage ?? (trip.imageUri ? { uri: trip.imageUri } : undefined);
 
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={[styles.card, style]}>
+    <TouchableOpacity
+      activeOpacity={0.85}
+      onLongPress={onLongPress}
+      onPress={onPress}
+      style={[styles.card, style]}
+    >
       <View style={styles.headerShadow}>
         <View style={styles.header}>
           <Text style={styles.city} numberOfLines={1}>
@@ -92,7 +98,7 @@ export default function TripListCard({ trip, onPress, style }: TripListCardProps
 
         <View style={styles.thumbnailWrap}>
           {thumbnailSource ? (
-            <Image source={thumbnailSource} style={styles.thumbnail} resizeMode="cover" />
+            <Image source={thumbnailSource} style={styles.thumbnail} resizeMode="stretch" />
           ) : (
             <View style={styles.thumbnailFallback} />
           )}

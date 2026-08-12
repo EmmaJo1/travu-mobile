@@ -1,0 +1,37 @@
+name: Apply photo scan reset fix
+
+on:
+  push:
+    branches:
+      - fix/photo-scan-fresh-attempt-home-region
+    paths:
+      - scripts/apply-photo-scan-reset-fix.js
+      - .github/workflows/apply-photo-scan-reset-fix.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/photo-scan-fresh-attempt-home-region
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node scripts/apply-photo-scan-reset-fix.js
+      - name: Commit generated source change
+        run: |
+          if git diff --quiet; then
+            echo "No source changes needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add services/photoImport/localDetectedTripDraftStore.ts
+          git commit -m "fix: reset transient photo scan state per attempt"
+          git push origin HEAD:fix/photo-scan-fresh-attempt-home-region

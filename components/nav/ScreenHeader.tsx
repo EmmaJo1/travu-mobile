@@ -10,6 +10,7 @@ const BALANCED_SIDE_SLOT_WIDTH = 24;
 
 interface ScreenHeaderProps {
   title?: string;
+  leftSlot?: React.ReactNode;
   centerSlot?: React.ReactNode;
   onBackPress?: () => void;
   onSettingsPress?: () => void;
@@ -21,6 +22,7 @@ interface ScreenHeaderProps {
 
 export default function ScreenHeader({
   title,
+  leftSlot,
   centerSlot,
   onBackPress,
   onSettingsPress,
@@ -31,8 +33,10 @@ export default function ScreenHeader({
   if (balancedSlots) {
     return (
       <View style={[styles.header, styles.headerBalanced, style]}>
-        <View style={styles.balancedSideSlot}>
-          {onBackPress ? (
+        <View style={[styles.balancedSideSlot, styles.balancedLeftSlot]}>
+          {leftSlot ? (
+            leftSlot
+          ) : onBackPress ? (
             <TouchableOpacity onPress={onBackPress} activeOpacity={0.75} style={styles.sideBtn}>
               <Image
                 source={require('../../assets/images/screenheader-back.png')}
@@ -47,7 +51,7 @@ export default function ScreenHeader({
 
         <View style={styles.balancedCenter}>{centerSlot}</View>
 
-        <View style={styles.balancedSideSlot}>
+        <View style={[styles.balancedSideSlot, styles.balancedRightSlot]}>
           {rightSlot ?? <View style={styles.sideBtn} />}
         </View>
       </View>
@@ -56,7 +60,9 @@ export default function ScreenHeader({
 
   return (
     <View style={[styles.header, style]}>
-      {onBackPress ? (
+      {leftSlot ? (
+        <View style={styles.leftCustom}>{leftSlot}</View>
+      ) : onBackPress ? (
         <TouchableOpacity onPress={onBackPress} activeOpacity={0.75} style={styles.sideBtn}>
           <Image
             source={require('../../assets/images/screenheader-back.png')}
@@ -108,22 +114,34 @@ const styles = StyleSheet.create({
   headerBalanced: {
     paddingLeft: Spacing.xl,
     paddingRight: Spacing.xl,
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
   },
   balancedSideSlot: {
-    width: BALANCED_SIDE_SLOT_WIDTH,
+    position: 'absolute',
+    minWidth: BALANCED_SIDE_SLOT_WIDTH,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  balancedLeftSlot: {
+    left: Spacing.xl,
+  },
   balancedCenter: {
-    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  balancedRightSlot: {
+    right: Spacing.xl,
+    alignItems: 'flex-end',
   },
   sideBtn: {
     width: 24,
     height: 24,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  leftCustom: {
+    minWidth: 24,
+    alignItems: 'flex-start',
     justifyContent: 'center',
   },
   backIcon: {

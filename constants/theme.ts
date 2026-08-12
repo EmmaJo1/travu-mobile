@@ -26,7 +26,9 @@ const foundation = {
   grey400:  '#979797',  // 보조 아이콘
   grey500:  '#7D7D7D',  // 플레이스홀더
   grey600:  '#727272',  // 날짜·보조 정보
-  grey800:  '#454545',  // 강조 보조 텍스트
+  grey700:  '#595959',  // 날짜·보조 정보
+  grey800:  '#454545',
+  grey900:  '#353535',  // 강조 보조 텍스트
 } as const;
 
 /** Warm palette — 홈/상세 화면 전용 */
@@ -191,14 +193,16 @@ export const Typography = {
   },
   /** Noto Serif KR — 대시보드 전용 */
   dashboardNum: {
-    fontFamily: FontFamily.notoSerifKRBlack,
-    fontSize:   20,
+    fontFamily: 'Noto Serif KR',
+    fontWeight: '900',
+    fontSize:   17,
     lineHeight: 24,
   },
   dashboardEmphasis: {
-    fontFamily: FontFamily.notoSerifKRBold,
-    fontSize:   16,
-    lineHeight: 24,
+    fontFamily: 'Noto Serif KR',
+    fontWeight: '700',
+    fontSize:   14,
+    lineHeight: 20,
   },
   dashboardText: {
     fontFamily: FontFamily.notoSerifKR,

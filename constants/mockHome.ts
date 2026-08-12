@@ -28,14 +28,14 @@ export interface HomeMockData {
 export const HOME_MOCK_DATA: HomeMockData = {
   currentTrip: {
     destination: 'Paris',
-    dateLabel: '8. 25 Mon',
+    dateLabel: '11.2 Mon',
     dayLabel: 'Day 1',
     heroImage: require('../assets/images/home-hero-paris.png'),
   },
   todaySummary: {
     distanceKm: 20,
     visitedPlacesCount: 3,
-    recordedMomentsCount: 7,
+    recordedMomentsCount: 5,
   },
   reflectionPrompt: {
     title: '오늘의 사진',

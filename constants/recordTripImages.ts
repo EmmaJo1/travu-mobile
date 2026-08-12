@@ -12,6 +12,7 @@ export const RECORD_TRIP_IMAGES = {
       require('../assets/images/record-trip-sydney-day-2.png'),
       require('../assets/images/record-trip-sydney-day-3.png'),
       require('../assets/images/record-trip-sydney-day-4.png'),
+      require('../assets/images/record-trip-sydney-day-5.png'),
     ] as ImageSourcePropType[],
   },
   kyoto: {
@@ -21,6 +22,7 @@ export const RECORD_TRIP_IMAGES = {
       require('../assets/images/record-trip-kyoto-day-2.png'),
       require('../assets/images/record-trip-kyoto-day-3.png'),
       require('../assets/images/record-trip-kyoto-day-4.png'),
+      require('../assets/images/record-trip-kyoto-day-5.png'),
     ] as ImageSourcePropType[],
   },
   portugal: {
@@ -30,6 +32,7 @@ export const RECORD_TRIP_IMAGES = {
       require('../assets/images/record-trip-portugal-day-2.png'),
       require('../assets/images/record-trip-portugal-day-3.png'),
       require('../assets/images/record-trip-portugal-day-4.png'),
+      require('../assets/images/record-trip-portugal-day-5.png'),
     ] as ImageSourcePropType[],
   },
 } as const;

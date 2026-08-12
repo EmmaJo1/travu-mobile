@@ -15,9 +15,11 @@ interface ProfileSummaryProps {
   userName: string;
   profileUri?: string;
   profileImage?: ImageSourcePropType;
-  recordCount: number;
+  cityCount?: number;
+  recordCount?: number;
   countryCount: number;
   tripCount: number;
+  basedIn?: string;
   /** 사용자가 직접 작성·수정하는 자기소개/상태 메시지 (mock 또는 Supabase 연동 예정) */
   tagline?: string;
   style?: StyleProp<ViewStyle>;
@@ -27,10 +29,10 @@ function Stat({ label, value, unit }: { label: string; value: number; unit: stri
   return (
     <View style={styles.statBlock}>
       <Text style={styles.statLabel}>{label}</Text>
-      <Text style={styles.statValue}>
-        {value}
+      <View style={styles.statValueRow}>
+        <Text style={styles.statValue}>{value}</Text>
         <Text style={styles.statValue}>{unit}</Text>
-      </Text>
+      </View>
     </View>
   );
 }
@@ -39,9 +41,11 @@ export default function ProfileSummary({
   userName,
   profileUri,
   profileImage,
+  cityCount,
   recordCount,
   countryCount,
   tripCount,
+  basedIn,
   tagline,
   style,
 }: ProfileSummaryProps) {
@@ -61,7 +65,7 @@ export default function ProfileSummary({
         <View style={styles.content}>
           <Text style={styles.name}>{userName}</Text>
           <View style={styles.statsRow}>
-            <Stat label="기록" value={recordCount} unit="번" />
+            <Stat label="도시" value={cityCount ?? recordCount ?? 0} unit="곳" />
             <View style={styles.divider} />
             <Stat label="국가" value={countryCount} unit="곳" />
             <View style={styles.divider} />
@@ -70,15 +74,23 @@ export default function ProfileSummary({
         </View>
       </View>
 
-      {tagline ? (
-        <Text
-          style={styles.tagline}
-          accessibilityRole="text"
-          accessibilityLabel={`자기소개, ${tagline}`}
-        >
-          {tagline}
-        </Text>
-      ) : null}
+      <View style={styles.profileTextBlock}>
+        {basedIn ? (
+          <Text style={styles.basedIn} accessibilityRole="text">
+            {'Based in '}
+            {basedIn}
+          </Text>
+        ) : null}
+        {tagline ? (
+          <Text
+            style={styles.tagline}
+            accessibilityRole="text"
+            accessibilityLabel={`Bio, ${tagline}`}
+          >
+            {tagline}
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -127,7 +139,7 @@ const styles = StyleSheet.create({
   },
   statBlock: {
     alignItems: 'center',
-    gap: 4,
+    gap: 2,
   },
   statLabel: {
     ...Typography.captionRegular,
@@ -137,10 +149,25 @@ const styles = StyleSheet.create({
     ...Typography.body2Emphasized,
     color: Colors.foundation.black,
   },
+  statValueRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 2,
+  },
   divider: {
     width: 2,
     height: 40,
     backgroundColor: Colors.foundation.grey100,
+  },
+  profileTextBlock: {
+    gap: 4,
+  },
+  basedIn: {
+    ...Typography.captionRegular,
+    color: Colors.foundation.grey600,
+    textAlign: 'left',
+    alignSelf: 'stretch',
   },
   tagline: {
     ...Typography.body2Regular,

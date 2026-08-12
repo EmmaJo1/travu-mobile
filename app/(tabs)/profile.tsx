@@ -1,19 +1,23 @@
 import { useRouter, type Href } from 'expo-router';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import React, { useMemo, useState } from 'react';
+import {
+  Alert,
+  Image,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
-import HorizontalEdgeScrollView from '@/components/common/HorizontalEdgeScrollView';
 import MapPlaceholderCard from '@/components/common/MapPlaceholderCard';
-import MyPageTabs, { type MyPageTabMode } from '@/components/mypage/MyPageTabs';
 import ProfileSummary from '@/components/mypage/ProfileSummary';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import DaySelectorSheet from '@/components/record/DaySelectorSheet';
-import QuestionCard from '@/components/trip/QuestionCard';
-import ReflectionCard from '@/components/trip/ReflectionCard';
 import TripListCardList from '@/components/trip/TripListCardList';
-import { MOCK_MY_PAGE_PROFILE } from '@/constants/mockMyPageProfile';
 import {
     MOCK_MY_PAGE_TRIPS,
     TRAVEL_SORT_LABELS,
@@ -21,148 +25,298 @@ import {
     groupTripsByYear,
     sortMyPageTrips,
     toTripListItem,
+    type MyPageTrip,
     type TravelSortOption,
 } from '@/constants/mockMyPageTrips';
-import {
-    MOCK_QUESTION_CARDS,
-    MOCK_REFLECTION_CARDS,
-} from '@/constants/mockReflections';
+import { removeSavedMyPageTrip, useSavedMyPageTrips } from '@/constants/savedMyPageTrips';
 import { Colors, Spacing, Typography } from '@/constants/theme';
+import { useDeleteTrip } from '@/hooks/useDeleteTrip';
+import { useMyTrips } from '@/hooks/useMyTrips';
+import { useAuth } from '@/providers/AuthProvider';
+import { useUserProfile } from '@/providers/UserProfileProvider';
+import { mapSupabaseTripsToMyPageTrips } from '@/utils/supabaseTripMappers';
 
-const CONTENT_FADE_DURATION_MS = 500;
+function normalizeCountValue(value?: string | null) {
+  return value?.trim() ?? '';
+}
 
-export default function ProfileScreen() {
-  const router = useRouter();
-  const [activeTab, setActiveTab] = useState<MyPageTabMode>('trip');
-  const [sortOption, setSortOption] = useState<TravelSortOption>('latest');
-  const [sortSheetVisible, setSortSheetVisible] = useState(false);
-  const contentOpacity = useRef(new Animated.Value(1)).current;
-  const isFirstTabRender = useRef(true);
+function normalizeCountKey(value?: string | null) {
+  return normalizeCountValue(value).toLowerCase();
+}
 
-  const sortedTrips = useMemo(
-    () => sortMyPageTrips(MOCK_MY_PAGE_TRIPS, sortOption),
-    [sortOption],
-  );
-  const groupedTrips = useMemo(() => groupTripsByYear(sortedTrips), [sortedTrips]);
+function getTripVisitedCitiesForStats(trip: MyPageTrip) {
+  if (trip.visitedCities.length > 0) {
+    return trip.visitedCities;
+  }
 
-  useEffect(() => {
-    if (isFirstTabRender.current) {
-      isFirstTabRender.current = false;
+  const city = normalizeCountValue(trip.city);
+  return city ? [city] : [];
+}
+
+function getTripVisitedCountriesForStats(trip: MyPageTrip) {
+  if (trip.visitedCountries.length > 0) {
+    return trip.visitedCountries;
+  }
+
+  const country = normalizeCountValue(trip.country);
+  return country ? [country] : [];
+}
+
+function countUniqueValues(values: string[]) {
+  return new Set(values.map(normalizeCountKey).filter(Boolean)).size;
+}
+
+function getTripListCityCountryKey(trip: MyPageTrip) {
+  return `${normalizeCountKey(trip.city)}|${normalizeCountKey(trip.country)}`;
+}
+
+function mergeSavedAndMockTrips(savedTrips: MyPageTrip[]) {
+  const mergedTrips = [...savedTrips];
+  const existingIds = new Set(mergedTrips.map((trip) => normalizeCountKey(trip.id)).filter(Boolean));
+  const existingCityCountryKeys = new Set(mergedTrips.map(getTripListCityCountryKey));
+
+  MOCK_MY_PAGE_TRIPS.forEach((trip) => {
+    const idKey = normalizeCountKey(trip.id);
+    const cityCountryKey = getTripListCityCountryKey(trip);
+
+    if (existingIds.has(idKey) || existingCityCountryKeys.has(cityCountryKey)) {
       return;
     }
 
-    contentOpacity.setValue(0);
-    Animated.timing(contentOpacity, {
-      toValue: 1,
-      duration: CONTENT_FADE_DURATION_MS,
-      useNativeDriver: true,
-    }).start();
-  }, [activeTab, contentOpacity]);
+    existingIds.add(idKey);
+    existingCityCountryKeys.add(cityCountryKey);
+    mergedTrips.push(trip);
+  });
+
+  return mergedTrips;
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export default function ProfileScreen() {
+  const router = useRouter();
+  const [sortOption, setSortOption] = useState<TravelSortOption>('latest');
+  const [sortSheetVisible, setSortSheetVisible] = useState(false);
+  const [deletedTripIds, setDeletedTripIds] = useState<string[]>([]);
+  const savedTrips = useSavedMyPageTrips();
+  const { profile } = useUserProfile();
+  const { canUseSupabaseUserData } = useAuth();
+  const {
+    data: supabaseTrips,
+    isError: isSupabaseTripsError,
+    isLoading: isSupabaseTripsLoading,
+    isRefetching: isSupabaseTripsRefetching,
+    refetch: refetchSupabaseTrips,
+  } = useMyTrips();
+  const deleteTripMutation = useDeleteTrip();
+  const supabaseTripIds = useMemo(
+    () => new Set((supabaseTrips ?? []).map((trip) => trip.id)),
+    [supabaseTrips],
+  );
+
+  const myPageTrips = useMemo(
+    () => {
+      const deletedTripIdSet = new Set(deletedTripIds);
+      const sourceTrips = canUseSupabaseUserData
+        ? mapSupabaseTripsToMyPageTrips(supabaseTrips ?? [])
+        : mergeSavedAndMockTrips(savedTrips);
+
+      return sourceTrips.filter((trip) => !deletedTripIdSet.has(trip.id));
+    },
+    [canUseSupabaseUserData, deletedTripIds, savedTrips, supabaseTrips],
+  );
+  const profileStats = useMemo(
+    () => ({
+      totalTrips: myPageTrips.length,
+      uniqueCityCount: countUniqueValues(myPageTrips.flatMap(getTripVisitedCitiesForStats)),
+      uniqueCountryCount: countUniqueValues(myPageTrips.flatMap(getTripVisitedCountriesForStats)),
+    }),
+    [myPageTrips],
+  );
+  const sortedTrips = useMemo(
+    () => sortMyPageTrips(myPageTrips, sortOption),
+    [myPageTrips, sortOption],
+  );
+  const groupedTrips = useMemo(() => groupTripsByYear(sortedTrips), [sortedTrips]);
+
+  const handleRequestDeleteTrip = (tripId: string) => {
+    Alert.alert(
+      '삭제하시겠습니까?',
+      '이 여행 기록은 삭제 후 복구할 수 없어요.',
+      [
+        {
+          text: '취소',
+          style: 'cancel',
+        },
+        {
+          text: '삭제',
+          style: 'destructive',
+          onPress: () => {
+            const isSupabaseTrip = supabaseTripIds.has(tripId);
+
+            if (isSupabaseTrip) {
+              deleteTripMutation.mutate(tripId, {
+                onError: (error) => {
+                  const message = getErrorMessage(error);
+                  console.warn('[ProfileScreen] delete trip mutation failed', error);
+                  Alert.alert(
+                    '여행을 삭제하지 못했어요',
+                    `잠시 후 다시 시도해주세요.\n개발 정보: ${message}`,
+                  );
+                },
+                onSuccess: (result) => {
+                  setDeletedTripIds((current) =>
+                    current.includes(tripId) ? current : [...current, tripId],
+                  );
+
+                  if (result.storageCleanupIncomplete) {
+                    Alert.alert(
+                      '\uC5EC\uD589\uC740 \uC0AD\uC81C\uB410\uC5B4\uC694',
+                      '\uC77C\uBD80 \uC0AC\uC9C4 \uD30C\uC77C \uC815\uB9AC\uAC00 \uB0A8\uC544 \uC788\uC5B4 \uB2E4\uC74C \uC571 \uC2E4\uD589 \uB54C \uC790\uB3D9\uC73C\uB85C \uB2E4\uC2DC \uC815\uB9AC\uD569\uB2C8\uB2E4.',
+                    );
+                  }
+                },
+              });
+              return;
+            }
+
+            removeSavedMyPageTrip(tripId);
+            setDeletedTripIds((current) =>
+              current.includes(tripId) ? current : [...current, tripId],
+            );
+          },
+        },
+      ],
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader style={styles.header} onSettingsPress={() => {}} />
+      <StatusBar style="dark" />
+      <ScreenHeader
+        style={styles.header}
+        leftSlot={<Text style={styles.headerTitle}>나의 여정</Text>}
+        onSettingsPress={() => router.push('/settings' as Href)}
+      />
 
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.content}
         nestedScrollEnabled
+        refreshControl={canUseSupabaseUserData ? (
+          <RefreshControl
+            refreshing={isSupabaseTripsRefetching}
+            onRefresh={() => void refetchSupabaseTrips()}
+          />
+        ) : undefined}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.profileBlock}>
           <View style={styles.profileSummarySection}>
             <ProfileSummary
-              userName={MOCK_MY_PAGE_PROFILE.userName}
-              profileImage={MOCK_MY_PAGE_PROFILE.profileImage}
-              recordCount={MOCK_MY_PAGE_PROFILE.recordCount}
-              countryCount={MOCK_MY_PAGE_PROFILE.countryCount}
-              tripCount={MOCK_MY_PAGE_PROFILE.tripCount}
-              tagline={MOCK_MY_PAGE_PROFILE.tagline}
+              userName={profile.name}
+              profileUri={profile.profileImageUri}
+              cityCount={profileStats.uniqueCityCount}
+              countryCount={profileStats.uniqueCountryCount}
+              tripCount={profileStats.totalTrips}
+              basedIn={profile.basedIn}
+              tagline={profile.bio}
             />
           </View>
-          <MyPageTabs mode={activeTab} onChange={setActiveTab} />
         </View>
 
-        <Animated.View style={{ opacity: contentOpacity }}>
-          {activeTab === 'trip' ? (
-            <View style={styles.travelContent}>
+        <View style={styles.travelContent}>
               <View style={styles.mapSection}>
                 <Text style={styles.sectionTitle}>나의 여행지도</Text>
-                <MapPlaceholderCard
-                  subtitle="다녀온 곳 자동 표시"
-                  align="top"
-                />
+                <View style={styles.mapCardWrap}>
+                  <MapPlaceholderCard
+                    subtitle="다녀온 곳 자동 표시"
+                    align="top"
+                    style={styles.mapCard}
+                  />
+                </View>
               </View>
 
               <View style={styles.tripListSection}>
-                <Text style={styles.sectionTitle}>여행 리스트</Text>
+                <View style={styles.tripListHeader}>
+                  <Text style={styles.tripListTitle}>여행 리스트</Text>
+                  <Pressable
+                    disabled={groupedTrips.length === 0}
+                    onPress={() => setSortSheetVisible(true)}
+                    style={({ pressed }) => [styles.sortTrigger, pressed && styles.sortTriggerPressed]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`정렬, ${TRAVEL_SORT_LABELS[sortOption]}`}
+                  >
+                    <Text style={styles.sortTriggerLabel} numberOfLines={1}>
+                      {TRAVEL_SORT_LABELS[sortOption]}
+                    </Text>
+                    <Image
+                      source={require('@/assets/images/daycard-triangle.png')}
+                      style={styles.sortTriggerIcon}
+                      resizeMode="contain"
+                    />
+                  </Pressable>
+                </View>
 
                 <View style={styles.tripList}>
-                  {groupedTrips.map(({ year, trips: yearTrips }) => (
+                  {canUseSupabaseUserData && isSupabaseTripsLoading ? (
+                    <View style={styles.tripListState}>
+                      <Text style={styles.tripListStateTitle}>여행을 불러오는 중이에요</Text>
+                    </View>
+                  ) : canUseSupabaseUserData && isSupabaseTripsError ? (
+                    <View style={styles.tripListState}>
+                      <Text style={styles.tripListStateTitle}>여행을 불러오지 못했어요</Text>
+                      <Text style={styles.tripListStateDescription}>
+                        네트워크 상태를 확인한 뒤 다시 시도해주세요.
+                      </Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => void refetchSupabaseTrips()}
+                        style={styles.tripListRetryButton}
+                      >
+                        <Text style={styles.tripListRetryText}>다시 시도</Text>
+                      </Pressable>
+                    </View>
+                  ) : groupedTrips.length === 0 ? (
+                    <View style={styles.tripListState}>
+                      <Text style={styles.tripListStateTitle}>아직 완료한 여행이 없어요</Text>
+                      <Text style={styles.tripListStateDescription}>
+                        여행을 완료하면 이곳에 차곡차곡 모여요.
+                      </Text>
+                    </View>
+                  ) : groupedTrips.map(({ year, trips: yearTrips }) => (
                     <View key={year} style={styles.yearSection}>
                       <View style={styles.yearHeader}>
                         <Text style={styles.yearLabel}>{year}</Text>
-                        {year === groupedTrips[0]?.year ? (
-                          <Pressable
-                            onPress={() => setSortSheetVisible(true)}
-                            style={({ pressed }) => [styles.sortTrigger, pressed && styles.sortTriggerPressed]}
-                            accessibilityRole="button"
-                            accessibilityLabel={`정렬, ${TRAVEL_SORT_LABELS[sortOption]}`}
-                          >
-                            <Text style={styles.sortTriggerLabel} numberOfLines={1}>
-                              {TRAVEL_SORT_LABELS[sortOption]}
-                            </Text>
-                            <Image
-                              source={require('@/assets/images/daycard-triangle.png')}
-                              style={styles.sortTriggerIcon}
-                              resizeMode="contain"
-                            />
-                          </Pressable>
-                        ) : null}
                       </View>
 
                       <TripListCardList
                         trips={yearTrips.map(toTripListItem)}
-                        onPressTrip={() => router.push('/day-archive-detail' as Href)}
+                        onLongPressTrip={(trip) => handleRequestDeleteTrip(trip.id)}
+                        onPressTrip={(trip) => {
+                          router.push({
+                            pathname: '/day-archive-detail',
+                            params: { tripId: trip.id },
+                          } as Href);
+                        }}
                       />
                     </View>
                   ))}
                 </View>
               </View>
             </View>
-          ) : (
-            <View style={styles.reflectionContent}>
-              <View style={styles.reflectionHeroSection}>
-                <Text style={styles.sectionTitle}>여행이 끝난 후에야 보이는 생각들이 있어요</Text>
 
-                <View style={styles.reflectionCardScrollWrap}>
-                  <HorizontalEdgeScrollView contentContainerStyle={styles.cardRow}>
-                    {MOCK_REFLECTION_CARDS.map((card) => (
-                      <ReflectionCard key={card.id} data={card} />
-                    ))}
-                  </HorizontalEdgeScrollView>
-                </View>
-              </View>
-
-              <View style={styles.reflectionQuestionSection}>
-                <Text style={styles.reflectionSectionTitle}>질문이 남긴 생각</Text>
-
-                <View style={styles.questionList}>
-                  {MOCK_QUESTION_CARDS.map((item) => (
-                    <QuestionCard key={item.id} data={item} style={styles.questionCard} />
-                  ))}
-                </View>
-              </View>
-            </View>
-          )}
-        </Animated.View>
       </ScrollView>
 
       <DaySelectorSheet
         visible={sortSheetVisible}
-        title="정렬"
         options={TRAVEL_SORT_OPTIONS}
         selectedId={sortOption}
+        hideTitle
+        hideOptionAccessory
+        compactOptions
         onSelectOption={(option) => {
           setSortOption(option.id as TravelSortOption);
           setSortSheetVisible(false);
@@ -180,6 +334,7 @@ const styles = StyleSheet.create({
   },
   header: {
     width: '100%',
+    paddingLeft: Spacing.xl,
   },
   scroll: {
     flex: 1,
@@ -192,8 +347,11 @@ const styles = StyleSheet.create({
   },
   profileSummarySection: {
     width: '100%',
-    paddingVertical: Spacing.lg,
     paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.lg,
+    paddingBottom: Spacing.xl,
+    borderBottomWidth: 2,
+    borderBottomColor: Colors.foundation.grey100,
   },
   /** Figma Frame 203 하단 → 나의 여행지도: 40px */
   travelContent: {
@@ -204,36 +362,37 @@ const styles = StyleSheet.create({
   mapSection: {
     gap: Spacing.md,
   },
+  mapCardWrap: {
+    width: '100%',
+    paddingHorizontal: Spacing.xl,
+  },
+  mapCard: {
+    maxWidth: '100%',
+    alignSelf: 'stretch',
+  },
   /** Figma 여행 리스트 → Frame 187: 24px */
   tripListSection: {
     gap: Spacing.lg,
   },
-  reflectionContent: {
-    marginTop: Spacing['2xl'],
-  },
-  reflectionHeroSection: {
-    gap: Spacing.lg,
-  },
-  /** HorizontalEdgeScrollView edge bleed — 부모에 좌우 패딩 필요 */
-  reflectionCardScrollWrap: {
+  tripListHeader: {
+    height: 24,
     paddingHorizontal: Spacing.xl,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  reflectionQuestionSection: {
-    marginTop: Spacing['4xl'],
-    paddingHorizontal: Spacing.xl,
-    gap: Spacing.lg,
-    alignSelf: 'stretch',
-    width: '100%',
+  tripListTitle: {
+    ...Typography.title2,
+    color: Colors.foundation.black,
   },
   sectionTitle: {
     ...Typography.title2,
     color: Colors.foundation.black,
     paddingHorizontal: Spacing.xl,
   },
-  reflectionSectionTitle: {
+  headerTitle: {
     ...Typography.title2,
     color: Colors.foundation.black,
-    alignSelf: 'stretch',
   },
   /** Figma Frame 187 — 연도 그룹 간 gap 40, paddingHorizontal 20 */
   tripList: {
@@ -273,19 +432,33 @@ const styles = StyleSheet.create({
     color: Colors.foundation.black,
   },
   sortTriggerIcon: {
-    width: Spacing.md,
-    height: Spacing.md,
+    width: 8,
+    height: 8,
   },
-  cardRow: {
-    gap: Spacing.md,
+  tripListState: {
+    minHeight: 160,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.xl,
   },
-  questionList: {
-    gap: Spacing.md,
-    alignSelf: 'stretch',
-    width: '100%',
+  tripListStateTitle: {
+    ...Typography.body1Emphasized,
+    color: Colors.foundation.black,
+    textAlign: 'center',
   },
-  questionCard: {
-    width: '100%',
-    alignSelf: 'stretch',
+  tripListStateDescription: {
+    ...Typography.body2Regular,
+    color: Colors.foundation.grey600,
+    textAlign: 'center',
+  },
+  tripListRetryButton: {
+    marginTop: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+  },
+  tripListRetryText: {
+    ...Typography.body2Emphasized,
+    color: Colors.foundation.black,
   },
 });
