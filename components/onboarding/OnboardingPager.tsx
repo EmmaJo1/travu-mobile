@@ -77,7 +77,7 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const pageWidth = Math.min(windowWidth, PAGE_MAX_WIDTH);
-  const { saveLivingArea } = usePrimaryLivingArea();
+  const { clearLivingArea, saveLivingArea } = usePrimaryLivingArea();
   const {
     candidates,
     progress,
@@ -189,15 +189,25 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
     }
   }, [animateToPage, isSavingLivingArea, saveLivingArea]);
 
-  const handleSkipLivingArea = React.useCallback(() => {
+  const handleSkipLivingArea = React.useCallback(async () => {
     if (isSavingLivingArea) {
       return;
     }
 
-    setOnboardingLivingArea(null);
-    setSkipLivingAreaForOnboardingScan(true);
-    animateToPage(3);
-  }, [animateToPage, isSavingLivingArea]);
+    setIsSavingLivingArea(true);
+
+    try {
+      await clearLivingArea();
+      setOnboardingLivingArea(null);
+      setSkipLivingAreaForOnboardingScan(true);
+      animateToPage(3);
+    } catch (error) {
+      console.warn('[onboarding living area] failed to clear living area', error);
+      Alert.alert('생활 지역을 건너뛰지 못했어요', '잠시 후 다시 시도해주세요.');
+    } finally {
+      setIsSavingLivingArea(false);
+    }
+  }, [animateToPage, clearLivingArea, isSavingLivingArea]);
 
   const persistOnboardingResult = React.useCallback(async (
     status: Exclude<OnboardingStatus, 'pending'>,
@@ -225,12 +235,20 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
   }, [setProfileSnapshot]);
 
   const handleSkip = React.useCallback(async () => {
+    try {
+      await clearLivingArea();
+    } catch (error) {
+      console.warn('[onboarding] failed to keep living area unset', error);
+      Alert.alert('온보딩을 건너뛰지 못했어요', '잠시 후 다시 시도해주세요.');
+      return;
+    }
+
     if (!(await persistOnboardingResult('skipped'))) {
       return;
     }
 
     await skipOnboarding();
-  }, [persistOnboardingResult, skipOnboarding]);
+  }, [clearLivingArea, persistOnboardingResult, skipOnboarding]);
 
   const handleGoHome = React.useCallback(async () => {
     if (!(await persistOnboardingResult('completed'))) {

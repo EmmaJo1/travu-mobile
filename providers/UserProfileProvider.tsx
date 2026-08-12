@@ -54,7 +54,7 @@ export function UserProfileProvider({ children }: { children: React.ReactNode })
     }
 
     return {
-      name: authProfile.name || profile.name,
+      name: authProfile.name,
       basedIn: authProfile.based_in ?? '',
       basedInPlace: authProfile.based_in
         ? {
@@ -66,7 +66,7 @@ export function UserProfileProvider({ children }: { children: React.ReactNode })
             longitude: authProfile.based_in_longitude ?? undefined,
             placeId: authProfile.based_in_google_place_id ?? undefined,
           }
-        : profile.basedInPlace,
+        : undefined,
       bio: authProfile.bio ?? '',
       travelStyles: authProfile.travel_styles,
       profileImageUri: authProfile.profile_image_url ?? undefined,

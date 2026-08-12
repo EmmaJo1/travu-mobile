@@ -90,6 +90,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: PropsWithChildren) {
   const isMountedRef = useRef(true);
   const authStateVersionRef = useRef(0);
+  const activeUserIdRef = useRef<string | null>(null);
   const initializationStatusRef = useRef<AuthInitializationStatus>('initializing');
   const startupLocalCleanupRecoveryPromiseRef = useRef<Promise<void> | null>(null);
   const signInInFlightRef = useRef(false);
@@ -157,10 +158,24 @@ export function AuthProvider({ children }: PropsWithChildren) {
     suggestedProfileName?: string | null,
   ) => {
     const authStateVersion = authStateVersionRef.current + 1;
+    const nextUserId = nextSession?.user.id ?? null;
+    const didChangeUser = activeUserIdRef.current !== nextUserId;
     authStateVersionRef.current = authStateVersion;
+    activeUserIdRef.current = nextUserId;
     setIsDevBypass(false);
     setSession(nextSession);
     setUser(nextSession?.user ?? null);
+
+    if (didChangeUser) {
+      profileResolutionRef.current = null;
+      setProfile(null);
+      await queryClient.cancelQueries({
+        predicate: (query) => isSupabaseUserQuery(query.queryKey),
+      });
+      queryClient.removeQueries({
+        predicate: (query) => isSupabaseUserQuery(query.queryKey),
+      });
+    }
 
     if (!nextSession?.user) {
       if (isMountedRef.current && authStateVersionRef.current === authStateVersion) {
@@ -193,22 +208,27 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }, [resolveUserProfile]);
 
   const refreshProfile = useCallback(async () => {
+    const requestedUserId = activeUserIdRef.current;
     const nextProfile = await getMyProfile();
 
-    if (isMountedRef.current) {
+    if (
+      isMountedRef.current &&
+      requestedUserId &&
+      activeUserIdRef.current === requestedUserId &&
+      nextProfile?.id === requestedUserId
+    ) {
       authStateVersionRef.current += 1;
       setProfile(nextProfile);
-      if (nextProfile) {
-        setProfileError(null);
-        setProfileStatus('resolved');
-      }
+      setProfileError(null);
+      setProfileStatus('resolved');
+      return nextProfile;
     }
 
-    return nextProfile;
+    return null;
   }, []);
 
   const setProfileSnapshot = useCallback((nextProfile: AuthProfile) => {
-    if (isMountedRef.current) {
+    if (isMountedRef.current && activeUserIdRef.current === nextProfile.id) {
       authStateVersionRef.current += 1;
       setProfile(nextProfile);
       setProfileError(null);
@@ -232,6 +252,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (result.devBypass) {
         if (isMountedRef.current) {
           authStateVersionRef.current += 1;
+          activeUserIdRef.current = null;
           setIsDevBypass(true);
           setSession(null);
           setUser(null);
@@ -282,6 +303,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
       if (isMountedRef.current) {
         authStateVersionRef.current += 1;
+        activeUserIdRef.current = null;
         profileResolutionRef.current = null;
         setSession(null);
         setUser(null);
@@ -373,6 +395,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
       if (isMountedRef.current) {
         authStateVersionRef.current += 1;
+        activeUserIdRef.current = null;
         profileResolutionRef.current = null;
         setSession(null);
         setUser(null);

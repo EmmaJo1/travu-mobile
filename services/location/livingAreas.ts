@@ -25,6 +25,16 @@ export type LivingAreaProfileValue = {
   placeId?: string | null;
 };
 
+export type ConfirmedLivingAreaProfilePatch = {
+  based_in: string | null;
+  based_in_city: string | null;
+  based_in_country: string | null;
+  based_in_country_code: string | null;
+  based_in_google_place_id: string | null;
+  based_in_latitude: number | null;
+  based_in_longitude: number | null;
+};
+
 const METROPOLITAN_EXCLUSION_RADIUS_KM = 45;
 const CITY_EXCLUSION_RADIUS_KM = 30;
 
@@ -262,5 +272,19 @@ export function createLivingAreaFromProfile(
     source: canonicalArea?.source ?? 'manual',
     scope: canonicalArea?.scope ?? 'locality',
     exclusionRadiusKm: canonicalArea?.exclusionRadiusKm ?? CITY_EXCLUSION_RADIUS_KM,
+  };
+}
+
+export function createConfirmedLivingAreaProfilePatch(
+  livingArea: LivingArea | null,
+): ConfirmedLivingAreaProfilePatch {
+  return {
+    based_in: livingArea?.displayName ?? null,
+    based_in_city: livingArea?.locality ?? livingArea?.displayName ?? null,
+    based_in_country: livingArea?.countryName ?? null,
+    based_in_country_code: livingArea?.countryCode ?? null,
+    based_in_google_place_id: livingArea?.providerPlaceId ?? null,
+    based_in_latitude: livingArea?.latitude ?? null,
+    based_in_longitude: livingArea?.longitude ?? null,
   };
 }
