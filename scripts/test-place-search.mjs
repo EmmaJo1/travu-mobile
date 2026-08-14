@@ -157,6 +157,13 @@ test('Google 검색 결과 선택 시 검색어가 아니라 선택한 display n
   assert.equal(source.includes('name: trimmedSearchText,\n        googleDisplayName: result.displayName,'), false);
 });
 
+test('Google 장소 선택 후 중복 저장 이름 입력 필드를 표시하지 않는다', async () => {
+  const source = await readFile(new URL('../components/record/PlaceCreateModal.tsx', import.meta.url), 'utf8');
+  assert.equal(source.includes('저장할 장소 이름'), false);
+  assert.equal(source.includes('googleLabelInput'), false);
+  assert.equal(source.includes('Google Maps 장소:'), false);
+});
+
 test('auth/config/quota/empty error를 안전한 문구로 정규화한다', () => {
   assert.match(getPlaceSearchErrorMessage('UNAUTHORIZED'), /로그인/);
   assert.match(getPlaceSearchErrorMessage('SERVER_CONFIGURATION_ERROR'), /직접 추가/);
