@@ -1,7 +1,7 @@
 import {
   convertDateToPlaceEntryTime,
   formatPlaceEntryTime,
-} from './placeEntryTime.ts';
+} from './placeEntryTime';
 
 /**
  * For newly created place entries, an explicit/manual/photo-derived time wins.
