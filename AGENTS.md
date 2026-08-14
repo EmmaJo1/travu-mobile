@@ -67,7 +67,7 @@ Examples:
 
 Do not change this behavior when adding app localization.
 
-## Saved travel/place geographic labels follow the app language
+## Saved travel/place geographic labels follow the app language at display time
 
 Geographic labels that belong to saved travel/place data should follow the app's selected language when localization is available. This includes items such as:
 
@@ -78,7 +78,15 @@ Geographic labels that belong to saved travel/place data should follow the app's
 
 Example when the app language is Korean:
 
-- city: `오사카시`
-- country: `일본`
+- city display: `오사카`
+- country display: `일본`
+
+Important persistence rule:
+
+- Do **not** rewrite Google place identity, coordinates, or source geographic values into a permanently Korean-only form just to satisfy the current UI language.
+- Keep `google_place_id` and coordinates language-independent.
+- Treat Google-returned city/country/address strings as source data/fallback data.
+- Apply locale-aware labels in the presentation/mapping layer so a future app-language setting can switch display languages without a database rewrite.
+- If a translation for the selected app language is unavailable, fall back to the source value rather than forcing Korean.
 
 This rule does **not** apply to the Home header current-device-location label, which remains English.
