@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
+import { getAppContentLanguageCode } from '../services/localization/appLanguage.ts';
 import {
   getPlaceSearchErrorMessage,
   mapAddressComponents,
@@ -162,6 +163,28 @@ test('Google 장소 선택 후 중복 저장 이름 입력 필드를 표시하�
   assert.equal(source.includes('저장할 장소 이름'), false);
   assert.equal(source.includes('googleLabelInput'), false);
   assert.equal(source.includes('Google Maps 장소:'), false);
+});
+
+test('현재 app-facing 장소 언어 source of truth는 한국어다', () => {
+  assert.equal(getAppContentLanguageCode(), 'ko');
+});
+
+test('Places client가 autocomplete와 geocode 모두 app language를 전달한다', async () => {
+  const source = await readFile(new URL('../services/placeSearch/googlePlaces.ts', import.meta.url), 'utf8');
+  assert.equal(source.includes('const languageCode = getAppContentLanguageCode();'), true);
+  assert.equal((source.match(/languageCode,/g) ?? []).length >= 2, true);
+});
+
+test('Edge Function이 Google Autocomplete와 Geocoding에 languageCode를 전달한다', async () => {
+  const source = await readFile(new URL('../supabase/functions/google-places/index.ts', import.meta.url), 'utf8');
+  assert.equal(source.includes('languageCode,\n      ...(locationBias'), true);
+  assert.equal(source.includes('?languageCode=${encodeURIComponent(languageCode)}'), true);
+});
+
+test('Home 현재 기기 위치 라벨은 app language와 무관하게 영어 규칙을 유지한다', async () => {
+  const source = await readFile(new URL('../app/(tabs)/index.tsx', import.meta.url), 'utf8');
+  assert.equal(source.includes('const label = getEnglishDeviceLocationLabelFromLocality(locality);'), true);
+  assert.equal(source.includes('getAppContentLanguageCode'), false);
 });
 
 test('auth/config/quota/empty error를 안전한 문구로 정규화한다', () => {
