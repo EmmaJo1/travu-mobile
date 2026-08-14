@@ -5413,6 +5413,9 @@ async function scanPhotoLibraryForTripDrafts(
       console.info('[photo-import home region] filter loaded', {
         basedIn: options.livingArea?.displayName,
         basedInPlaceExists: Boolean(options.livingArea?.displayName),
+        confirmedLivingAreaAdministrativeArea: options.livingArea?.administrativeArea,
+        confirmedLivingAreaId: options.livingArea?.id,
+        confirmedLivingAreaLocality: options.livingArea?.locality,
         hasHomeRegion: Boolean(options.livingArea),
         hasValidCoordinates: true,
         homeRegionFilterLoaded: true,
@@ -5442,6 +5445,17 @@ async function scanPhotoLibraryForTripDrafts(
   const hiddenHomeRegionCandidateCount = homeRegionEvaluations.filter(
     ({ result }) => result.shouldHide,
   ).length;
+  const homeRegionCandidateKeptBecauseUnknownCount = homeRegionEvaluations.filter(
+    ({ result }) => (
+      result.insideGroupCount > 0 &&
+      result.outsideGroupCount === 0 &&
+      result.unknownGroupCount > 0
+    ),
+  ).length;
+  const homeRegionUnknownGroupCount = homeRegionEvaluations.reduce(
+    (total, { result }) => total + result.unknownGroupCount,
+    0,
+  );
   const draftByIdForHomeRegion = new Map(nextDrafts.map((draft) => [draft.id, draft]));
   const livingAreaExcludedPhotoCount = homeRegionEvaluations.reduce((total, { draftId, result }) => (
     result.shouldHide ? total + (draftByIdForHomeRegion.get(draftId)?.debugMetadata.photoCount ?? 0) : total
@@ -5459,8 +5473,10 @@ async function scanPhotoLibraryForTripDrafts(
     summarizeDraftPhotoDates(sortedNextDrafts),
     {
       candidatesHiddenHomeRegionAfter2024May,
+      homeRegionCandidateKeptBecauseUnknownCount,
       homeRegionCandidateHiddenCount: hiddenHomeRegionCandidateCount,
       homeRegionFilterLoaded: hasValidLoadedHomeRegion,
+      homeRegionUnknownGroupCount,
       livingAreaExcludedPhotoCount,
       livingAreaUnclassifiedPhotoCount,
       scanAttemptId,
@@ -5554,6 +5570,7 @@ async function scanPhotoLibraryForTripDrafts(
       hiddenHomeRegionCandidateCount,
       homeRegionCandidateFilterEntryPoint: options.source ?? 'home',
       homeRegionCandidateHiddenCount: hiddenHomeRegionCandidateCount,
+      homeRegionCandidateKeptBecauseUnknownCount,
       homeRegionCandidateUnknownLocationCount: livingAreaUnclassifiedPhotoCount,
       homeRegionCandidateVisibleCount: nextDrafts.length - hiddenHomeRegionCandidateCount,
       homeRegionFilterLoaded: hasValidLoadedHomeRegion,
@@ -5561,6 +5578,7 @@ async function scanPhotoLibraryForTripDrafts(
       homeRegionFilterSkippedReason: hasValidLoadedHomeRegion
         ? undefined
         : options.homeRegionFilterSkipReason ?? (options.livingArea ? 'invalid_coordinates' : 'not_configured'),
+      homeRegionUnknownGroupCount,
       livingAreaApplied: hasValidLoadedHomeRegion,
       livingAreaDisplayName: options.livingArea?.displayName,
       livingAreaExcludedPhotoCount,
@@ -5597,6 +5615,8 @@ async function scanPhotoLibraryForTripDrafts(
     summarizeDraftPhotoDates(visibleDrafts),
     {
       candidatesHiddenHomeRegionAfter2024May,
+      homeRegionCandidateKeptBecauseUnknownCount,
+      homeRegionUnknownGroupCount,
       candidatesHiddenSavedAfter2024May,
       candidatesRejectedConfidenceAfter2024May,
       candidatesRejectedRepeatedLocalAfter2024May,

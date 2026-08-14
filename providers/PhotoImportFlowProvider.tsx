@@ -212,9 +212,15 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
               Number.isFinite(resolvedLivingArea.latitude) &&
               Number.isFinite(resolvedLivingArea.longitude),
           ),
+          confirmedLivingAreaAdministrativeArea: confirmedLivingArea?.administrativeArea,
           homeRegionFilterSkipReason: options.homeRegionFilterSkipReason,
-          livingAreaDisplayName: resolvedLivingArea?.displayName,
           confirmedLivingAreaDisplayName: confirmedLivingArea?.displayName,
+          confirmedLivingAreaId: confirmedLivingArea?.id,
+          confirmedLivingAreaLocality: confirmedLivingArea?.locality,
+          livingAreaAdministrativeArea: resolvedLivingArea?.administrativeArea,
+          livingAreaDisplayName: resolvedLivingArea?.displayName,
+          livingAreaId: resolvedLivingArea?.id,
+          livingAreaLocality: resolvedLivingArea?.locality,
         });
       }
 
