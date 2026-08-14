@@ -3,6 +3,7 @@ import { getPlaceCategoryLabel } from '@/constants/placeCategories';
 import type { ResolvedPhotoRow } from '@/services/supabase/photos';
 import type { PlaceRow } from '@/services/supabase/places';
 import type { RecordRow } from '@/services/supabase/records';
+import { normalizePersistedPlaceSource } from '@/services/placeSearch/mappers';
 import {
   formatLocalDateKeyFromTimestamp,
   formatVisitedAtTimeLabel,
@@ -67,7 +68,7 @@ export function mapSupabasePlacesToPlaceEntries(
       placeName: place.custom_name ?? place.name,
       recordId: firstRecord?.id,
       recordCount: placeRecords.length,
-      source: 'manual',
+      source: normalizePersistedPlaceSource(place.source),
       text,
       time,
       tripDayId: place.trip_day_id ?? firstRecord?.trip_day_id ?? undefined,

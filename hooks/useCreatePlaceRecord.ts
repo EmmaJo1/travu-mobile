@@ -11,6 +11,7 @@ import {
 } from '@/services/supabase/places';
 import { createRecordForPlace, type RecordRow } from '@/services/supabase/records';
 import { buildVisitedAtIso } from '@/utils/placeEntryTime';
+import { buildCreatePlaceIdentity } from '@/services/placeSearch/persistence';
 
 export interface CreatePlaceRecordInput extends PlaceCreateInput {
   tripDayId: string;
@@ -44,17 +45,18 @@ export function useCreatePlaceRecord() {
       const shouldCreateRecord = Boolean(recordText);
       const dateKey = input.dateKey ?? parseDateKeyFromDateLabel(input.dateLabel);
       const visitedAt = buildVisitedAtIso(dateKey, input.time);
+      const placeIdentity = buildCreatePlaceIdentity(input);
       const place = await createPlaceForTripDay({
-        address: input.formattedAddress ?? null,
-        city: input.cityName ?? input.city ?? null,
+        address: placeIdentity.address,
+        city: placeIdentity.city,
         category: normalizePlaceCategoryValue(input.category) ?? null,
-        country: input.countryName ?? null,
-        googlePlaceId: input.googlePlaceId ?? null,
-        latitude: input.latitude ?? null,
-        longitude: input.longitude ?? null,
+        country: placeIdentity.country,
+        googlePlaceId: placeIdentity.googlePlaceId,
+        latitude: placeIdentity.latitude,
+        longitude: placeIdentity.longitude,
         memo: null,
         name: placeName,
-        source: input.googlePlaceId ? 'google' : 'manual',
+        source: placeIdentity.source,
         tripDayId: input.tripDayId,
         tripId: input.tripId,
         visitedAt,

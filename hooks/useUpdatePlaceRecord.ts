@@ -5,6 +5,7 @@ import { normalizePlaceCategoryValue } from '@/constants/placeCategories';
 import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
 import { useAuth } from '@/providers/AuthProvider';
 import { updatePlace } from '@/services/supabase/places';
+import { buildPlaceIdentityPatch } from '@/services/placeSearch/persistence';
 import { createRecordForPlace, updateRecord } from '@/services/supabase/records';
 import { buildVisitedAtIso } from '@/utils/placeEntryTime';
 
@@ -43,12 +44,8 @@ export function useUpdatePlaceRecord() {
       const dateKey = input.dateKey ?? parseDateKeyFromDateLabel(input.dateLabel);
       const visitedAt = buildVisitedAtIso(dateKey, input.time);
       const place = await updatePlace(input.placeId, {
-        address: input.formattedAddress ?? null,
-        city: input.cityName ?? input.city ?? null,
+        ...buildPlaceIdentityPatch(input),
         category: normalizePlaceCategoryValue(input.category) ?? null,
-        country: input.countryName ?? null,
-        latitude: input.latitude ?? null,
-        longitude: input.longitude ?? null,
         name: placeName,
         visited_at: visitedAt,
       });

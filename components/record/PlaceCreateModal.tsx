@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 
 import AuthActionButton from '@/components/common/AuthActionButton';
+import AppTextInput from '@/components/common/AppTextInput';
 import Text from '@/components/common/AppText';
 import { PlaceSearchContent, type PlaceOption } from '@/components/common/PlaceSearchModal';
 import ManualPlaceEntryView from '@/components/record/ManualPlaceEntryView';
@@ -41,6 +42,7 @@ import {
 export interface PlaceCreateInput {
   source?: SelectedPlace['source'];
   googlePlaceId?: string;
+  googleDisplayName?: string;
   place: string;
   placeName?: string;
   formattedAddress?: string;
@@ -49,6 +51,7 @@ export interface PlaceCreateInput {
   city?: string;
   cityName?: string;
   countryName?: string;
+  countryCode?: string;
   latitude?: number;
   longitude?: number;
   text?: string;
@@ -220,10 +223,12 @@ function getInitialSelectedPlace(value?: Partial<PlaceCreateInput>): SelectedPla
   return {
     source: value?.source ?? 'manual',
     googlePlaceId: value?.googlePlaceId,
+    googleDisplayName: value?.googleDisplayName,
     placeName,
     formattedAddress: value?.formattedAddress,
     cityName: value?.cityName ?? value?.city,
     countryName: value?.countryName,
+    countryCode: value?.countryCode,
     latitude: value?.latitude,
     longitude: value?.longitude,
   };
@@ -248,6 +253,8 @@ function toPlaceOption(place?: SelectedPlace): PlaceOption | null {
     address: place.formattedAddress,
     city: place.cityName,
     country: place.countryName,
+    countryCode: place.countryCode,
+    googleDisplayName: place.googleDisplayName,
     placeId: place.googlePlaceId,
     latitude: place.latitude,
     longitude: place.longitude,
@@ -257,12 +264,14 @@ function toPlaceOption(place?: SelectedPlace): PlaceOption | null {
 
 function toSelectedPlace(place: PlaceOption): SelectedPlace {
   return {
-    source: place.source === 'manual' ? 'manual' : 'mock',
+    source: place.source,
     googlePlaceId: place.placeId,
+    googleDisplayName: place.googleDisplayName,
     placeName: place.name,
     formattedAddress: place.address,
     cityName: place.city,
     countryName: place.country,
+    countryCode: place.countryCode,
     latitude: place.latitude,
     longitude: place.longitude,
   };
@@ -584,7 +593,7 @@ export default function PlaceCreateModal({
       return;
     }
 
-    const trimmedPlace = (selectedPlace?.placeName ?? place).trim();
+    const trimmedPlace = place.trim();
 
     if (
       !trimmedPlace ||
@@ -606,6 +615,7 @@ export default function PlaceCreateModal({
       await onSubmit({
         ...resolvedPlace,
         place: trimmedPlace,
+        placeName: trimmedPlace,
         time: time.trim() || undefined,
         category: category.trim() || undefined,
         city: resolvedPlace.cityName,
@@ -629,7 +639,7 @@ export default function PlaceCreateModal({
   const canSubmit =
     !isSubmitting &&
     (mode !== 'edit' ||
-      (selectedPlace?.placeName ?? place).trim() !==
+      place.trim() !==
         (initialValue?.placeName ?? initialValue?.place ?? '').trim() ||
       time.trim() !== (initialValue?.time ?? '').trim() ||
       category !== (normalizePlaceCategoryValue(initialValue?.category) ?? '') ||
@@ -640,7 +650,7 @@ export default function PlaceCreateModal({
       photoSources.length !== (initialValue?.photoSources ?? []).length ||
       photoAssets.map((asset) => asset.uri).join('|') !==
         (initialValue?.photoAssets ?? []).map((asset) => asset.uri).join('|')) &&
-    (selectedPlace?.placeName ?? place).trim().length > 0 &&
+    place.trim().length > 0 &&
     (availableDayOptions.length === 0 || Boolean(selectedDay)) &&
     (!requireTripDay || Boolean(selectedDay));
 
@@ -900,6 +910,20 @@ export default function PlaceCreateModal({
                   subtitle={getPlaceSubtitle(selectedPlace)}
                   value={selectedPlace?.placeName ?? place}
                 />
+                {selectedPlace?.source === 'google' ? (
+                  <View style={styles.googleLabelField}>
+                    <Text style={styles.googleReferenceText}>
+                      Google Maps 장소: {selectedPlace.googleDisplayName ?? selectedPlace.placeName}
+                    </Text>
+                    <AppTextInput
+                      onChangeText={setPlace}
+                      placeholder="저장할 장소 이름"
+                      placeholderTextColor={Colors.foundation.grey500}
+                      style={styles.googleLabelInput}
+                      value={place}
+                    />
+                  </View>
+                ) : null}
                 {!showOptionalRecordSection ? travelDayField : null}
                 <SelectField
                   label="방문 시간"
@@ -1418,6 +1442,23 @@ const styles = StyleSheet.create({
   },
   selectPlaceholder: {
     color: Colors.foundation.grey500,
+  },
+  googleLabelField: {
+    gap: Spacing.sm,
+  },
+  googleReferenceText: {
+    ...Typography.captionRegular,
+    color: Colors.foundation.grey600,
+  },
+  googleLabelInput: {
+    height: 44,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 0,
+    borderWidth: 1,
+    borderColor: Colors.foundation.grey500,
+    borderRadius: Radius.sm,
+    color: Colors.foundation.black,
+    ...Typography.body2Regular,
   },
   recordInput: {
     minHeight: 104,

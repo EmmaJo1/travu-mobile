@@ -26,7 +26,7 @@ import { resolveCountryCodeFromPlace } from '@/services/location/countryCodes';
 
 export interface PlaceEntry {
   id: string;
-  source?: 'mock' | 'manual' | 'detected';
+  source?: 'mock' | 'google' | 'manual' | 'detected';
   dataSource?: 'local' | 'mock' | 'supabase' | 'detected';
   placeId?: string;
   recordId?: string;

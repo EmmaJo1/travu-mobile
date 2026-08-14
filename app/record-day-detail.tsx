@@ -2478,7 +2478,7 @@ export default function RecordDayDetailScreen() {
           editingEntry
             ? {
               ...editingEntry,
-              source: editingEntry.source === 'mock' ? ('mock' as const) : ('manual' as const),
+              source: editingEntry.source === 'google' ? ('google' as const) : ('manual' as const),
               dayId: getEntryDayId(editingEntry),
             }
             : {

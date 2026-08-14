@@ -68,6 +68,7 @@ import { useTripDays } from '@/hooks/useTripDays';
 import { usePlacePhotos } from '@/hooks/useSupabasePhotos';
 import { useAuth } from '@/providers/AuthProvider';
 import { updatePlace, type PlaceRow, type UpdatePlacePatch } from '@/services/supabase/places';
+import { buildPlaceIdentityPatch } from '@/services/placeSearch/persistence';
 import type { TripDayRow } from '@/services/supabase/tripDays';
 import {
   createRecordForPlace,
@@ -1944,9 +1945,8 @@ export default function PlaceDetailScreen() {
         const previousTripDayId = initialDetail.dayId || routeDayId || '';
         const nextTripDayId = input.dayId ?? previousTripDayId;
         const patch: UpdatePlacePatch = {
+          ...buildPlaceIdentityPatch(input),
           category: normalizePlaceCategoryValue(input.category) ?? null,
-          city: nextPlaceInfo.cityName || null,
-          country: nextPlaceInfo.countryName || null,
           name: nextPlaceInfo.placeName.trim() || placeInfo.placeName,
         };
         const visitedAt = resolveVisitedAtForPlaceUpdate(
@@ -1957,18 +1957,6 @@ export default function PlaceDetailScreen() {
           },
           placeInfo.dateLabel,
         );
-
-        if (input.formattedAddress !== undefined) {
-          patch.address = input.formattedAddress || null;
-        }
-
-        if (typeof input.latitude === 'number') {
-          patch.latitude = input.latitude;
-        }
-
-        if (typeof input.longitude === 'number') {
-          patch.longitude = input.longitude;
-        }
 
         if (visitedAt !== undefined) {
           patch.visited_at = visitedAt;
@@ -2780,6 +2768,11 @@ export default function PlaceDetailScreen() {
           city: placeInfo.cityName,
           cityName: placeInfo.cityName,
           countryName: placeInfo.countryName,
+          source: supabasePlaceDetailData?.place?.source === 'google' ? 'google' : 'manual',
+          googlePlaceId: supabasePlaceDetailData?.place?.google_place_id ?? undefined,
+          formattedAddress: supabasePlaceDetailData?.place?.address ?? undefined,
+          latitude: supabasePlaceDetailData?.place?.latitude ?? undefined,
+          longitude: supabasePlaceDetailData?.place?.longitude ?? undefined,
           time: placeInfo.timeLabel,
           category: placeInfo.categoryLabel,
           dayId: selectedPlaceInfoDayId,

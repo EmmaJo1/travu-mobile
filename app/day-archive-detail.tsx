@@ -960,7 +960,7 @@ export default function DayArchiveDetailScreen() {
       editingArchiveEntry
         ? {
           ...editingArchiveEntry,
-          source: editingArchiveEntry.source === 'mock' ? ('mock' as const) : ('manual' as const),
+          source: editingArchiveEntry.source === 'google' ? ('google' as const) : ('manual' as const),
           dayId: editingArchiveEntry.dayId ?? editingArchiveEntry.tripDayId ?? selectedRouteDayId,
           dayNumber: editingArchiveEntry.dayNumber ?? selectedRouteDayIndex,
           dateLabel:
