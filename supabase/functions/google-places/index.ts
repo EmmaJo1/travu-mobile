@@ -27,11 +27,14 @@ const GEOCODE_FIELD_MASK = [
   'addressComponents.types',
 ].join(',');
 const REQUEST_TIMEOUT_MS = 8000;
+const DEFAULT_APP_LANGUAGE_CODE = 'ko';
+const LANGUAGE_CODE_PATTERN = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 
 type RequestBody = {
   operation?: unknown;
   query?: unknown;
   placeId?: unknown;
+  languageCode?: unknown;
   locationBias?: unknown;
 };
 
@@ -101,6 +104,21 @@ function getLocationBias(value: unknown) {
   return { circle: { center: { latitude, longitude }, radius: 50000 } };
 }
 
+function getLanguageCode(value: unknown) {
+  if (value === undefined || value === null || value === '') {
+    return DEFAULT_APP_LANGUAGE_CODE;
+  }
+  if (typeof value !== 'string') {
+    throw new GooglePlacesError('INVALID_REQUEST', 400);
+  }
+
+  const languageCode = value.trim();
+  if (!languageCode || languageCode.length > 35 || !LANGUAGE_CODE_PATTERN.test(languageCode)) {
+    throw new GooglePlacesError('INVALID_REQUEST', 400);
+  }
+  return languageCode;
+}
+
 async function googleFetch(url: string, init: RequestInit) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -139,6 +157,7 @@ async function autocomplete(body: RequestBody, apiKey: string) {
     throw new GooglePlacesError('INVALID_REQUEST', 400);
   }
 
+  const languageCode = getLanguageCode(body.languageCode);
   const locationBias = getLocationBias(body.locationBias);
   const response = await googleFetch('https://places.googleapis.com/v1/places:autocomplete', {
     method: 'POST',
@@ -150,6 +169,7 @@ async function autocomplete(body: RequestBody, apiKey: string) {
     body: JSON.stringify({
       input: query,
       includeQueryPredictions: false,
+      languageCode,
       ...(locationBias ? { locationBias } : {}),
     }),
   });
@@ -183,8 +203,9 @@ async function geocodePlace(body: RequestBody, apiKey: string) {
     throw new GooglePlacesError('INVALID_REQUEST', 400);
   }
 
+  const languageCode = getLanguageCode(body.languageCode);
   const response = await googleFetch(
-    `https://geocode.googleapis.com/v4/geocode/places/${encodeURIComponent(placeId)}`,
+    `https://geocode.googleapis.com/v4/geocode/places/${encodeURIComponent(placeId)}?languageCode=${encodeURIComponent(languageCode)}`,
     { headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': GEOCODE_FIELD_MASK } },
   );
   const result = isRecord(response) ? response : null;
