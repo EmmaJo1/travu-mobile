@@ -546,7 +546,10 @@ function BasedInLocationPicker({
 
   return (
     <Modal animationType="none" transparent visible={isPresented} onRequestClose={handleRequestClose}>
-      <View style={styles.locationModalRoot}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.locationModalRoot}
+      >
         <Pressable style={StyleSheet.absoluteFill} onPress={handleRequestClose} />
         <Animated.View
           style={[
@@ -577,6 +580,8 @@ function BasedInLocationPicker({
           </View>
 
           <ScrollView
+            style={styles.locationResultsScroll}
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.locationListContent}
@@ -626,7 +631,7 @@ function BasedInLocationPicker({
 
     
         </Animated.View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -856,6 +861,9 @@ const styles = StyleSheet.create({
     includeFontPadding: true,
     ...Typography.body2Regular,
     color: Colors.foundation.black,
+  },
+  locationResultsScroll: {
+    flexShrink: 1,
   },
   locationClearButton: {
     width: 20,

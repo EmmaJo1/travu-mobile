@@ -136,6 +136,9 @@ const SCHEDULE_SHEET_ENTER_TRANSLATE_Y = 48;
 const SCHEDULE_SHEET_EXIT_TRANSLATE_Y = 360;
 const SCHEDULE_DAY_ROW_HEIGHT = 68;
 const SCHEDULE_DAY_CENTER_OFFSET = 160;
+const HEADER_LOCATION_LAST_KNOWN_MAX_AGE_MS = 60 * 1000;
+const HEADER_LOCATION_LAST_KNOWN_REQUIRED_ACCURACY_METERS = 500;
+const HEADER_LOCATION_REFRESH_DEBOUNCE_MS = 30 * 1000;
 
 const HEADER_DIM_COLORS = [
   'rgba(38,38,38,0.4)',
@@ -380,6 +383,21 @@ type CurrentLocationDestination = {
 };
 
 type CurrentCoordinates = Pick<GeolocationCoordinates, 'latitude' | 'longitude'>;
+type HeaderLocationUpdateOptions = {
+  force?: boolean;
+  reason: 'initial' | 'focus' | 'foreground';
+};
+type HeaderLocationGeocodeResult = {
+  label: string;
+  selectedLocality: string;
+  address: {
+    city?: string | null;
+    subregion?: string | null;
+    district?: string | null;
+    region?: string | null;
+    country?: string | null;
+  };
+};
 
 class LocationPermissionDeniedError extends Error {
   constructor() {
@@ -480,6 +498,40 @@ function getDeviceLocationAdministrativeArea(
     address?.region?.trim() ||
     ''
   );
+}
+
+async function ensureHeaderLocationPermission(): Promise<boolean> {
+  const currentPermission = await Location.getForegroundPermissionsAsync();
+  const permission = currentPermission.status === 'undetermined'
+    ? await Location.requestForegroundPermissionsAsync()
+    : currentPermission;
+
+  return permission.status === 'granted';
+}
+
+async function getDeviceLocationHeaderLabel(
+  coords: CurrentCoordinates,
+): Promise<HeaderLocationGeocodeResult> {
+  const [address] = await Location.reverseGeocodeAsync({
+    latitude: coords.latitude,
+    longitude: coords.longitude,
+  });
+
+  const locality = getDeviceLocationAdministrativeArea(address);
+
+  const label = getEnglishDeviceLocationLabelFromLocality(locality);
+
+  return {
+    label,
+    selectedLocality: locality,
+    address: {
+      city: address?.city,
+      subregion: address?.subregion,
+      district: address?.district,
+      region: address?.region,
+      country: address?.country,
+    },
+  };
 }
 
 function requestBrowserCoordinates(): Promise<CurrentCoordinates> {
@@ -891,6 +943,7 @@ export default function HomeScreen() {
     dismissPhotoImportSavedModal,
   } = usePhotoImportFlow();
 
+  const [deviceHeaderLocationLabel, setDeviceHeaderLocationLabel] = React.useState('');
   const [currentLocalDateKey, setCurrentLocalDateKey] = React.useState(
     getCurrentLocalDateKey,
   );
@@ -932,6 +985,9 @@ export default function HomeScreen() {
   const isCompletingTripRef = React.useRef(false);
   const tripStartRequestInFlightRef = React.useRef(false);
   const tripEditRequestInFlightRef = React.useRef(false);
+  const headerLocationRequestIdRef = React.useRef(0);
+  const headerLocationRequestInFlightRef = React.useRef(false);
+  const lastHeaderLocationRequestAtRef = React.useRef(0);
   const isTimelineDeleteAlertOpenRef = React.useRef(false);
   const deletingTimelinePlaceIdRef = React.useRef<string | null>(null);
   const homeModeKey = React.useMemo(() => {
@@ -1029,6 +1085,79 @@ export default function HomeScreen() {
     refetchSupabaseTrips,
   ]);
 
+  const updateDeviceHeaderLocation = React.useCallback(async ({
+    force = false,
+  }: HeaderLocationUpdateOptions) => {
+    const now = Date.now();
+
+    if (
+      !force &&
+      now - lastHeaderLocationRequestAtRef.current < HEADER_LOCATION_REFRESH_DEBOUNCE_MS
+    ) {
+      return;
+    }
+
+    if (headerLocationRequestInFlightRef.current) {
+      return;
+    }
+
+    const requestId = headerLocationRequestIdRef.current + 1;
+    headerLocationRequestIdRef.current = requestId;
+    headerLocationRequestInFlightRef.current = true;
+    lastHeaderLocationRequestAtRef.current = now;
+
+    const applyHeaderLabel = (label: string) => {
+      if (headerLocationRequestIdRef.current === requestId) {
+        setDeviceHeaderLocationLabel(label);
+      }
+    };
+
+    try {
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+
+      if (!servicesEnabled) {
+        applyHeaderLabel('');
+        return;
+      }
+
+      const hasPermission = await ensureHeaderLocationPermission();
+
+      if (!hasPermission) {
+        applyHeaderLabel('');
+        return;
+      }
+
+      try {
+        const lastKnownPosition = await Location.getLastKnownPositionAsync({
+          maxAge: HEADER_LOCATION_LAST_KNOWN_MAX_AGE_MS,
+          requiredAccuracy: HEADER_LOCATION_LAST_KNOWN_REQUIRED_ACCURACY_METERS,
+        });
+
+        if (lastKnownPosition) {
+          const result = await getDeviceLocationHeaderLabel(lastKnownPosition.coords);
+
+          if (result.label) {
+            applyHeaderLabel(result.label);
+          }
+        }
+      } catch {
+        // Current-position lookup below is still allowed to update the header.
+      }
+
+      const currentPosition = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const result = await getDeviceLocationHeaderLabel(currentPosition.coords);
+      applyHeaderLabel(result.label);
+    } catch {
+      applyHeaderLabel('');
+    } finally {
+      if (headerLocationRequestIdRef.current === requestId) {
+        headerLocationRequestInFlightRef.current = false;
+      }
+    }
+  }, []);
+
   const synchronizeActiveTripDays = React.useCallback(async (
     tripId: string,
     targetLocalDate: string,
@@ -1082,23 +1211,29 @@ export default function HomeScreen() {
   }, [refetchActiveTrip, synchronizeActiveTripDays]);
 
   React.useEffect(() => {
+    updateDeviceHeaderLocation({ force: true, reason: 'initial' });
+
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
+        updateDeviceHeaderLocation({ force: true, reason: 'foreground' });
         refreshHomeTripActivity();
       }
     });
 
     return () => {
+      headerLocationRequestIdRef.current += 1;
+      headerLocationRequestInFlightRef.current = false;
       subscription.remove();
     };
-  }, [refreshHomeTripActivity]);
+  }, [refreshHomeTripActivity, updateDeviceHeaderLocation]);
 
   useFocusEffect(
     React.useCallback(() => {
+      updateDeviceHeaderLocation({ force: true, reason: 'focus' });
       refreshHomeTripActivity();
 
       return undefined;
-    }, [refreshHomeTripActivity]),
+    }, [refreshHomeTripActivity, updateDeviceHeaderLocation]),
   );
 
   React.useEffect(() => {
@@ -2393,7 +2528,7 @@ export default function HomeScreen() {
     activeTrip.endDate,
     activeTrip.isEndDateUndecided,
   );
-  const renderedHeaderLocationLabel = confirmedLivingArea?.displayName ?? '생활 지역 미설정';
+  const renderedHeaderLocationLabel = deviceHeaderLocationLabel.trim() || 'Set location';
   const homeHeaderTop = getHomeHeaderTop(insets.top);
   const photoImportResultCount = photoImportCandidates.length;
   const idleRecentTrips = React.useMemo(
