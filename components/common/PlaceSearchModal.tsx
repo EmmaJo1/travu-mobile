@@ -22,7 +22,10 @@ import {
   PLACE_SEARCH_DEBOUNCE_MS,
 } from '@/services/placeSearch/googlePlaces';
 import type { PlaceSearchResult } from '@/services/placeSearch/types';
-import { PlaceRequestSequence } from '@/services/placeSearch/mappers';
+import {
+  PlaceRequestSequence,
+  shouldShowGoogleMapsAttribution,
+} from '@/services/placeSearch/mappers';
 
 export type PlaceOption = {
   id: string;
@@ -248,9 +251,11 @@ export function PlaceSearchContent({
                   {index < results.length - 1 ? <View style={styles.divider} /> : null}
                 </React.Fragment>
               ))}
-            </View>
-            <View style={styles.attributionRow}>
-              <Text style={styles.attributionText}>Google Maps</Text>
+              {shouldShowGoogleMapsAttribution(results) ? (
+                <View style={styles.attributionRow}>
+                  <Text numberOfLines={1} style={styles.attributionText}>Google Maps</Text>
+                </View>
+              ) : null}
             </View>
           </>
         ) : !loading ? (
@@ -329,8 +334,12 @@ const styles = StyleSheet.create({
   placeName: { ...Typography.body2Emphasized, color: Colors.foundation.black },
   placeAddress: { ...Typography.captionRegular, color: Colors.foundation.grey600 },
   divider: { height: StyleSheet.hairlineWidth, marginLeft: 56, backgroundColor: Colors.light.borderDefault },
-  attributionRow: { alignItems: 'flex-end', paddingTop: Spacing.sm },
-  attributionText: { ...Typography.captionEmphasized, color: Colors.foundation.grey600 },
+  attributionRow: { alignItems: 'flex-end', paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.light.borderDefault },
+  attributionText: {
+    ...Typography.captionRegular,
+    // Google Maps text attribution permits this exact gray on a light background.
+    color: '#5E5E5E',
+  },
   emptyState: { alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing['3xl'] },
   emptyTitle: { ...Typography.body2Emphasized, color: Colors.foundation.grey700, textAlign: 'center' },
   emptyDescription: { ...Typography.captionRegular, color: Colors.foundation.grey500, textAlign: 'center' },

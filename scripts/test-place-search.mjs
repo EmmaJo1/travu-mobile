@@ -10,6 +10,7 @@ import {
   PLACE_SEARCH_DEBOUNCE_MS,
   PlaceRequestSequence,
   shouldRequestPlaceQuery,
+  shouldShowGoogleMapsAttribution,
 } from '../services/placeSearch/mappers.ts';
 import {
   buildCreatePlaceIdentity,
@@ -46,6 +47,16 @@ test('stale response sequence를 무시한다', () => {
   const latestRequest = policy.begin();
   assert.equal(policy.isLatest(oldRequest), false);
   assert.equal(policy.isLatest(latestRequest), true);
+});
+
+test('Google 결과가 표시될 때 attribution을 표시한다', () => {
+  assert.equal(shouldShowGoogleMapsAttribution([{
+    provider: 'google', placeId: 'place-1', displayName: 'Place One',
+  }]), true);
+});
+
+test('manual-only 상태에서는 Google attribution을 표시하지 않는다', () => {
+  assert.equal(shouldShowGoogleMapsAttribution([]), false);
 });
 
 test('autocomplete 응답을 최대 5개로 매핑한다', () => {

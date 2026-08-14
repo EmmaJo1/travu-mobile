@@ -7,6 +7,10 @@ export function shouldRequestPlaceQuery(query: string) {
   return query.trim().length >= MIN_PLACE_QUERY_LENGTH;
 }
 
+export function shouldShowGoogleMapsAttribution(results: PlaceSearchResult[]) {
+  return results.length > 0;
+}
+
 export function getPlaceSearchErrorMessage(code: string) {
   if (code === 'UNAUTHORIZED') return '장소 검색을 사용하려면 다시 로그인해주세요.';
   if (code === 'QUOTA_EXCEEDED') return '장소 검색 요청이 많아요. 잠시 후 다시 시도해주세요.';
