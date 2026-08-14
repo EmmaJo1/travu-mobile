@@ -19,7 +19,6 @@ import {
 } from 'react-native';
 
 import AuthActionButton from '@/components/common/AuthActionButton';
-import AppTextInput from '@/components/common/AppTextInput';
 import Text from '@/components/common/AppText';
 import { PlaceSearchContent, type PlaceOption } from '@/components/common/PlaceSearchModal';
 import ManualPlaceEntryView from '@/components/record/ManualPlaceEntryView';
@@ -910,20 +909,6 @@ export default function PlaceCreateModal({
                   subtitle={getPlaceSubtitle(selectedPlace)}
                   value={selectedPlace?.placeName ?? place}
                 />
-                {selectedPlace?.source === 'google' ? (
-                  <View style={styles.googleLabelField}>
-                    <Text style={styles.googleReferenceText}>
-                      Google Maps 장소: {selectedPlace.googleDisplayName ?? selectedPlace.placeName}
-                    </Text>
-                    <AppTextInput
-                      onChangeText={setPlace}
-                      placeholder="저장할 장소 이름"
-                      placeholderTextColor={Colors.foundation.grey500}
-                      style={styles.googleLabelInput}
-                      value={place}
-                    />
-                  </View>
-                ) : null}
                 {!showOptionalRecordSection ? travelDayField : null}
                 <SelectField
                   label="방문 시간"
@@ -1442,23 +1427,6 @@ const styles = StyleSheet.create({
   },
   selectPlaceholder: {
     color: Colors.foundation.grey500,
-  },
-  googleLabelField: {
-    gap: Spacing.sm,
-  },
-  googleReferenceText: {
-    ...Typography.captionRegular,
-    color: Colors.foundation.grey600,
-  },
-  googleLabelInput: {
-    height: 44,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 0,
-    borderWidth: 1,
-    borderColor: Colors.foundation.grey500,
-    borderRadius: Radius.sm,
-    color: Colors.foundation.black,
-    ...Typography.body2Regular,
   },
   recordInput: {
     minHeight: 104,
