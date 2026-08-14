@@ -75,6 +75,7 @@ import { useUpdatePlaceRecord } from '@/hooks/useUpdatePlaceRecord';
 import { isSupabaseUuid } from '@/hooks/usePlaceDetailData';
 import type { TripDayRow } from '@/services/supabase/tripDays';
 import { setTripCoverPhoto } from '@/services/supabase/photos';
+import { isUserSavedTripStatus } from '@/services/supabase/tripStatus';
 import type { TripRow } from '@/services/supabase/trips';
 import { mapSupabasePlacesToPlaceEntries } from '@/utils/supabasePlaceRecordMappers';
 import { mapSupabaseTripToMyPageTrip } from '@/utils/supabaseTripMappers';
@@ -960,7 +961,7 @@ export default function DayArchiveDetailScreen() {
       editingArchiveEntry
         ? {
           ...editingArchiveEntry,
-          source: editingArchiveEntry.source === 'mock' ? ('mock' as const) : ('manual' as const),
+          source: editingArchiveEntry.source === 'google' ? ('google' as const) : ('manual' as const),
           dayId: editingArchiveEntry.dayId ?? editingArchiveEntry.tripDayId ?? selectedRouteDayId,
           dayNumber: editingArchiveEntry.dayNumber ?? selectedRouteDayIndex,
           dateLabel:
@@ -1635,7 +1636,7 @@ export default function DayArchiveDetailScreen() {
 
   if (
     isSupabaseArchiveTrip &&
-    (!supabaseTrip || supabaseTrip.status !== 'archived')
+    (!supabaseTrip || !isUserSavedTripStatus(supabaseTrip.status))
   ) {
     return (
       <ArchiveEmptyState

@@ -1,7 +1,7 @@
 import { Feather } from '@expo/vector-icons';
 import React from 'react';
 import {
-  Image,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -9,25 +9,37 @@ import {
   ScrollView,
   StyleSheet,
   View,
-  type ImageSourcePropType,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
 import AppTextInput from '@/components/common/AppTextInput';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
+import {
+  autocompleteGooglePlaces,
+  geocodeGooglePlace,
+  MIN_PLACE_QUERY_LENGTH,
+  PLACE_SEARCH_DEBOUNCE_MS,
+} from '@/services/placeSearch/googlePlaces';
+import type { PlaceSearchResult } from '@/services/placeSearch/types';
+import {
+  PlaceRequestSequence,
+  shouldShowGoogleMapsAttribution,
+} from '@/services/placeSearch/mappers';
 
 export type PlaceOption = {
   id: string;
   name: string;
-  category?: string;
+  googleDisplayName?: string;
   address?: string;
   city?: string;
   country?: string;
+  countryCode?: string;
   placeId?: string;
   latitude?: number;
   longitude?: number;
-  source: 'mock' | 'google' | 'manual';
+  googleTypes?: string[];
+  source: 'google' | 'manual';
 };
 
 export type PlaceSearchContext = {
@@ -46,299 +58,51 @@ export type PlaceSearchModalProps = PlaceSearchContext & {
   onClose: () => void;
   onBack?: () => void;
   title?: string;
-  showFixtureSuggestions?: boolean;
 };
 
 export type PlaceSearchContentProps = PlaceSearchContext & {
   selectedPlace?: PlaceOption | null;
   onSelectPlace: (place: PlaceOption) => void;
   autoFocus?: boolean;
-  showFixtureSuggestions?: boolean;
 };
-
-export type PlaceSearchResult = PlaceOption & {
-  thumbnail?: ImageSourcePropType;
-  searchKeywords?: string[];
-};
-
-const PLACE_IMAGES = {
-  osakaCastle: require('@/assets/images/mypage-trips/mypage-trip-osaka.png'),
-  osakaPark: require('@/assets/images/record-trip-kyoto-day-3.png'),
-  dotonbori: require('@/assets/images/record-trip-kyoto-day-1.png'),
-  umeda: require('@/assets/images/record-trip-kyoto-day-5.png'),
-  louvre: require('@/assets/images/home-photo-candidate-3.png'),
-  notreDame: require('@/assets/images/home-photo-candidate-1.png'),
-  eiffel: require('@/assets/images/archive-frame-paris.jpg'),
-  sydneyOpera: require('@/assets/images/record-trip-sydney-cover.png'),
-  bondi: require('@/assets/images/record-trip-sydney-day-3.png'),
-} as const;
-
-const PLACE_DATA: Record<string, PlaceSearchResult[]> = {
-  osaka: [
-    {
-      id: 'osaka-castle',
-      name: '오사카성',
-      category: '관광명소',
-      address: '1-1 Osakajo, Chuo Ward, Osaka 540-0002 Japan',
-      city: '오사카',
-      country: '일본',
-      placeId: 'mock-osaka-castle',
-      latitude: 34.6873,
-      longitude: 135.5262,
-      source: 'mock',
-      thumbnail: PLACE_IMAGES.osakaCastle,
-      searchKeywords: ['osaka castle', 'castle', '오사카성'],
-    },
-    {
-      id: 'osaka-castle-park',
-      name: '오사카성 공원',
-      category: '공원',
-      address: 'Osakajo, Chuo Ward, Osaka, Japan',
-      city: '오사카',
-      country: '일본',
-      placeId: 'mock-osaka-castle-park',
-      latitude: 34.687,
-      longitude: 135.527,
-      source: 'mock',
-      thumbnail: PLACE_IMAGES.osakaPark,
-      searchKeywords: ['park', '공원'],
-    },
-    {
-      id: 'dotonbori',
-      name: '도톤보리',
-      category: '관광명소',
-      address: 'Dotonbori, Chuo Ward, Osaka, Japan',
-      city: '오사카',
-      country: '일본',
-      placeId: 'mock-dotonbori',
-      latitude: 34.6687,
-      longitude: 135.5013,
-      source: 'mock',
-      thumbnail: PLACE_IMAGES.dotonbori,
-      searchKeywords: ['dotonbori', '도톤보리'],
-    },
-    {
-      id: 'umeda-sky-building',
-      name: '우메다 스카이 빌딩',
-      category: '전망대',
-      address: '1 Chome-1-88 Oyodonaka, Kita Ward, Osaka, Japan',
-      city: '오사카',
-      country: '일본',
-      placeId: 'mock-umeda-sky-building',
-      latitude: 34.7053,
-      longitude: 135.49,
-      source: 'mock',
-      thumbnail: PLACE_IMAGES.umeda,
-      searchKeywords: ['umeda', 'sky building', '우메다'],
-    },
-  ],
-  paris: [
-    {
-      id: 'notre-dame',
-      name: '노트르담 대성당',
-      category: '관광명소',
-      address: '6 Parvis Notre-Dame, 75004 Paris, France',
-      city: '파리',
-      country: '프랑스',
-      placeId: 'mock-notre-dame',
-      latitude: 48.853,
-      longitude: 2.3499,
-      source: 'mock',
-      thumbnail: PLACE_IMAGES.notreDame,
-      searchKeywords: ['notre dame', 'cathedral', '노트르담'],
-    },
-    {
-      id: 'louvre',
-      name: '루브르 박물관',
-      category: '박물관',
-      address: 'Rue de Rivoli, 75001 Paris, France',
-      city: '파리',
-      country: '프랑스',
-      placeId: 'mock-louvre',
-      latitude: 48.8606,
-      longitude: 2.3376,
-      source: 'mock',
-      thumbnail: PLACE_IMAGES.louvre,
-      searchKeywords: ['louvre', 'museum', '루브르'],
-    },
-    {
-      id: 'eiffel-tower',
-      name: '에펠탑',
-      category: '관광명소',
-      address: 'Champ de Mars, 5 Av. Anatole France, 75007 Paris',
-      city: '파리',
-      country: '프랑스',
-      placeId: 'mock-eiffel-tower',
-      latitude: 48.8584,
-      longitude: 2.2945,
-      source: 'mock',
-      thumbnail: PLACE_IMAGES.eiffel,
-      searchKeywords: ['eiffel tower', 'tour eiffel', '에펠탑'],
-    },
-  ],
-  sydney: [
-    {
-      id: 'sydney-opera-house',
-      name: '오페라 하우스',
-      category: '관광명소',
-      address: 'Bennelong Point, Sydney NSW 2000 Australia',
-      city: '시드니',
-      country: '오스트레일리아',
-      placeId: 'mock-sydney-opera-house',
-      latitude: -33.8568,
-      longitude: 151.2153,
-      source: 'mock',
-      thumbnail: PLACE_IMAGES.sydneyOpera,
-      searchKeywords: ['opera house', 'sydney opera', '오페라'],
-    },
-    {
-      id: 'bondi-beach',
-      name: '본다이 비치',
-      category: '해변',
-      address: 'Bondi Beach NSW 2026 Australia',
-      city: '시드니',
-      country: '오스트레일리아',
-      placeId: 'mock-bondi-beach',
-      latitude: -33.8915,
-      longitude: 151.2767,
-      source: 'mock',
-      thumbnail: PLACE_IMAGES.bondi,
-      searchKeywords: ['bondi', 'beach', '본다이'],
-    },
-  ],
-};
-
-function normalize(value?: string) {
-  return value?.trim().toLocaleLowerCase() ?? '';
-}
-
-function getDestinationKey(context: PlaceSearchContext): keyof typeof PLACE_DATA {
-  const target = normalize(
-    [context.tripDestinationName, context.tripDestinationCountry].filter(Boolean).join(' '),
-  );
-
-  if (target.includes('paris') || target.includes('파리') || target.includes('france') || target.includes('프랑스')) {
-    return 'paris';
-  }
-
-  if (
-    target.includes('sydney') ||
-    target.includes('시드니') ||
-    target.includes('australia') ||
-    target.includes('오스트레일리아') ||
-    target.includes('호주')
-  ) {
-    return 'sydney';
-  }
-
-  return 'osaka';
-}
-
-function getAllPlaces() {
-  return Object.values(PLACE_DATA).flat();
-}
-
-export function getRecommendedPlacesByTripContext(context: PlaceSearchContext): PlaceSearchResult[] {
-  return PLACE_DATA[getDestinationKey(context)];
-}
-
-export function searchPlacesByTripContext(
-  query: string,
-  context: PlaceSearchContext,
-): PlaceSearchResult[] {
-  const normalizedQuery = normalize(query);
-
-  if (!normalizedQuery) {
-    return [];
-  }
-
-  const destinationPlaces = getRecommendedPlacesByTripContext(context);
-  const fallbackPlaces = getAllPlaces().filter((place) => !destinationPlaces.includes(place));
-  const results = [...destinationPlaces, ...fallbackPlaces];
-
-  return results.filter((place) => {
-    const fields = [
-      place.name,
-      place.category,
-      place.address,
-      place.city,
-      place.country,
-      ...(place.searchKeywords ?? []),
-    ].map(normalize);
-
-    return fields.some((field) => field.includes(normalizedQuery));
-  });
-}
-
-function toPlaceOption(place: PlaceSearchResult): PlaceOption {
-  return {
-    id: place.id,
-    name: place.name,
-    category: place.category,
-    address: place.address,
-    city: place.city,
-    country: place.country,
-    placeId: place.placeId,
-    latitude: place.latitude,
-    longitude: place.longitude,
-    source: place.source,
-  };
-}
 
 export function createManualPlaceFromSearchText(
   searchText: string,
   context: PlaceSearchContext,
 ): PlaceOption {
-  const trimmedName = searchText.trim();
-
+  const name = searchText.trim();
   return {
     id: `manual-${Date.now()}`,
-    name: trimmedName,
+    name,
     city: context.tripDestinationName,
     country: context.tripDestinationCountry,
     source: 'manual',
   };
 }
 
-function formatPlaceLocation(place: PlaceOption) {
-  return [place.category, [place.city, place.country].filter(Boolean).join(', ')]
-    .filter(Boolean)
-    .join(' · ');
-}
-
 function PlaceResultRow({
   place,
-  selected,
+  disabled,
   onPress,
 }: {
   place: PlaceSearchResult;
-  selected: boolean;
+  disabled: boolean;
   onPress: () => void;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ selected }}
-      style={styles.placeRow}
+      disabled={disabled}
       onPress={onPress}
+      style={({ pressed }) => [styles.placeRow, pressed && styles.pressedRow]}
     >
-      {place.thumbnail ? (
-        <Image source={place.thumbnail} resizeMode="cover" style={styles.placeImage} />
-      ) : (
-        <View style={[styles.placeImage, styles.imagePlaceholder]} />
-      )}
-
+      <View style={styles.pinWrap}>
+        <Feather name="map-pin" size={18} color={Colors.foundation.grey700} />
+      </View>
       <View style={styles.placeTextBlock}>
-        <Text style={styles.placeName} numberOfLines={1}>
-          {place.name}
-        </Text>
-        <Text style={styles.placeLocation} numberOfLines={1}>
-          {formatPlaceLocation(place)}
-        </Text>
-        {place.address ? (
-          <Text style={styles.placeAddress} numberOfLines={1}>
-            {place.address}
-          </Text>
+        <Text numberOfLines={1} style={styles.placeName}>{place.displayName}</Text>
+        {place.secondaryText ? (
+          <Text numberOfLines={2} style={styles.placeAddress}>{place.secondaryText}</Text>
         ) : null}
       </View>
     </Pressable>
@@ -352,117 +116,169 @@ export function PlaceSearchContent({
   tripDestinationCountry,
   tripLatitude,
   tripLongitude,
-  selectedPlace,
   onSelectPlace,
   autoFocus = false,
-  showFixtureSuggestions = false,
 }: PlaceSearchContentProps) {
   const [searchText, setSearchText] = React.useState('');
-
-  const context = React.useMemo(
-    () => ({
-      tripId,
-      dayId,
-      tripDestinationName,
-      tripDestinationCountry,
-      tripLatitude,
-      tripLongitude,
-    }),
-    [dayId, tripDestinationCountry, tripDestinationName, tripId, tripLatitude, tripLongitude],
-  );
-
+  const [results, setResults] = React.useState<PlaceSearchResult[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [selectingPlaceId, setSelectingPlaceId] = React.useState<string>();
+  const [errorMessage, setErrorMessage] = React.useState<string>();
+  const requestSequence = React.useRef(new PlaceRequestSequence());
+  const selectionSequence = React.useRef(new PlaceRequestSequence());
   const trimmedSearchText = searchText.trim();
-  const canShowFixtureSuggestions = __DEV__ && showFixtureSuggestions;
-  const recommendedPlaces = React.useMemo(
-    () => canShowFixtureSuggestions ? getRecommendedPlacesByTripContext(context) : [],
-    [canShowFixtureSuggestions, context],
-  );
-  const searchResults = React.useMemo(
-    () => canShowFixtureSuggestions ? searchPlacesByTripContext(trimmedSearchText, context) : [],
-    [canShowFixtureSuggestions, context, trimmedSearchText],
-  );
-  const selectedPlaceId = selectedPlace?.id ?? selectedPlace?.placeId;
-  const hasSearchText = trimmedSearchText.length > 0;
-  const visiblePlaces = hasSearchText ? searchResults : recommendedPlaces;
+  const canSearch = trimmedSearchText.length >= MIN_PLACE_QUERY_LENGTH;
 
-  const handleManualSelect = () => {
-    if (!trimmedSearchText) {
+  const context = React.useMemo(() => ({
+    tripId,
+    dayId,
+    tripDestinationName,
+    tripDestinationCountry,
+    tripLatitude,
+    tripLongitude,
+  }), [dayId, tripDestinationCountry, tripDestinationName, tripId, tripLatitude, tripLongitude]);
+
+  React.useEffect(() => {
+    const sequence = requestSequence.current.begin();
+    selectionSequence.current.begin();
+    setSelectingPlaceId(undefined);
+    setErrorMessage(undefined);
+
+    if (!canSearch) {
+      setResults([]);
+      setLoading(false);
       return;
     }
 
-    onSelectPlace(createManualPlaceFromSearchText(trimmedSearchText, context));
+    setResults([]);
+    setLoading(true);
+    const timeout = setTimeout(() => {
+      void autocompleteGooglePlaces(
+        trimmedSearchText,
+        typeof tripLatitude === 'number' && typeof tripLongitude === 'number'
+          ? { latitude: tripLatitude, longitude: tripLongitude }
+          : undefined,
+      ).then((nextResults) => {
+        if (!requestSequence.current.isLatest(sequence)) return;
+        setResults(nextResults);
+      }).catch((error: unknown) => {
+        if (!requestSequence.current.isLatest(sequence)) return;
+        setResults([]);
+        setErrorMessage(error instanceof Error ? error.message : '장소 검색을 사용할 수 없어요.');
+      }).finally(() => {
+        if (requestSequence.current.isLatest(sequence)) setLoading(false);
+      });
+    }, PLACE_SEARCH_DEBOUNCE_MS);
+
+    return () => clearTimeout(timeout);
+  }, [canSearch, trimmedSearchText, tripLatitude, tripLongitude]);
+
+  const handleGoogleSelect = async (result: PlaceSearchResult) => {
+    const sequence = selectionSequence.current.begin();
+    setSelectingPlaceId(result.placeId);
+    setErrorMessage(undefined);
+
+    try {
+      const selected = await geocodeGooglePlace(result.placeId);
+      if (!selectionSequence.current.isLatest(sequence)) return;
+      onSelectPlace({
+        id: selected.googlePlaceId,
+        name: result.displayName,
+        googleDisplayName: result.displayName,
+        address: selected.formattedAddress,
+        city: selected.cityName,
+        country: selected.countryName,
+        countryCode: selected.countryCode,
+        placeId: selected.googlePlaceId,
+        latitude: selected.latitude,
+        longitude: selected.longitude,
+        googleTypes: result.googleTypes,
+        source: 'google',
+      });
+    } catch (error) {
+      if (!selectionSequence.current.isLatest(sequence)) return;
+      setErrorMessage(error instanceof Error ? error.message : '장소 정보를 불러오지 못했어요.');
+    } finally {
+      if (selectionSequence.current.isLatest(sequence)) setSelectingPlaceId(undefined);
+    }
+  };
+
+  const handleManualSelect = () => {
+    if (trimmedSearchText) onSelectPlace(createManualPlaceFromSearchText(trimmedSearchText, context));
   };
 
   return (
     <View style={styles.contentWrap}>
       <View style={styles.searchBox}>
-        <Feather name="search" size={24} color={Colors.foundation.black} />
+        <Feather name="search" size={22} color={Colors.foundation.black} />
         <AppTextInput
-          value={searchText}
-          onChangeText={setSearchText}
           autoFocus={autoFocus}
-          returnKeyType="search"
+          onChangeText={setSearchText}
           placeholder="장소명이나 주소를 검색하세요"
           placeholderTextColor={Colors.foundation.grey500}
+          returnKeyType="search"
           style={styles.searchInput}
+          value={searchText}
         />
-        {searchText.length > 0 ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="검색어 지우기"
-            hitSlop={8}
-            onPress={() => setSearchText('')}
-          >
+        {loading ? <ActivityIndicator color={Colors.foundation.grey700} size="small" /> : null}
+        {searchText ? (
+          <Pressable accessibilityLabel="검색어 지우기" hitSlop={8} onPress={() => setSearchText('')}>
             <Feather name="x-circle" size={18} color={Colors.foundation.grey500} />
           </Pressable>
         ) : null}
       </View>
 
       <ScrollView
-        style={styles.resultsScroll}
+        contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
+        style={styles.resultsScroll}
       >
-        <Text style={styles.sectionTitle}>
-          {hasSearchText ? '검색 결과' : '추천 장소'}
-        </Text>
-
-        {visiblePlaces.length > 0 ? (
-          <View style={styles.resultList}>
-            {visiblePlaces.map((place, index) => (
-              <React.Fragment key={place.id}>
-                <PlaceResultRow
-                  place={place}
-                  selected={selectedPlaceId === place.id || selectedPlaceId === place.placeId}
-                  onPress={() => onSelectPlace(toPlaceOption(place))}
-                />
-                {index < visiblePlaces.length - 1 ? <View style={styles.divider} /> : null}
-              </React.Fragment>
-            ))}
+        {!canSearch ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>두 글자 이상 입력해주세요</Text>
+            <Text style={styles.emptyDescription}>검색이 어려우면 장소를 직접 추가할 수 있어요.</Text>
           </View>
-        ) : (
+        ) : results.length > 0 ? (
+          <>
+            <Text style={styles.sectionTitle}>검색 결과</Text>
+            <View style={styles.resultList}>
+              {results.map((place, index) => (
+                <React.Fragment key={place.placeId}>
+                  <PlaceResultRow
+                    disabled={Boolean(selectingPlaceId)}
+                    onPress={() => void handleGoogleSelect(place)}
+                    place={place}
+                  />
+                  {index < results.length - 1 ? <View style={styles.divider} /> : null}
+                </React.Fragment>
+              ))}
+              {shouldShowGoogleMapsAttribution(results) ? (
+                <View style={styles.attributionRow}>
+                  <Text numberOfLines={1} style={styles.attributionText}>Google Maps</Text>
+                </View>
+              ) : null}
+            </View>
+          </>
+        ) : !loading ? (
           <View style={styles.emptyState}>
             <Feather name="search" size={24} color={Colors.foundation.grey300} />
-            <Text style={styles.emptyTitle}>
-              {hasSearchText ? '검색 결과가 없어요' : '장소명을 입력해 주세요'}
-            </Text>
-            <Text style={styles.emptyDescription}>
-              입력한 이름으로 장소를 직접 추가할 수 있어요
-            </Text>
-            {hasSearchText ? (
-              <Pressable
-                accessibilityRole="button"
-                style={styles.manualButton}
-                onPress={handleManualSelect}
-              >
-                <Text style={styles.manualButtonText}>
-                  “{trimmedSearchText}” 직접 추가하기
-                </Text>
-              </Pressable>
-            ) : null}
+            <Text style={styles.emptyTitle}>{errorMessage ?? '검색 결과가 없어요'}</Text>
+            <Text style={styles.emptyDescription}>입력한 이름으로 직접 추가할 수 있어요.</Text>
           </View>
-        )}
+        ) : null}
+
+        {trimmedSearchText ? (
+          <Pressable accessibilityRole="button" onPress={handleManualSelect} style={styles.manualButton}>
+            <Text style={styles.manualButtonText}>‘{trimmedSearchText}’ 직접 추가하기</Text>
+          </Pressable>
+        ) : null}
+        {selectingPlaceId ? (
+          <View style={styles.selectionLoading}>
+            <ActivityIndicator color={Colors.foundation.black} />
+            <Text style={styles.emptyDescription}>주소를 확인하고 있어요</Text>
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -475,52 +291,25 @@ export default function PlaceSearchModal({
   onClose,
   onBack,
   title = '장소 검색',
-  showFixtureSuggestions = false,
   ...context
 }: PlaceSearchModalProps) {
-  const handleSelectPlace = (place: PlaceOption) => {
+  const handleSelect = (place: PlaceOption) => {
     onSelectPlace(place);
     onClose();
   };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal animationType="slide" onRequestClose={onClose} visible={visible}>
       <SafeAreaView style={styles.screen}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.keyboardView}
-        >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.keyboardView}>
           <View style={styles.header}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={onBack ? '이전 화면' : '닫기'}
-              hitSlop={8}
-              style={styles.headerButton}
-              onPress={onBack ?? onClose}
-            >
+            <Pressable accessibilityLabel={onBack ? '이전 화면' : '닫기'} hitSlop={8} onPress={onBack ?? onClose} style={styles.headerButton}>
               <Feather name={onBack ? 'chevron-left' : 'x'} size={28} color={Colors.foundation.black} />
             </Pressable>
-
             <Text style={styles.headerTitle}>{title}</Text>
-
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="닫기"
-              hitSlop={8}
-              style={styles.headerButton}
-              onPress={onClose}
-            >
-              {onBack ? <Feather name="x" size={28} color={Colors.foundation.black} /> : null}
-            </Pressable>
+            <View style={styles.headerButton} />
           </View>
-
-          <PlaceSearchContent
-            {...context}
-            selectedPlace={selectedPlace}
-            onSelectPlace={handleSelectPlace}
-            autoFocus
-            showFixtureSuggestions={showFixtureSuggestions}
-          />
+          <PlaceSearchContent {...context} autoFocus onSelectPlace={handleSelect} selectedPlace={selectedPlace} />
         </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
@@ -528,142 +317,35 @@ export default function PlaceSearchModal({
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: Colors.light.bgScreen,
-  },
-  keyboardView: {
-    flex: 1,
-  },
-  header: {
-    height: 56,
-    paddingHorizontal: Spacing.lg,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  headerButton: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    ...Typography.body1Emphasized,
-    color: Colors.foundation.black,
-    textAlign: 'center',
-  },
-  contentWrap: {
-    flex: 1,
-    paddingHorizontal: Spacing.xl,
-    paddingTop: 0,
-    overflow: 'hidden',
-  },
-  searchBox: {
-    height: 48,
-    borderRadius: Radius.sm,
-    paddingHorizontal: Spacing.lg,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    backgroundColor: '#F2F2F2',
-  },
-  searchInput: {
-    ...Typography.body1Regular,
-    flex: 1,
-    minWidth: 0,
-    paddingVertical: 0,
-    color: Colors.foundation.black,
-  },
-  resultsScroll: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingTop: Spacing['2xl'],
-    paddingBottom: Spacing['3xl'],
-  },
-  sectionTitle: {
-    ...Typography.body1Emphasized,
-    marginBottom: Spacing.md,
-    color: Colors.foundation.black,
-  },
-  resultList: {
-    overflow: 'hidden',
-    borderRadius: Radius.sm,
-    backgroundColor: Colors.foundation.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.light.borderDefault,
-  },
-  placeRow: {
-    minHeight: 96,
-    padding: Spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    backgroundColor: Colors.foundation.white,
-  },
-  placeImage: {
-    width: 76,
-    height: 76,
-    borderRadius: Radius.xs,
-  },
-  imagePlaceholder: {
-    backgroundColor: Colors.foundation.grey100,
-  },
-  placeTextBlock: {
-    flex: 1,
-    minWidth: 0,
-    gap: Spacing.xs,
-  },
-  placeName: {
-    ...Typography.body1Emphasized,
-    color: Colors.foundation.black,
-  },
-  placeLocation: {
-    ...Typography.body2Regular,
-    color: Colors.foundation.grey600,
-  },
-  placeAddress: {
+  screen: { flex: 1, backgroundColor: Colors.light.bgScreen },
+  keyboardView: { flex: 1 },
+  header: { height: 56, paddingHorizontal: Spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  headerButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { ...Typography.body1Emphasized, color: Colors.foundation.black },
+  contentWrap: { flex: 1, paddingHorizontal: Spacing.xl, overflow: 'hidden' },
+  searchBox: { height: 48, borderRadius: Radius.sm, paddingHorizontal: Spacing.lg, flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.foundation.white },
+  searchInput: { ...Typography.body1Regular, flex: 1, minWidth: 0, paddingVertical: 0, color: Colors.foundation.black },
+  resultsScroll: { flex: 1 },
+  scrollContent: { paddingTop: Spacing['2xl'], paddingBottom: Spacing['3xl'] },
+  sectionTitle: { ...Typography.body1Emphasized, marginBottom: Spacing.md, color: Colors.foundation.black },
+  resultList: { overflow: 'hidden', borderRadius: Radius.sm, backgroundColor: Colors.foundation.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.light.borderDefault },
+  placeRow: { minHeight: 72, padding: Spacing.md, flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.foundation.white },
+  pressedRow: { backgroundColor: Colors.light.bgScreen },
+  pinWrap: { width: 32, height: 32, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.light.bgScreen },
+  placeTextBlock: { flex: 1, gap: Spacing.xs },
+  placeName: { ...Typography.body2Emphasized, color: Colors.foundation.black },
+  placeAddress: { ...Typography.captionRegular, color: Colors.foundation.grey600 },
+  divider: { height: StyleSheet.hairlineWidth, marginLeft: 56, backgroundColor: Colors.light.borderDefault },
+  attributionRow: { alignItems: 'flex-end', paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.light.borderDefault },
+  attributionText: {
     ...Typography.captionRegular,
-    color: Colors.foundation.grey500,
+    // Google Maps text attribution permits this exact gray on a light background.
+    color: '#5E5E5E',
   },
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    marginLeft: 100,
-    backgroundColor: Colors.foundation.grey100,
-  },
-  emptyState: {
-    minHeight: 180,
-    borderRadius: Radius.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-    padding: Spacing.xl,
-    backgroundColor: Colors.foundation.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.light.borderDefault,
-  },
-  emptyTitle: {
-    ...Typography.body1Emphasized,
-    color: Colors.foundation.black,
-    textAlign: 'center',
-  },
-  emptyDescription: {
-    ...Typography.body2Regular,
-    color: Colors.foundation.grey600,
-    textAlign: 'center',
-  },
-  manualButton: {
-    marginTop: Spacing.md,
-    minHeight: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.lg,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.foundation.black,
-  },
-  manualButtonText: {
-    ...Typography.body2Emphasized,
-    color: Colors.foundation.white,
-  },
+  emptyState: { alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing['3xl'] },
+  emptyTitle: { ...Typography.body2Emphasized, color: Colors.foundation.grey700, textAlign: 'center' },
+  emptyDescription: { ...Typography.captionRegular, color: Colors.foundation.grey500, textAlign: 'center' },
+  manualButton: { minHeight: 44, marginTop: Spacing.lg, paddingHorizontal: Spacing.lg, alignItems: 'center', justifyContent: 'center', borderRadius: Radius.sm, borderWidth: 1, borderColor: Colors.light.borderDefault, backgroundColor: Colors.foundation.white },
+  manualButtonText: { ...Typography.body2Emphasized, color: Colors.foundation.grey700 },
+  selectionLoading: { alignItems: 'center', gap: Spacing.sm, paddingTop: Spacing.xl },
 });

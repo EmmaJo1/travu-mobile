@@ -57,6 +57,7 @@ import { setActiveTraveling } from '@/constants/activeTravelSession';
 import { resolveDestinationHero } from '@/constants/destinationHeroes';
 import { HOME_MOCK_DATA } from '@/constants/mockHome';
 import type { DestinationOption } from '@/constants/mockTripDestinations';
+import { getPlaceCategoryDisplayLabel } from '@/constants/placeCategories';
 import { addSavedCompletedTrip } from '@/constants/savedMyPageTrips';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useCompleteTrip } from '@/hooks/useCompleteTrip';
@@ -310,7 +311,7 @@ function mapSupabasePlacesToHomeTimelineItems({
       tripId: entry.tripId,
       timeLabel: entry.time ?? '',
       placeName: entry.placeName ?? entry.place,
-      categoryLabel: entry.category ?? '직접 추가',
+      categoryLabel: entry.category ?? getPlaceCategoryDisplayLabel(null),
       cityLabel: entry.cityName ?? entry.city ?? fallbackCityLabel,
       memoCount: entry.recordCount ?? placeRecords.length,
       photoCount: entry.photoCount ?? 0,

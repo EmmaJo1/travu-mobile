@@ -1,5 +1,7 @@
 import type { PlaceEntry } from '@/components/trip/PlaceEntryCard';
-import { getPlaceCategoryLabel } from '@/constants/placeCategories';
+import { getPlaceCategoryDisplayLabel } from '@/constants/placeCategories';
+import { localizeSavedPlaceGeography } from '@/services/localization/placeGeography';
+import { normalizePersistedPlaceSource } from '@/services/placeSearch/mappers';
 import type { ResolvedPhotoRow } from '@/services/supabase/photos';
 import type { PlaceRow } from '@/services/supabase/places';
 import type { RecordRow } from '@/services/supabase/records';
@@ -47,12 +49,17 @@ export function mapSupabasePlacesToPlaceEntries(
     const visitedAt = place.visited_at ?? firstRecord?.visited_at;
     const time = formatVisitedAtTimeLabel(visitedAt) ?? '';
     const text = firstRecord?.text ?? place.memo ?? undefined;
+    const localizedGeography = localizeSavedPlaceGeography({
+      city: place.city,
+      country: place.country,
+    });
 
     return {
-      category: getPlaceCategoryLabel(place.category) || undefined,
-      city: place.city ?? undefined,
-      cityName: place.city ?? undefined,
-      countryName: place.country ?? undefined,
+      category: getPlaceCategoryDisplayLabel(place.category),
+      city: localizedGeography.cityName,
+      cityName: localizedGeography.cityName,
+      countryCode: localizedGeography.countryCode,
+      countryName: localizedGeography.countryName,
       dataSource: 'supabase',
       dateKey: formatLocalDateKeyFromTimestamp(visitedAt),
       formattedAddress: place.address ?? undefined,
@@ -67,7 +74,7 @@ export function mapSupabasePlacesToPlaceEntries(
       placeName: place.custom_name ?? place.name,
       recordId: firstRecord?.id,
       recordCount: placeRecords.length,
-      source: 'manual',
+      source: normalizePersistedPlaceSource(place.source),
       text,
       time,
       tripDayId: place.trip_day_id ?? firstRecord?.trip_day_id ?? undefined,

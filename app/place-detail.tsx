@@ -46,9 +46,11 @@ import {
   isPlaceDetailDeleted,
   markPlaceDetailDeleted,
 } from '@/services/placeDetailDeletionRegistry';
+import { localizeSavedPlaceGeography } from '@/services/localization/placeGeography';
 import { MOCK_ARCHIVE_DETAIL } from '@/constants/mockArchiveDetail';
 import { RECORD_DAY_ENTRIES } from '@/constants/mockRecordDayDetail';
 import {
+  getPlaceCategoryDisplayLabel,
   getPlaceCategoryLabel,
   normalizePlaceCategoryValue,
 } from '@/constants/placeCategories';
@@ -68,6 +70,7 @@ import { useTripDays } from '@/hooks/useTripDays';
 import { usePlacePhotos } from '@/hooks/useSupabasePhotos';
 import { useAuth } from '@/providers/AuthProvider';
 import { updatePlace, type PlaceRow, type UpdatePlacePatch } from '@/services/supabase/places';
+import { buildPlaceIdentityPatch } from '@/services/placeSearch/persistence';
 import type { TripDayRow } from '@/services/supabase/tripDays';
 import {
   createRecordForPlace,
@@ -113,46 +116,6 @@ const RECORD_SWIPE_OPEN_THRESHOLD = 8;
 const RECORD_SWIPE_DIRECTION_RATIO = 1.6;
 const RECORD_SHEET_DIM_DURATION = 100;
 
-const KOREAN_CITY_LABELS: Record<string, string> = {
-  paris: '파리',
-  '파리': '파리',
-  seoul: '서울',
-  '서울': '서울',
-  tokyo: '도쿄',
-  '도쿄': '도쿄',
-  osaka: '오사카',
-  '오사카': '오사카',
-  kyoto: '교토',
-  '교토': '교토',
-  sydney: '시드니',
-  '시드니': '시드니',
-  singapore: '싱가포르',
-  '싱가포르': '싱가포르',
-};
-
-const KOREAN_COUNTRY_LABELS: Record<string, string> = {
-  france: '프랑스',
-  '프랑스': '프랑스',
-  'south korea': '대한민국',
-  korea: '대한민국',
-  'korea, republic of': '대한민국',
-  'republic of korea': '대한민국',
-  '대한민국': '대한민국',
-  japan: '일본',
-  '일본': '일본',
-  australia: '호주',
-  '오스트레일리아': '호주',
-  '호주': '호주',
-  singapore: '싱가포르',
-  '싱가포르': '싱가포르',
-  'new zealand': '뉴질랜드',
-  '뉴질랜드': '뉴질랜드',
-  'united states': '미국',
-  'usa': '미국',
-  'u.s.a.': '미국',
-  '미국': '미국',
-};
-
 const KOREAN_CATEGORY_LABELS: Record<string, string> = {
   'tourist attraction': '관광명소',
   attraction: '관광명소',
@@ -188,30 +151,6 @@ function normalizeLookupKey(value?: string) {
 
 function containsKorean(value: string) {
   return /[가-힣]/.test(value);
-}
-
-function getKoreanCityLabel(value?: string) {
-  const trimmedValue = value?.trim();
-  const key = normalizeLookupKey(trimmedValue);
-
-  if (!trimmedValue) {
-    return '';
-  }
-
-  return (key && KOREAN_CITY_LABELS[key])
-    || (containsKorean(trimmedValue) ? trimmedValue : trimmedValue);
-}
-
-function getKoreanCountryLabel(value?: string) {
-  const trimmedValue = value?.trim();
-  const key = normalizeLookupKey(trimmedValue);
-
-  if (!trimmedValue) {
-    return '';
-  }
-
-  return (key && KOREAN_COUNTRY_LABELS[key])
-    || (containsKorean(trimmedValue) ? trimmedValue : trimmedValue);
 }
 
 function getKoreanCategoryLabel(value?: string) {
@@ -448,8 +387,9 @@ function createSupabasePlaceDetail(
   const displayableRecords = placeRecords.filter(hasDisplayableRecordContent);
 
   return {
-    categoryLabel: getPlaceCategoryLabel(place.category)
-      || getParamValue(params.categoryLabel),
+    categoryLabel: getPlaceCategoryDisplayLabel(
+      place.category ?? getParamValue(params.categoryLabel),
+    ),
     cityName: place.city ?? getParamValue(params.cityName) ?? '',
     countryName: place.country ?? getParamValue(params.countryName) ?? '',
     dateLabel: visitedAt ?? getParamValue(params.dateLabel) ?? '',
@@ -1106,9 +1046,13 @@ export default function PlaceDetailScreen() {
   );
   const placeMetaLabel = React.useMemo(() => {
     const category = getKoreanCategoryLabel(placeInfo.categoryLabel);
-    const city = getKoreanCityLabel(placeInfo.cityName);
-    const country = getKoreanCountryLabel(placeInfo.countryName);
-    const location = [city, country].filter(Boolean).join(', ');
+    const localizedGeography = localizeSavedPlaceGeography({
+      city: placeInfo.cityName,
+      country: placeInfo.countryName,
+    });
+    const location = [localizedGeography.cityName, localizedGeography.countryName]
+      .filter(Boolean)
+      .join(', ');
 
     return [category, location].filter(Boolean).join(' · ');
   }, [placeInfo.categoryLabel, placeInfo.cityName, placeInfo.countryName]);
@@ -1944,9 +1888,8 @@ export default function PlaceDetailScreen() {
         const previousTripDayId = initialDetail.dayId || routeDayId || '';
         const nextTripDayId = input.dayId ?? previousTripDayId;
         const patch: UpdatePlacePatch = {
+          ...buildPlaceIdentityPatch(input),
           category: normalizePlaceCategoryValue(input.category) ?? null,
-          city: nextPlaceInfo.cityName || null,
-          country: nextPlaceInfo.countryName || null,
           name: nextPlaceInfo.placeName.trim() || placeInfo.placeName,
         };
         const visitedAt = resolveVisitedAtForPlaceUpdate(
@@ -1957,18 +1900,6 @@ export default function PlaceDetailScreen() {
           },
           placeInfo.dateLabel,
         );
-
-        if (input.formattedAddress !== undefined) {
-          patch.address = input.formattedAddress || null;
-        }
-
-        if (typeof input.latitude === 'number') {
-          patch.latitude = input.latitude;
-        }
-
-        if (typeof input.longitude === 'number') {
-          patch.longitude = input.longitude;
-        }
 
         if (visitedAt !== undefined) {
           patch.visited_at = visitedAt;
@@ -2780,6 +2711,11 @@ export default function PlaceDetailScreen() {
           city: placeInfo.cityName,
           cityName: placeInfo.cityName,
           countryName: placeInfo.countryName,
+          source: supabasePlaceDetailData?.place?.source === 'google' ? 'google' : 'manual',
+          googlePlaceId: supabasePlaceDetailData?.place?.google_place_id ?? undefined,
+          formattedAddress: supabasePlaceDetailData?.place?.address ?? undefined,
+          latitude: supabasePlaceDetailData?.place?.latitude ?? undefined,
+          longitude: supabasePlaceDetailData?.place?.longitude ?? undefined,
           time: placeInfo.timeLabel,
           category: placeInfo.categoryLabel,
           dayId: selectedPlaceInfoDayId,
