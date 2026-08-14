@@ -142,11 +142,13 @@ export function localizeSavedPlaceGeography(
     };
   }
 
+  const localizedCountry = countryCode
+    ? COUNTRY_LABELS[countryCode]?.[supportedLanguage] ?? rawCountry
+    : rawCountry;
+
   return {
     cityName: rawCity ? resolveCityLabel(rawCity, countryCode, supportedLanguage) : undefined,
     countryCode: countryCode ?? undefined,
-    countryName: countryCode
-      ? COUNTRY_LABELS[countryCode]?.[supportedLanguage] ?? rawCountry || undefined
-      : rawCountry || undefined,
+    countryName: localizedCountry || undefined,
   };
 }
