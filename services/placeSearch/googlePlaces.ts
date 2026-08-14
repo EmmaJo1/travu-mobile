@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { getAppContentLanguageCode } from '@/services/localization/appLanguage';
 import type { PlaceSearchResult, SelectedGooglePlace } from '@/services/placeSearch/types';
 import {
   getPlaceSearchErrorMessage,
@@ -69,12 +70,23 @@ export async function autocompleteGooglePlaces(
     return [];
   }
 
-  const data = await invokeGooglePlaces({ operation: 'autocomplete', query: normalizedQuery, locationBias });
+  const languageCode = getAppContentLanguageCode();
+  const data = await invokeGooglePlaces({
+    operation: 'autocomplete',
+    query: normalizedQuery,
+    languageCode,
+    locationBias,
+  });
   return mapAutocompleteResponse(data);
 }
 
 export async function geocodeGooglePlace(placeId: string): Promise<SelectedGooglePlace> {
-  const data = await invokeGooglePlaces({ operation: 'geocode_place', placeId: placeId.trim() });
+  const languageCode = getAppContentLanguageCode();
+  const data = await invokeGooglePlaces({
+    operation: 'geocode_place',
+    placeId: placeId.trim(),
+    languageCode,
+  });
   const place = mapGeocodeResponse(data);
 
   if (!place) {
