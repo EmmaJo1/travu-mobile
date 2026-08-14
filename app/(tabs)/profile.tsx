@@ -281,9 +281,9 @@ export default function ProfileScreen() {
                     </View>
                   ) : groupedTrips.length === 0 ? (
                     <View style={styles.tripListState}>
-                      <Text style={styles.tripListStateTitle}>아직 완료한 여행이 없어요</Text>
+                      <Text style={styles.tripListStateTitle}>아직 저장된 여행이 없어요</Text>
                       <Text style={styles.tripListStateDescription}>
-                        여행을 완료하면 이곳에 차곡차곡 모여요.
+                        여행을 만들면 이곳에 차곡차곡 모여요.
                       </Text>
                     </View>
                   ) : groupedTrips.map(({ year, trips: yearTrips }) => (

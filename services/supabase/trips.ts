@@ -8,6 +8,7 @@ import {
   syncActiveTripDestinations,
   type TripDestinationInput,
 } from '@/services/supabase/tripDestinations';
+import { USER_SAVED_TRIP_STATUSES } from '@/services/supabase/tripStatus';
 import {
   enrichTripsWithBookCovers,
   enrichTripsWithPhotoCovers,
@@ -154,7 +155,7 @@ export function listTripsByUser(userId: string) {
     .from('trips')
     .select('*')
     .eq('user_id', userId)
-    .in('status', ['draft', 'active', 'archived', 'completed'])
+    .in('status', USER_SAVED_TRIP_STATUSES)
     .is('deleted_at', null)
     .order('start_date', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false });

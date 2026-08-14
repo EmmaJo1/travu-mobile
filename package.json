@@ -15,7 +15,7 @@
     "test:living-area": "node --experimental-strip-types ./scripts/test-living-areas.mjs",
     "test:home-region": "node --experimental-strip-types ./scripts/test-home-region-filter.mjs",
     "test:my-page-trips": "node --experimental-strip-types ./scripts/test-my-page-trips.mjs",
-    "test:place-search": "node --experimental-strip-types ./scripts/test-place-search.mjs"
+    "test:place-search": "node --experimental-strip-types --experimental-loader ./scripts/typescript-test-loader.mjs ./scripts/test-place-search.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
