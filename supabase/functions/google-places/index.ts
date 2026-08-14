@@ -15,6 +15,7 @@ const AUTOCOMPLETE_FIELD_MASK = [
   'suggestions.placePrediction.placeId',
   'suggestions.placePrediction.structuredFormat.mainText.text',
   'suggestions.placePrediction.structuredFormat.secondaryText.text',
+  'suggestions.placePrediction.types',
 ].join(',');
 const GEOCODE_FIELD_MASK = [
   'placeId',
@@ -87,6 +88,16 @@ async function verifyUser(request: Request) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function normalizeGoogleTypes(value: unknown) {
+  if (!Array.isArray(value)) return [];
+
+  return [...new Set(value.flatMap((type) => {
+    if (typeof type !== 'string') return [];
+    const normalized = type.trim();
+    return normalized ? [normalized] : [];
+  }))];
 }
 
 function getLocationBias(value: unknown) {
@@ -185,8 +196,14 @@ async function autocomplete(body: RequestBody, apiKey: string) {
     const format = isRecord(prediction.structuredFormat) ? prediction.structuredFormat : {};
     const main = isRecord(format.mainText) ? format.mainText.text : undefined;
     const secondary = isRecord(format.secondaryText) ? format.secondaryText.text : undefined;
+    const types = normalizeGoogleTypes(prediction.types);
     return typeof prediction.placeId === 'string' && typeof main === 'string'
-      ? [{ placeId: prediction.placeId, mainText: main, ...(typeof secondary === 'string' ? { secondaryText: secondary } : {}) }]
+      ? [{
+        placeId: prediction.placeId,
+        mainText: main,
+        types,
+        ...(typeof secondary === 'string' ? { secondaryText: secondary } : {}),
+      }]
       : [];
   });
 

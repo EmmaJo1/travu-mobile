@@ -5,6 +5,7 @@ export type PlaceSearchResult = {
   placeId: string;
   displayName: string;
   secondaryText?: string;
+  googleTypes: string[];
 };
 
 export type SelectedGooglePlace = {
@@ -29,6 +30,7 @@ export interface SelectedPlace {
   countryCode?: string;
   latitude?: number;
   longitude?: number;
+  googleTypes?: string[];
 }
 
 export interface PlaceSearchSuggestion extends SelectedPlace {

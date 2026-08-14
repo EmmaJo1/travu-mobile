@@ -27,6 +27,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+export function normalizeGooglePlaceTypes(value: unknown) {
+  if (!Array.isArray(value)) return [];
+
+  return [...new Set(value.flatMap((type) => {
+    if (typeof type !== 'string') return [];
+    const normalized = type.trim();
+    return normalized ? [normalized] : [];
+  }))];
+}
+
 export function mapAutocompleteResponse(value: unknown): PlaceSearchResult[] {
   if (!isRecord(value) || !Array.isArray(value.results)) {
     return [];
@@ -39,9 +49,10 @@ export function mapAutocompleteResponse(value: unknown): PlaceSearchResult[] {
     const secondaryText = typeof item.secondaryText === 'string'
       ? item.secondaryText.trim() || undefined
       : undefined;
+    const googleTypes = normalizeGooglePlaceTypes(item.types);
 
     return placeId && displayName
-      ? [{ provider: 'google' as const, placeId, displayName, secondaryText }]
+      ? [{ provider: 'google' as const, placeId, displayName, secondaryText, googleTypes }]
       : [];
   });
 }

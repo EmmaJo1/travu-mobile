@@ -25,3 +25,7 @@ export function getPlaceCategoryLabel(value?: string | null) {
   const normalized = normalizePlaceCategoryValue(value);
   return PLACE_CATEGORY_OPTIONS.find((option) => option.value === normalized)?.label ?? '';
 }
+
+export function getPlaceCategoryDisplayLabel(value?: string | null) {
+  return getPlaceCategoryLabel(value) || getPlaceCategoryLabel('other');
+}

@@ -50,6 +50,7 @@ import { localizeSavedPlaceGeography } from '@/services/localization/placeGeogra
 import { MOCK_ARCHIVE_DETAIL } from '@/constants/mockArchiveDetail';
 import { RECORD_DAY_ENTRIES } from '@/constants/mockRecordDayDetail';
 import {
+  getPlaceCategoryDisplayLabel,
   getPlaceCategoryLabel,
   normalizePlaceCategoryValue,
 } from '@/constants/placeCategories';
@@ -386,8 +387,9 @@ function createSupabasePlaceDetail(
   const displayableRecords = placeRecords.filter(hasDisplayableRecordContent);
 
   return {
-    categoryLabel: getPlaceCategoryLabel(place.category)
-      || getParamValue(params.categoryLabel),
+    categoryLabel: getPlaceCategoryDisplayLabel(
+      place.category ?? getParamValue(params.categoryLabel),
+    ),
     cityName: place.city ?? getParamValue(params.cityName) ?? '',
     countryName: place.country ?? getParamValue(params.countryName) ?? '',
     dateLabel: visitedAt ?? getParamValue(params.dateLabel) ?? '',

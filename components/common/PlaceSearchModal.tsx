@@ -38,6 +38,7 @@ export type PlaceOption = {
   placeId?: string;
   latitude?: number;
   longitude?: number;
+  googleTypes?: string[];
   source: 'google' | 'manual';
 };
 
@@ -191,6 +192,7 @@ export function PlaceSearchContent({
         placeId: selected.googlePlaceId,
         latitude: selected.latitude,
         longitude: selected.longitude,
+        googleTypes: result.googleTypes,
         source: 'google',
       });
     } catch (error) {

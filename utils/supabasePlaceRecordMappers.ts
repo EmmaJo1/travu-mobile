@@ -1,5 +1,5 @@
 import type { PlaceEntry } from '@/components/trip/PlaceEntryCard';
-import { getPlaceCategoryLabel } from '@/constants/placeCategories';
+import { getPlaceCategoryDisplayLabel } from '@/constants/placeCategories';
 import { localizeSavedPlaceGeography } from '@/services/localization/placeGeography';
 import { normalizePersistedPlaceSource } from '@/services/placeSearch/mappers';
 import type { ResolvedPhotoRow } from '@/services/supabase/photos';
@@ -55,7 +55,7 @@ export function mapSupabasePlacesToPlaceEntries(
     });
 
     return {
-      category: getPlaceCategoryLabel(place.category) || undefined,
+      category: getPlaceCategoryDisplayLabel(place.category),
       city: localizedGeography.cityName,
       cityName: localizedGeography.cityName,
       countryCode: localizedGeography.countryCode,

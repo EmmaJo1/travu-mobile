@@ -30,6 +30,8 @@ import {
 } from '@/constants/placeCategories';
 import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
 import type { SelectedPlace } from '@/services/placeSearch/types';
+import { resolvePlaceCategoryAfterSelection } from '@/services/placeSearch/googlePlaceCategory';
+import { hasPlaceIdentityChanged } from '@/services/placeSearch/persistence';
 import {
   convertDateToPlaceEntryTime,
   formatPlaceEntryTime,
@@ -257,6 +259,7 @@ function toPlaceOption(place?: SelectedPlace): PlaceOption | null {
     placeId: place.googlePlaceId,
     latitude: place.latitude,
     longitude: place.longitude,
+    googleTypes: place.googleTypes,
     source: place.source,
   };
 }
@@ -273,6 +276,7 @@ function toSelectedPlace(place: PlaceOption): SelectedPlace {
     countryCode: place.countryCode,
     latitude: place.latitude,
     longitude: place.longitude,
+    googleTypes: place.googleTypes,
   };
 }
 
@@ -648,7 +652,8 @@ export default function PlaceCreateModal({
       photoUris.join('|') !== (initialValue?.photoUris ?? []).join('|') ||
       photoSources.length !== (initialValue?.photoSources ?? []).length ||
       photoAssets.map((asset) => asset.uri).join('|') !==
-        (initialValue?.photoAssets ?? []).map((asset) => asset.uri).join('|')) &&
+        (initialValue?.photoAssets ?? []).map((asset) => asset.uri).join('|') ||
+      hasPlaceIdentityChanged(initialValue, selectedPlace)) &&
     place.trim().length > 0 &&
     (availableDayOptions.length === 0 || Boolean(selectedDay)) &&
     (!requireTripDay || Boolean(selectedDay));
@@ -657,6 +662,9 @@ export default function PlaceCreateModal({
     setSelectedPlace(nextPlace);
     setPlace(nextPlace.placeName);
     setCity(nextPlace.cityName ?? '');
+    setCategory((currentCategory) => (
+      resolvePlaceCategoryAfterSelection(currentCategory, nextPlace) ?? ''
+    ));
     setPickerPage('form');
   };
 
