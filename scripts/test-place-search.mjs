@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import { getAppContentLanguageCode } from '../services/localization/appLanguage.ts';
+import { localizeSavedPlaceGeography } from '../services/localization/placeGeography.ts';
 import {
   getPlaceSearchErrorMessage,
   mapAddressComponents,
@@ -17,6 +18,7 @@ import {
   buildCreatePlaceIdentity,
   buildPlaceIdentityPatch,
 } from '../services/placeSearch/persistence.ts';
+import { resolveCreatePlaceTimeLabel } from '../utils/createPlaceTime.ts';
 
 const tests = [];
 const test = (name, run) => tests.push({ name, run });
@@ -179,6 +181,38 @@ test('Edge Function이 Google Autocomplete와 Geocoding에 languageCode를 전�
   const source = await readFile(new URL('../supabase/functions/google-places/index.ts', import.meta.url), 'utf8');
   assert.equal(source.includes('languageCode,\n      ...(locationBias'), true);
   assert.equal(source.includes('?languageCode=${encodeURIComponent(languageCode)}'), true);
+});
+
+test('saved geography는 현재 한국어 locale에서 Osaka/日本을 한국어로 표시한다', () => {
+  assert.deepEqual(
+    localizeSavedPlaceGeography({ city: 'Osaka', country: '日本' }),
+    { cityName: '오사카', countryCode: 'JP', countryName: '일본' },
+  );
+});
+
+test('saved geography는 표시 locale이 영어면 같은 원본을 영어로 표시한다', () => {
+  assert.deepEqual(
+    localizeSavedPlaceGeography({ city: '大阪市', country: '일본' }, 'en'),
+    { cityName: 'Osaka', countryCode: 'JP', countryName: 'Japan' },
+  );
+});
+
+test('지원하지 않는 표시 locale은 한국어를 강제하지 않고 source 값을 유지한다', () => {
+  assert.deepEqual(
+    localizeSavedPlaceGeography({ city: 'Osaka', country: 'Japan' }, 'fr'),
+    { cityName: 'Osaka', countryCode: 'JP', countryName: 'Japan' },
+  );
+});
+
+test('새 장소에서 시간을 비우면 추가 시각을 방문 시간으로 사용한다', () => {
+  const now = new Date(2026, 7, 14, 16, 23, 0, 0);
+  assert.equal(resolveCreatePlaceTimeLabel(undefined, now), '4:23 PM');
+  assert.equal(resolveCreatePlaceTimeLabel('', now), '4:23 PM');
+});
+
+test('사용자/사진에서 정해진 시간이 있으면 추가 시각으로 덮어쓰지 않는다', () => {
+  const now = new Date(2026, 7, 14, 16, 23, 0, 0);
+  assert.equal(resolveCreatePlaceTimeLabel('9:10 AM', now), '9:10 AM');
 });
 
 test('Home 현재 기기 위치 라벨은 app language와 무관하게 영어 규칙을 유지한다', async () => {
