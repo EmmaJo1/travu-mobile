@@ -179,7 +179,7 @@ test('Places client가 autocomplete와 geocode 모두 app language를 전달한�
 
 test('Edge Function이 Google Autocomplete와 Geocoding에 languageCode를 전달한다', async () => {
   const source = await readFile(new URL('../supabase/functions/google-places/index.ts', import.meta.url), 'utf8');
-  assert.equal(source.includes('languageCode,\n      ...(locationBias'), true);
+  assert.match(source, /languageCode,\r?\n      \.\.\.\(locationBias/);
   assert.equal(source.includes('?languageCode=${encodeURIComponent(languageCode)}'), true);
 });
 

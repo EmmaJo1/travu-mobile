@@ -154,7 +154,7 @@ export function listTripsByUser(userId: string) {
     .from('trips')
     .select('*')
     .eq('user_id', userId)
-    .eq('status', 'archived')
+    .in('status', ['draft', 'active', 'archived', 'completed'])
     .is('deleted_at', null)
     .order('start_date', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false });
