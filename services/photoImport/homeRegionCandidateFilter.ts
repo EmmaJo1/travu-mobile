@@ -1,6 +1,15 @@
 import * as Location from 'expo-location';
 
 import type { LivingArea } from '@/services/location/livingAreas';
+import {
+  getHomeRegionGeocodeCoordinateKey,
+  resolveHomeRegionGeocodeTasks,
+  summarizeHomeRegionEvaluations,
+  type HomeRegionGeocodeDiagnostics,
+  type HomeRegionGeocodeTask,
+  type HomeRegionRelation,
+  type HomeRegionVisibilitySummary,
+} from '@/services/photoImport/homeRegionFilterCore';
 import type {
   LocalDetectedPhoto,
   LocalDetectedPlaceGroup,
@@ -9,7 +18,7 @@ import type {
 
 export const HOME_REGION_EXCLUSION_RADIUS_KM = 25;
 
-export type HomeRegionRelation = 'inside_home_region' | 'outside_home_region' | 'unknown';
+export type { HomeRegionRelation } from '@/services/photoImport/homeRegionFilterCore';
 export type HomeRegionCoordinateSource =
   | 'group_centroid'
   | 'group_coordinate'
@@ -24,19 +33,9 @@ export interface HomeRegionGroupEvaluation {
   relation: HomeRegionRelation;
 }
 
-export interface HomeRegionCandidateVisibilityResult {
-  farthestDistanceKm?: number;
-  hiddenReason?: 'hidden_home_region';
-  insideGroupCount: number;
-  locatedGroupCount: number;
-  meaningfulOutsideGroupCount: number;
-  nearestDistanceKm?: number;
-  outsideGroupCount: number;
-  shouldHide: boolean;
-  unknownGroupCount: number;
-}
+export interface HomeRegionCandidateVisibilityResult extends HomeRegionVisibilitySummary {}
 
-const reverseGeocodeRegionCache = new Map<string, Promise<string | null>>();
+const reverseGeocodeRegionCache = new Map<string, string>();
 
 function isFiniteCoordinate(value?: number | null): value is number {
   return typeof value === 'number' && Number.isFinite(value);
@@ -88,6 +87,12 @@ function getHomeAdministrativeArea(homeRegion: LivingArea) {
   return normalizeAdministrativeArea(
     homeRegion.administrativeArea ?? homeRegion.locality ?? homeRegion.displayName,
   );
+}
+
+function isRateLimitError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return /rate limit|too many requests/i.test(message);
 }
 
 function toRadians(value: number) {
@@ -154,31 +159,67 @@ export function getGroupCoordinateForHomeRegion(group: LocalDetectedPlaceGroup):
   };
 }
 
-async function reverseGeocodeAdministrativeArea(latitude: number, longitude: number) {
-  const cacheKey = `${latitude.toFixed(3)},${longitude.toFixed(3)}`;
-  const cached = reverseGeocodeRegionCache.get(cacheKey);
+async function requestReverseGeocodedAdministrativeArea(task: HomeRegionGeocodeTask) {
+  try {
+    const addresses = await Location.reverseGeocodeAsync({
+      latitude: task.latitude,
+      longitude: task.longitude,
+    });
+    const address = addresses[0];
 
-  if (cached) {
-    return cached;
-  }
-
-  const request = Location.reverseGeocodeAsync({ latitude, longitude })
-    .then((addresses) => {
-      const address = addresses[0];
-      return normalizeAdministrativeArea(
+    return {
+      administrativeArea: normalizeAdministrativeArea(
         address?.region ?? address?.city ?? address?.subregion ?? null,
-      );
-    })
-    .catch(() => null);
-
-  reverseGeocodeRegionCache.set(cacheKey, request);
-  return request;
+      ),
+      rateLimited: false,
+    };
+  } catch (error) {
+    return {
+      administrativeArea: null,
+      rateLimited: isRateLimitError(error),
+    };
+  }
 }
 
-export async function classifyGroupAgainstHomeRegion(
+async function resolveAdministrativeAreasForGroups(groups: LocalDetectedPlaceGroup[]) {
+  const taskByGroup = new Map<LocalDetectedPlaceGroup, HomeRegionGeocodeTask>();
+
+  for (const group of groups) {
+    const coordinates = getGroupCoordinateForHomeRegion(group);
+
+    if (
+      !isFiniteCoordinate(coordinates.latitude) ||
+      !isFiniteCoordinate(coordinates.longitude)
+    ) {
+      continue;
+    }
+
+    taskByGroup.set(group, {
+      key: getHomeRegionGeocodeCoordinateKey(coordinates.latitude, coordinates.longitude),
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+    });
+  }
+
+  const { diagnostics, resultsByKey } = await resolveHomeRegionGeocodeTasks(
+    [...taskByGroup.values()],
+    requestReverseGeocodedAdministrativeArea,
+    reverseGeocodeRegionCache,
+  );
+  const administrativeAreaByGroup = new Map<LocalDetectedPlaceGroup, string | null>();
+
+  for (const [group, task] of taskByGroup) {
+    administrativeAreaByGroup.set(group, resultsByKey.get(task.key) ?? null);
+  }
+
+  return { administrativeAreaByGroup, diagnostics };
+}
+
+function createGroupEvaluation(
   group: LocalDetectedPlaceGroup,
   homeRegion: LivingArea,
-): Promise<HomeRegionGroupEvaluation> {
+  administrativeArea?: string | null,
+): HomeRegionGroupEvaluation {
   const coordinates = getGroupCoordinateForHomeRegion(group);
 
   if (
@@ -192,10 +233,6 @@ export async function classifyGroupAgainstHomeRegion(
     };
   }
 
-  const administrativeArea = await reverseGeocodeAdministrativeArea(
-    coordinates.latitude,
-    coordinates.longitude,
-  );
   const homeAdministrativeArea = getHomeAdministrativeArea(homeRegion);
   const distanceFromHomeKm = calculateDistanceKm(
     { latitude: homeRegion.latitude, longitude: homeRegion.longitude },
@@ -223,6 +260,15 @@ export async function classifyGroupAgainstHomeRegion(
   };
 }
 
+export async function classifyGroupAgainstHomeRegion(
+  group: LocalDetectedPlaceGroup,
+  homeRegion: LivingArea,
+): Promise<HomeRegionGroupEvaluation> {
+  const { administrativeAreaByGroup } = await resolveAdministrativeAreasForGroups([group]);
+
+  return createGroupEvaluation(group, homeRegion, administrativeAreaByGroup.get(group));
+}
+
 export async function evaluateCandidateHomeRegionVisibility(
   draft: LocalDetectedTripDraft,
   homeRegion?: LivingArea | null,
@@ -239,32 +285,13 @@ export async function evaluateCandidateHomeRegionVisibility(
   }
 
   const groups = draft.days.flatMap((day) => day.groups);
-  const evaluations = await Promise.all(
-    groups.map((group) => classifyGroupAgainstHomeRegion(group, homeRegion)),
+  const { administrativeAreaByGroup } = await resolveAdministrativeAreasForGroups(groups);
+  const evaluations = groups.map((group) => (
+    createGroupEvaluation(group, homeRegion, administrativeAreaByGroup.get(group))
+  ));
+  return summarizeHomeRegionEvaluations(
+    evaluations,
   );
-  const insideGroupCount = evaluations.filter((result) => result.relation === 'inside_home_region').length;
-  const outsideGroupCount = evaluations.filter((result) => result.relation === 'outside_home_region').length;
-  const unknownGroupCount = evaluations.filter((result) => result.relation === 'unknown').length;
-  const locatedGroupCount = insideGroupCount + outsideGroupCount;
-  const distances = evaluations
-    .map((result) => result.distanceFromHomeKm)
-    .filter(isFiniteCoordinate);
-
-  // A candidate is hidden only when every resolved address belongs to the configured
-  // administrative region. Any resolved address in another city/province keeps it visible.
-  const shouldHide = locatedGroupCount > 0 && insideGroupCount > 0 && outsideGroupCount === 0;
-
-  return {
-    farthestDistanceKm: distances.length ? Math.max(...distances) : undefined,
-    hiddenReason: shouldHide ? 'hidden_home_region' : undefined,
-    insideGroupCount,
-    locatedGroupCount,
-    meaningfulOutsideGroupCount: outsideGroupCount,
-    nearestDistanceKm: distances.length ? Math.min(...distances) : undefined,
-    outsideGroupCount,
-    shouldHide,
-    unknownGroupCount,
-  };
 }
 
 export async function applyHomeRegionCandidateFilter(
@@ -301,29 +328,15 @@ export async function applyHomeRegionCandidateFilter(
   }
 
   const homeAdministrativeArea = getHomeAdministrativeArea(homeRegion);
-
-  return Promise.all(drafts.map(async (draft) => {
+  const allGroups = drafts.flatMap((draft) => draft.days.flatMap((day) => day.groups));
+  const { administrativeAreaByGroup, diagnostics } =
+    await resolveAdministrativeAreasForGroups(allGroups);
+  const evaluations = drafts.map((draft) => {
     const groups = draft.days.flatMap((day) => day.groups);
-    const groupEvaluations = await Promise.all(
-      groups.map((group) => classifyGroupAgainstHomeRegion(group, homeRegion)),
-    );
-    const insideGroupCount = groupEvaluations.filter((result) => result.relation === 'inside_home_region').length;
-    const outsideGroupCount = groupEvaluations.filter((result) => result.relation === 'outside_home_region').length;
-    const unknownGroupCount = groupEvaluations.filter((result) => result.relation === 'unknown').length;
-    const distances = groupEvaluations
-      .map((result) => result.distanceFromHomeKm)
-      .filter(isFiniteCoordinate);
-    const result: HomeRegionCandidateVisibilityResult = {
-      farthestDistanceKm: distances.length ? Math.max(...distances) : undefined,
-      hiddenReason: insideGroupCount > 0 && outsideGroupCount === 0 ? 'hidden_home_region' : undefined,
-      insideGroupCount,
-      locatedGroupCount: insideGroupCount + outsideGroupCount,
-      meaningfulOutsideGroupCount: outsideGroupCount,
-      nearestDistanceKm: distances.length ? Math.min(...distances) : undefined,
-      outsideGroupCount,
-      shouldHide: insideGroupCount > 0 && outsideGroupCount === 0,
-      unknownGroupCount,
-    };
+    const groupEvaluations = groups.map((group) => (
+      createGroupEvaluation(group, homeRegion, administrativeAreaByGroup.get(group))
+    ));
+    const result = summarizeHomeRegionEvaluations(groupEvaluations);
 
     draft.debugMetadata.distanceFromHomeFarthestKm = result.farthestDistanceKm;
     draft.debugMetadata.distanceFromHomeNearestKm = result.nearestDistanceKm;
@@ -372,5 +385,72 @@ export async function applyHomeRegionCandidateFilter(
     }
 
     return { draftId: draft.id, result };
-  }));
+  });
+
+  if (__DEV__) {
+    const hiddenCandidateCount = evaluations.filter(({ result }) => result.shouldHide).length;
+    const candidateKeptBecauseUnknownCount = evaluations.filter(({ result }) => (
+      result.insideGroupCount > 0 &&
+      result.outsideGroupCount === 0 &&
+      result.unknownGroupCount > 0
+    )).length;
+    const unknownGroupCount = evaluations.reduce(
+      (total, { result }) => total + result.unknownGroupCount,
+      0,
+    );
+
+    logHomeRegionFilterSummary({
+      candidateCount: drafts.length,
+      candidateKeptBecauseUnknownCount,
+      diagnostics,
+      hiddenCandidateCount,
+      homeAdministrativeArea,
+      homeRegion,
+      scanAttemptId,
+      unknownGroupCount,
+    });
+  }
+
+  return evaluations;
+}
+
+function logHomeRegionFilterSummary({
+  candidateCount,
+  candidateKeptBecauseUnknownCount,
+  diagnostics,
+  hiddenCandidateCount,
+  homeAdministrativeArea,
+  homeRegion,
+  scanAttemptId,
+  unknownGroupCount,
+}: {
+  candidateCount: number;
+  candidateKeptBecauseUnknownCount: number;
+  diagnostics: HomeRegionGeocodeDiagnostics;
+  hiddenCandidateCount: number;
+  homeAdministrativeArea: string | null;
+  homeRegion: LivingArea;
+  scanAttemptId?: string;
+  unknownGroupCount: number;
+}) {
+  console.info('[photo-import home region] filter summary', {
+    candidateCount,
+    candidateKeptBecauseUnknownCount,
+    confirmedLivingAreaAdministrativeArea: homeRegion.administrativeArea,
+    confirmedLivingAreaDisplayName: homeRegion.displayName,
+    confirmedLivingAreaId: homeRegion.id,
+    confirmedLivingAreaLocality: homeRegion.locality,
+    hiddenCandidateCount,
+    homeAdministrativeArea,
+    reverseGeocodeCacheHitCount: diagnostics.cacheHitCount,
+    reverseGeocodeCoordinateInputCount: diagnostics.coordinateInputCount,
+    reverseGeocodeDuplicateCoordinateCount: diagnostics.duplicateCoordinateCount,
+    reverseGeocodeMaxConcurrentRequestCount: diagnostics.maxConcurrentRequestCount,
+    reverseGeocodeRateLimitedRequestCount: diagnostics.rateLimitedRequestCount,
+    reverseGeocodeRequestCount: diagnostics.requestCount,
+    reverseGeocodeSkippedAfterRateLimitCount: diagnostics.skippedAfterRateLimitCount,
+    reverseGeocodeUniqueCoordinateCount: diagnostics.uniqueCoordinateCount,
+    scanAttemptId,
+    unknownGroupCount,
+  });
 }

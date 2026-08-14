@@ -27,6 +27,11 @@ import { queryClient } from '@/lib/queryClient';
 import { useAuth } from '@/providers/AuthProvider';
 import { useUserProfile, type UserProfile } from '@/providers/UserProfileProvider';
 import {
+  createConfirmedLivingAreaProfilePatch,
+  searchLivingAreas,
+  type LivingArea,
+} from '@/services/location/livingAreas';
+import {
   getOwnedAvatarStoragePath,
   removeMyProfileImage,
   uploadMyProfileImage,
@@ -47,69 +52,33 @@ const BASED_IN_SHEET_ANIMATION_DURATION = 300;
 
 type BasedInPlace = NonNullable<UserProfile['basedInPlace']>;
 
-const BASED_IN_CITY_OPTIONS: BasedInPlace[] = [
-  {
-    displayName: 'Seoul, South Korea',
-    city: 'Seoul',
-    country: 'South Korea',
-    countryCode: 'KR',
-    latitude: 37.5665,
-    longitude: 126.978,
-    placeId: 'profile-city-seoul-kr',
-  },
-  {
-    displayName: 'Paris, France',
-    city: 'Paris',
-    country: 'France',
-    countryCode: 'FR',
-    latitude: 48.8566,
-    longitude: 2.3522,
-    placeId: 'profile-city-paris-fr',
-  },
-  {
-    displayName: 'Tokyo, Japan',
-    city: 'Tokyo',
-    country: 'Japan',
-    countryCode: 'JP',
-    latitude: 35.6762,
-    longitude: 139.6503,
-    placeId: 'profile-city-tokyo-jp',
-  },
-  {
-    displayName: 'New York, United States',
-    city: 'New York',
-    region: 'New York',
-    country: 'United States',
-    countryCode: 'US',
-    latitude: 40.7128,
-    longitude: -74.006,
-    placeId: 'profile-city-new-york-us',
-  },
-  {
-    displayName: 'Seoul, United States',
-    city: 'Seoul',
-    region: 'Iowa',
-    country: 'United States',
-    countryCode: 'US',
-    placeId: 'profile-city-seoul-iowa-us',
-  },
-  {
-    displayName: 'Seoul, Australia',
-    city: 'Seoul',
-    region: 'New South Wales',
-    country: 'Australia',
-    countryCode: 'AU',
-    placeId: 'profile-city-seoul-nsw-au',
-  },
-  {
-    displayName: 'Seoul, Ukraine',
-    city: 'Seoul',
-    region: 'Kyiv Oblast',
-    country: 'Ukraine',
-    countryCode: 'UA',
-    placeId: 'profile-city-seoul-kyiv-ua',
-  },
-] as const;
+function toBasedInPlace(area: LivingArea): BasedInPlace {
+  return {
+    displayName: area.displayName,
+    city: area.locality ?? area.displayName,
+    region: area.administrativeArea,
+    country: area.countryName ?? '',
+    countryCode: area.countryCode,
+    latitude: area.latitude,
+    longitude: area.longitude,
+    placeId: area.providerPlaceId,
+  };
+}
+
+function toLivingArea(place: BasedInPlace): LivingArea {
+  return {
+    id: place.placeId ?? `profile-${place.displayName}`,
+    displayName: place.displayName,
+    countryCode: place.countryCode,
+    countryName: place.country,
+    administrativeArea: place.region,
+    locality: place.city,
+    latitude: place.latitude as number,
+    longitude: place.longitude as number,
+    providerPlaceId: place.placeId,
+    source: 'manual',
+  };
+}
 
 function getBasedInSubtitle(place: BasedInPlace) {
   return place.region ? `${place.region}, ${place.country}` : place.country;
@@ -256,15 +225,12 @@ export default function ProfileEditScreen() {
       const nextBasedIn = basedIn.trim();
       const nextBio = bio.trim();
       const nextProfileImageUri = uploadedImage?.publicUrl ?? profile.profileImageUri ?? null;
+      const confirmedLivingAreaPatch = createConfirmedLivingAreaProfilePatch(
+        nextBasedIn && basedInPlace ? toLivingArea(basedInPlace) : null,
+      );
       const savedProfile = await upsertUserProfile({
         id: user.id,
-        based_in: nextBasedIn || null,
-        based_in_city: basedInPlace?.city ?? null,
-        based_in_country: basedInPlace?.country ?? null,
-        based_in_country_code: basedInPlace?.countryCode ?? null,
-        based_in_google_place_id: basedInPlace?.placeId ?? null,
-        based_in_latitude: basedInPlace?.latitude ?? null,
-        based_in_longitude: basedInPlace?.longitude ?? null,
+        ...confirmedLivingAreaPatch,
         bio: nextBio || null,
         name: nextName,
         profile_image_url: nextProfileImageUri,
@@ -485,31 +451,15 @@ function BasedInLocationPicker({
   const [query, setQuery] = React.useState('');
   const [isPresented, setPresented] = React.useState(visible);
   const sheetTranslateY = React.useRef(new Animated.Value(height)).current;
-  const normalizedQuery = query.trim().toLowerCase();
+  const normalizedQuery = query.trim();
   const recentPlaces = React.useMemo(
-    () => (selectedPlace ? [selectedPlace] : [BASED_IN_CITY_OPTIONS[0]]),
+    () => (selectedPlace ? [selectedPlace] : []),
     [selectedPlace],
   );
-  const searchResults = React.useMemo(() => {
-    if (!normalizedQuery) {
-      return [];
-    }
-
-    return BASED_IN_CITY_OPTIONS.filter((place) => {
-      const searchableText = [
-        place.displayName,
-        place.city,
-        place.region,
-        place.country,
-        place.countryCode,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-
-      return searchableText.includes(normalizedQuery);
-    });
-  }, [normalizedQuery]);
+  const searchResults = React.useMemo(
+    () => searchLivingAreas(normalizedQuery).map(toBasedInPlace),
+    [normalizedQuery],
+  );
 
   React.useEffect(() => {
     if (visible) {
@@ -553,13 +503,6 @@ function BasedInLocationPicker({
     return () => closeAnimation.stop();
   }, [height, isPresented, sheetTranslateY, visible]);
 
-  const handleUseCurrentLocation = React.useCallback(() => {
-    Alert.alert(
-      '\uD604\uC7AC \uC704\uCE58 \uC0AC\uC6A9',
-      '\uD604\uC7AC \uC704\uCE58 \uAE30\uBC18 \uB3C4\uC2DC \uC120\uD0DD\uC740 \uCD94\uD6C4 \uC704\uCE58 \uAD8C\uD55C\uACFC \uC5ED\uC9C0\uC624\uCF54\uB529\uC744 \uC5F0\uACB0\uD560 \uC608\uC815\uC785\uB2C8\uB2E4.',
-    );
-  }, []);
-
   const handleRequestClose = React.useCallback(() => {
     if (visible) {
       onClose();
@@ -567,7 +510,8 @@ function BasedInLocationPicker({
   }, [onClose, visible]);
 
   const renderLocationRow = (place: BasedInPlace) => {
-    const selected = selectedPlace?.placeId === place.placeId;
+    const selected = selectedPlace?.displayName === place.displayName
+      && selectedPlace?.countryCode === place.countryCode;
 
     return (
       <Pressable
@@ -602,7 +546,10 @@ function BasedInLocationPicker({
 
   return (
     <Modal animationType="none" transparent visible={isPresented} onRequestClose={handleRequestClose}>
-      <View style={styles.locationModalRoot}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.locationModalRoot}
+      >
         <Pressable style={StyleSheet.absoluteFill} onPress={handleRequestClose} />
         <Animated.View
           style={[
@@ -632,16 +579,9 @@ function BasedInLocationPicker({
             ) : null}
           </View>
 
-          <Pressable
-            accessibilityRole="button"
-            onPress={handleUseCurrentLocation}
-            style={styles.currentLocationButton}
-          >
-            <Feather name="map-pin" size={18} color="#2F6BFF" />
-            <Text style={styles.currentLocationText}>{'\uD604\uC7AC \uC704\uCE58 \uC0AC\uC6A9'}</Text>
-          </Pressable>
-
           <ScrollView
+            style={styles.locationResultsScroll}
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.locationListContent}
@@ -665,7 +605,7 @@ function BasedInLocationPicker({
               <>
                 <Text style={styles.locationSectionLabel}>{'\uCD5C\uADFC \uAC80\uC0C9'}</Text>
                 <View style={styles.locationResultGroup}>
-                  {recentPlaces.map((place) => (
+                  {recentPlaces.length > 0 ? recentPlaces.map((place) => (
                     <Pressable
                       accessibilityRole="button"
                       key={`recent-${place.placeId ?? place.displayName}`}
@@ -679,7 +619,11 @@ function BasedInLocationPicker({
                       <Feather name="clock" size={18} color={Colors.foundation.black} />
                       <Text style={styles.recentLocationText}>{place.displayName}</Text>
                     </Pressable>
-                  ))}
+                  )) : (
+                    <View style={styles.locationEmptyRow}>
+                      <Text style={styles.locationEmptyText}>저장된 생활 지역이 없어요.</Text>
+                    </View>
+                  )}
                 </View>
               </>
             )}
@@ -687,7 +631,7 @@ function BasedInLocationPicker({
 
     
         </Animated.View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -918,6 +862,9 @@ const styles = StyleSheet.create({
     ...Typography.body2Regular,
     color: Colors.foundation.black,
   },
+  locationResultsScroll: {
+    flexShrink: 1,
+  },
   locationClearButton: {
     width: 20,
     height: 20,
@@ -925,22 +872,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: Radius.full,
     backgroundColor: Colors.foundation.grey300,
-  },
-  currentLocationButton: {
-    height: 52,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-    marginTop: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.foundation.grey100,
-    borderRadius: Radius.sm,
-    backgroundColor: Colors.foundation.white,
-  },
-  currentLocationText: {
-    ...Typography.body2Emphasized,
-    color: '#2F6BFF',
   },
   locationListContent: {
     paddingTop: Spacing.xl,

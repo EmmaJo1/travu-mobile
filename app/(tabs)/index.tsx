@@ -64,6 +64,7 @@ import { useArchivedTravelMoments } from '@/hooks/useArchivedTravelMoments';
 import { useCreatePlaceRecord } from '@/hooks/useCreatePlaceRecord';
 import { useCreateTrip } from '@/hooks/useCreateTrip';
 import { useDeletePlaceRecord } from '@/hooks/useDeletePlaceRecord';
+import { usePrimaryLivingArea } from '@/hooks/usePrimaryLivingArea';
 import { useActiveTrip, useMyTrips, useRecentTrips } from '@/hooks/useMyTrips';
 import { isSupabaseUuid } from '@/hooks/usePlaceDetailData';
 import { usePhotoImportFlow } from '@/hooks/usePhotoImportFlow';
@@ -896,9 +897,9 @@ export default function HomeScreen() {
     canUseSupabaseUserData,
     isDevBypass,
     isLoading: isAuthLoading,
-    profile: authProfile,
     user,
   } = useAuth();
+  const { livingArea: confirmedLivingArea } = usePrimaryLivingArea();
   const createTripMutation = useCreateTrip();
   const createPlaceRecordMutation = useCreatePlaceRecord();
   const deletePlaceRecordMutation = useDeletePlaceRecord();
@@ -1057,27 +1058,14 @@ export default function HomeScreen() {
     supabasePrimaryDestination?.name,
     supabasePrimaryDestination?.name_ko,
   ]);
-  const hasStoredLivingRegion = Boolean(authProfile?.based_in?.trim());
   const idleHomeHeroImage = React.useMemo<ImageSourcePropType>(() => {
     return resolveDestinationHero({
       context: 'daily-home',
-      regionName: hasStoredLivingRegion
-        ? authProfile?.based_in_city ?? authProfile?.based_in
-        : null,
-      countryCode: hasStoredLivingRegion
-        ? authProfile?.based_in_country_code
-        : null,
-      countryName: hasStoredLivingRegion
-        ? authProfile?.based_in_country
-        : null,
+      regionName: confirmedLivingArea?.locality ?? confirmedLivingArea?.displayName,
+      countryCode: confirmedLivingArea?.countryCode,
+      countryName: confirmedLivingArea?.countryName,
     });
-  }, [
-    authProfile?.based_in,
-    authProfile?.based_in_city,
-    authProfile?.based_in_country,
-    authProfile?.based_in_country_code,
-    hasStoredLivingRegion,
-  ]);
+  }, [confirmedLivingArea]);
   const refetchIdleHomeData = React.useCallback(async () => {
     if (!canUseSupabaseUserData) {
       return;

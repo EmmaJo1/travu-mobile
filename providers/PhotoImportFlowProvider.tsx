@@ -3,12 +3,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Alert } from 'react-native';
 
 import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
+import { usePrimaryLivingArea } from '@/hooks/usePrimaryLivingArea';
 import { useAuth } from '@/providers/AuthProvider';
-import { useUserProfile } from '@/providers/UserProfileProvider';
-import {
-  createLivingAreaFromProfile,
-  type LivingArea,
-} from '@/services/location/livingAreas';
+import type { LivingArea } from '@/services/location/livingAreas';
 import {
   getLocalDetectedTripCandidates,
   getLocalDetectedTripDraft,
@@ -156,7 +153,7 @@ function getCandidatesForScanAttempt(
 export function PhotoImportFlowProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
   const { canUseSupabaseUserData, user } = useAuth();
-  const { profile } = useUserProfile();
+  const { livingArea: confirmedLivingArea } = usePrimaryLivingArea();
   const [status, setStatus] = React.useState<PhotoImportStatus>('not_started');
   const [detectionState, setDetectionState] =
     React.useState<PhotoImportDetectionState>('idle');
@@ -202,7 +199,7 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
     activeScanAttemptIdRef.current = undefined;
     startPhotoImportAnalysis();
     const resolvedLivingArea = options.livingArea === undefined
-      ? createLivingAreaFromProfile(profile.basedIn, profile.basedInPlace)
+      ? confirmedLivingArea
       : options.livingArea;
 
     try {
@@ -215,10 +212,15 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
               Number.isFinite(resolvedLivingArea.latitude) &&
               Number.isFinite(resolvedLivingArea.longitude),
           ),
+          confirmedLivingAreaAdministrativeArea: confirmedLivingArea?.administrativeArea,
           homeRegionFilterSkipReason: options.homeRegionFilterSkipReason,
+          confirmedLivingAreaDisplayName: confirmedLivingArea?.displayName,
+          confirmedLivingAreaId: confirmedLivingArea?.id,
+          confirmedLivingAreaLocality: confirmedLivingArea?.locality,
+          livingAreaAdministrativeArea: resolvedLivingArea?.administrativeArea,
           livingAreaDisplayName: resolvedLivingArea?.displayName,
-          profileBasedIn: profile.basedIn,
-          profileBasedInPlaceExists: Boolean(profile.basedInPlace),
+          livingAreaId: resolvedLivingArea?.id,
+          livingAreaLocality: resolvedLivingArea?.locality,
         });
       }
 
@@ -304,7 +306,7 @@ export function PhotoImportFlowProvider({ children }: { children: React.ReactNod
         console.info('[photo-import scan] cleanup executed');
       }
     }
-  }, [profile.basedIn, profile.basedInPlace, startPhotoImportAnalysis, user?.id]);
+  }, [confirmedLivingArea, startPhotoImportAnalysis, user?.id]);
 
   const requestAccessAndStartAnalysis = React.useCallback(async (options?: PhotoImportRunOptions) => {
     await runPhotoImportDetection(options);
