@@ -151,6 +151,12 @@ test('production 검색 코드에 fixture가 없다', async () => {
   assert.equal(source.includes("source: 'mock'"), false);
 });
 
+test('Google 검색 결과 선택 시 검색어가 아니라 선택한 display name을 초기 저장명으로 쓴다', async () => {
+  const source = await readFile(new URL('../components/common/PlaceSearchModal.tsx', import.meta.url), 'utf8');
+  assert.equal(source.includes('name: result.displayName,'), true);
+  assert.equal(source.includes('name: trimmedSearchText,\n        googleDisplayName: result.displayName,'), false);
+});
+
 test('auth/config/quota/empty error를 안전한 문구로 정규화한다', () => {
   assert.match(getPlaceSearchErrorMessage('UNAUTHORIZED'), /로그인/);
   assert.match(getPlaceSearchErrorMessage('SERVER_CONFIGURATION_ERROR'), /직접 추가/);
