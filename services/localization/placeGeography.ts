@@ -1,4 +1,4 @@
-import { getAppContentLanguageCode } from './appLanguage.ts';
+import { getAppContentLanguageCode } from './appLanguage';
 
 type SupportedDisplayLanguage = 'en' | 'ko';
 
