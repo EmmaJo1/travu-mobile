@@ -190,6 +190,21 @@ test('saved geography는 현재 한국어 locale에서 Osaka/日本을 한국어
   );
 });
 
+test('Osaka city 변형은 저장 원문과 무관하게 한국어 표시를 통일한다', () => {
+  for (const city of ['Osaka', 'Osaka City', '大阪市', '오사카시']) {
+    assert.deepEqual(
+      localizeSavedPlaceGeography({ city, country: 'Japan' }),
+      { cityName: '오사카', countryCode: 'JP', countryName: '일본' },
+    );
+  }
+});
+
+test('일본 country 원문 변형은 한국어 표시를 통일한다', () => {
+  for (const country of ['Japan', '日本', '일본']) {
+    assert.equal(localizeSavedPlaceGeography({ country }).countryName, '일본');
+  }
+});
+
 test('saved geography는 표시 locale이 영어면 같은 원본을 영어로 표시한다', () => {
   assert.deepEqual(
     localizeSavedPlaceGeography({ city: '大阪市', country: '일본' }, 'en'),
@@ -219,6 +234,15 @@ test('Home 현재 기기 위치 라벨은 app language와 무관하게 영어 �
   const source = await readFile(new URL('../app/(tabs)/index.tsx', import.meta.url), 'utf8');
   assert.equal(source.includes('const label = getEnglishDeviceLocationLabelFromLocality(locality);'), true);
   assert.equal(source.includes('getAppContentLanguageCode'), false);
+});
+
+test('place-detail은 city/country 표시를 shared localizer에 위임한다', async () => {
+  const source = await readFile(new URL('../app/place-detail.tsx', import.meta.url), 'utf8');
+  assert.equal(source.includes('localizeSavedPlaceGeography({'), true);
+  assert.equal(source.includes('KOREAN_CITY_LABELS'), false);
+  assert.equal(source.includes('KOREAN_COUNTRY_LABELS'), false);
+  assert.equal(source.includes('getKoreanCityLabel'), false);
+  assert.equal(source.includes('getKoreanCountryLabel'), false);
 });
 
 test('auth/config/quota/empty error를 안전한 문구로 정규화한다', () => {
