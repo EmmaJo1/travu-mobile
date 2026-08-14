@@ -182,7 +182,7 @@ export function PlaceSearchContent({
       if (!selectionSequence.current.isLatest(sequence)) return;
       onSelectPlace({
         id: selected.googlePlaceId,
-        name: trimmedSearchText,
+        name: result.displayName,
         googleDisplayName: result.displayName,
         address: selected.formattedAddress,
         city: selected.cityName,
