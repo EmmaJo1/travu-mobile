@@ -17,11 +17,11 @@ export function useTripPlaces(tripId?: string | null, enabled = true) {
   });
 }
 
-export function useTripRecords(tripId?: string | null) {
+export function useTripRecords(tripId?: string | null, enabled = true) {
   const { canUseSupabaseUserData, user } = useAuth();
 
   return useQuery({
-    enabled: canUseSupabaseUserData && isSupabaseUuid(tripId),
+    enabled: enabled && canUseSupabaseUserData && isSupabaseUuid(tripId),
     queryFn: () => fetchRecordsByTripId(tripId as string),
     queryKey: supabaseQueryKeys.tripRecords(user?.id, tripId),
   });

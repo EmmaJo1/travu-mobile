@@ -85,6 +85,8 @@ import {
 } from '@/hooks/useTripDestinations';
 import { useUpdateActiveTripDateRange } from '@/hooks/useUpdateActiveTripDateRange';
 import { useAuth } from '@/providers/AuthProvider';
+import { getCumulativePlaceDistanceKm } from '@/services/maps/distance';
+import { buildTripMapData } from '@/services/maps/tripMapData';
 import {
   ensureTripDaysThroughDate,
   TripDateRangeHasDataError,
@@ -1733,6 +1735,16 @@ export default function HomeScreen() {
     ],
   );
   const recordedPhotoCount = selectedSupabaseTripDayPhotos?.length ?? 0;
+  const selectedTripDayMapData = React.useMemo(
+    () => buildTripMapData(
+      selectedSupabaseTripDayPlaces ?? [],
+      activeSupabaseTripDays,
+      selectedRouteTripDayId
+        ? { type: 'day', tripDayId: selectedRouteTripDayId }
+        : { type: 'all' },
+    ),
+    [activeSupabaseTripDays, selectedRouteTripDayId, selectedSupabaseTripDayPlaces],
+  );
   const tripTotalStats = React.useMemo(
     () => getTripTotalStats(
       supabaseTripPlaces ?? [],
@@ -1747,7 +1759,7 @@ export default function HomeScreen() {
     : `${selectedTripDayIndex + 1}일차 타임라인`;
   const selectedSummaryDateLabel = formatHeroDateLabel(selectedDateKey);
   const selectedSummary = {
-    distanceKm: 0,
+    distanceKm: getCumulativePlaceDistanceKm(selectedTripDayMapData.orderedPlaces),
     placeCount: visibleTimelineItems.length,
     photoCount: recordedPhotoCount,
   };

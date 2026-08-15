@@ -37,7 +37,7 @@ import PlaceCreateModal, {
   type PlaceCreateInput,
   type PlaceEntryDayOption,
 } from '@/components/record/PlaceCreateModal';
-import MapPlaceholderCard from '@/components/common/MapPlaceholderCard';
+import TripPlacesMap from '@/components/map/TripPlacesMap';
 import DaySelectorSheet, { type DaySelectorItem } from '@/components/record/DaySelectorSheet';
 import PlaceEntryCard, { type PlaceEntry } from '@/components/trip/PlaceEntryCard';
 import type { DestinationOption } from '@/constants/mockTripDestinations';
@@ -70,7 +70,7 @@ import { useTripDayPlaces } from '@/hooks/useTripDayPlaces';
 import { useTripDayRecords } from '@/hooks/useTripDayRecords';
 import { useResolvedTripPhotos, useTripDayPhotos } from '@/hooks/useSupabasePhotos';
 import { supabaseQueryKeys } from '@/hooks/supabaseQueryKeys';
-import { useTripPlaces } from '@/hooks/useTripTimelineData';
+import { useTripPlaces, useTripRecords } from '@/hooks/useTripTimelineData';
 import { useUpdatePlaceRecord } from '@/hooks/useUpdatePlaceRecord';
 import { isSupabaseUuid } from '@/hooks/usePlaceDetailData';
 import type { TripDayRow } from '@/services/supabase/tripDays';
@@ -79,6 +79,8 @@ import { isUserSavedTripStatus } from '@/services/supabase/tripStatus';
 import type { TripRow } from '@/services/supabase/trips';
 import { mapSupabasePlacesToPlaceEntries } from '@/utils/supabasePlaceRecordMappers';
 import { mapSupabaseTripToMyPageTrip } from '@/utils/supabaseTripMappers';
+import { buildTripMapData, type TripMapMarker } from '@/services/maps/tripMapData';
+import { getCumulativePlaceDistanceKm } from '@/services/maps/distance';
 
 /** Figma 506:704 - scroll content starts below status bar(59) + header(40). */
 const SCROLL_ORIGIN_Y = 99;
@@ -403,7 +405,6 @@ function createArchiveDetailFromTrip(trip?: MyPageTrip): ArchiveDetailData {
       daysCount: trip.daysCount,
       photoCount: trip.photoCount,
       placeCount: 0,
-      distanceKm: 0,
     },
     places: [],
   };
@@ -838,7 +839,7 @@ function ArchiveEmptyState({
 export default function DayArchiveDetailScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { dayId, dayNumber, tripId } = useLocalSearchParams<{
+  const { dayId, dayNumber, placeId: routePlaceId, tripId } = useLocalSearchParams<{
     tripId?: string;
     dayId?: string;
     dayNumber?: string;
@@ -929,6 +930,13 @@ export default function DayArchiveDetailScreen() {
   const [isFixedHeaderVisible, setFixedHeaderVisible] = useState(false);
   const [isHeaderMenuVisible, setHeaderMenuVisible] = useState(false);
   const [isScrollEnabled, setScrollEnabled] = useState(true);
+  const [isAllTripSelected, setAllTripSelected] = useState(false);
+  const [selectedMapMarkerId, setSelectedMapMarkerId] = useState<string | null>(
+    routePlaceId ?? null,
+  );
+  const scrollRef = useRef<ScrollView>(null);
+  const entriesContentOffsetRef = useRef(0);
+  const entryOffsetsRef = useRef(new Map<string, number>());
   const placeCreateDayOptions = useMemo(() => {
     const options = dayOptions.map(createArchiveDayOption);
     return options.length > 0 ? options : [createArchiveDayOption(selectedDay)];
@@ -981,22 +989,35 @@ export default function DayArchiveDetailScreen() {
   const {
     data: supabasePlaces,
     isError: isSupabasePlacesError,
+    isPending: isSupabasePlacesPending,
     isSuccess: isSupabasePlacesSuccess,
-  } = useTripDayPlaces(selectedSupabaseTripDayId);
-  const { data: supabaseRecords } = useTripDayRecords(selectedSupabaseTripDayId);
+    refetch: refetchSupabasePlaces,
+  } = useTripDayPlaces(isAllTripSelected ? null : selectedSupabaseTripDayId);
+  const { data: supabaseRecords } = useTripDayRecords(
+    isAllTripSelected ? null : selectedSupabaseTripDayId,
+  );
   const {
     data: supabasePhotos,
     isError: isSupabasePhotosError,
     isPending: isSupabasePhotosPending,
     refetch: refetchSupabasePhotos,
-  } = useTripDayPhotos(selectedSupabaseTripDayId);
-  const { data: supabaseTripPlaces } = useTripPlaces(
+  } = useTripDayPhotos(isAllTripSelected ? null : selectedSupabaseTripDayId);
+  const {
+    data: supabaseTripPlaces,
+    isError: isSupabaseTripPlacesError,
+    isPending: isSupabaseTripPlacesPending,
+    refetch: refetchSupabaseTripPlaces,
+  } = useTripPlaces(
     supabaseRouteTripId,
-    isCoverPhotoPickerVisible,
+    isCoverPhotoPickerVisible || isAllTripSelected,
+  );
+  const { data: supabaseTripRecords } = useTripRecords(
+    supabaseRouteTripId,
+    isAllTripSelected,
   );
   const { data: supabaseTripPhotos } = useResolvedTripPhotos(
     supabaseRouteTripId,
-    isCoverPhotoPickerVisible,
+    isCoverPhotoPickerVisible || isAllTripSelected,
   );
   const visibleArchivePlaces = useMemo(
     () =>
@@ -1009,15 +1030,38 @@ export default function DayArchiveDetailScreen() {
     () => toPlaceEntries(visibleArchivePlaces),
     [visibleArchivePlaces],
   );
+  const supabaseMapData = useMemo(() => buildTripMapData(
+    (isAllTripSelected ? (supabaseTripPlaces ?? []) : (supabasePlaces ?? []))
+      .filter((place) => !deletedArchivePlaceIds.has(place.id) && !isPlaceDetailDeleted(place.id)),
+    supabaseTripDays ?? [],
+    isAllTripSelected
+      ? { type: 'all' }
+      : { type: 'day', tripDayId: selectedSupabaseTripDayId ?? selectedDay.id },
+  ), [
+    isAllTripSelected,
+    deletedArchivePlaceIds,
+    selectedDay.id,
+    selectedSupabaseTripDayId,
+    supabasePlaces,
+    supabaseTripDays,
+    supabaseTripPlaces,
+  ]);
   const supabaseEntries = useMemo(
-    () =>
-      mapSupabasePlacesToPlaceEntries(
-        supabasePlaces ?? [],
-        supabaseRecords ?? [],
-        detail.country,
-        supabasePhotos ?? [],
-      ),
-    [detail.country, supabasePhotos, supabasePlaces, supabaseRecords],
+    () => mapSupabasePlacesToPlaceEntries(
+      supabaseMapData.orderedPlaces,
+      isAllTripSelected ? (supabaseTripRecords ?? []) : (supabaseRecords ?? []),
+      detail.country,
+      isAllTripSelected ? (supabaseTripPhotos ?? []) : (supabasePhotos ?? []),
+    ),
+    [
+      detail.country,
+      isAllTripSelected,
+      supabaseMapData.orderedPlaces,
+      supabasePhotos,
+      supabaseRecords,
+      supabaseTripPhotos,
+      supabaseTripRecords,
+    ],
   );
   const entries = (
     isSupabaseArchiveTrip
@@ -1026,6 +1070,16 @@ export default function DayArchiveDetailScreen() {
         ? supabaseEntries
         : fallbackEntries
   ).filter((entry) => !deletedArchivePlaceIds.has(getEntryPlaceId(entry)));
+  const fallbackMapData = useMemo(
+    () => buildTripMapData(
+      fallbackEntries,
+      dayOptions.map((day) => ({ id: day.id, dayIndex: day.dayNumber })),
+      { type: 'all' },
+    ),
+    [dayOptions, fallbackEntries],
+  );
+  const displayedMapData = isSupabaseArchiveTrip ? supabaseMapData : fallbackMapData;
+  const displayedEntries = isSupabaseArchiveTrip ? entries : fallbackMapData.orderedPlaces;
   const failedSupabasePhotoCount = (supabasePhotos ?? []).filter(
     (photo) => photo.displayUrlStatus === 'failed',
   ).length;
@@ -1034,6 +1088,7 @@ export default function DayArchiveDetailScreen() {
   ).length;
   const isSupabaseDayEmpty =
     isSupabaseArchiveTrip &&
+    !isAllTripSelected &&
     Boolean(selectedSupabaseTripDayId) &&
     isSupabasePlacesSuccess &&
     (supabasePlaces?.length ?? 0) === 0;
@@ -1153,6 +1208,8 @@ export default function DayArchiveDetailScreen() {
       }
 
       setSelectedDay(day);
+      setAllTripSelected(false);
+      setSelectedMapMarkerId(null);
       triggerSelectionHaptic();
     },
     [selectedDay.id, triggerSelectionHaptic],
@@ -1192,14 +1249,17 @@ export default function DayArchiveDetailScreen() {
   }, []);
 
   const handleOpenPlaceDetail = (entry: PlaceEntry) => {
+    const entryTripDayId = entry.tripDayId ?? selectedSupabaseTripDayId ?? undefined;
+    const entryTripDay = supabaseTripDays?.find((day) => day.id === entryTripDayId);
+
     router.push({
       pathname: '/place-detail',
       params: {
         tripId: detail.id,
-        dayId: selectedRouteDayId,
-        tripDayId: selectedSupabaseTripDayId ?? undefined,
-        dayIndex: String(selectedRouteDayIndex),
-        date: selectedRouteDate,
+        dayId: entryTripDayId ?? selectedRouteDayId,
+        tripDayId: entryTripDayId,
+        dayIndex: String(entryTripDay?.day_index ?? entry.dayNumber ?? selectedRouteDayIndex),
+        date: entryTripDay?.date ?? entry.dateKey ?? selectedRouteDate,
         placeId: getEntryPlaceId(entry),
         entryPoint: 'archiveDayDetail',
         placeName: entry.placeName ?? entry.place,
@@ -1210,6 +1270,22 @@ export default function DayArchiveDetailScreen() {
         timeLabel: entry.time,
         recordText: entry.text,
       },
+    });
+  };
+
+  const handleMapMarkerPress = (marker: TripMapMarker) => {
+    setSelectedMapMarkerId(marker.id);
+    const entryOffset = entryOffsetsRef.current.get(marker.placeId);
+
+    if (entryOffset == null) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        animated: true,
+        y: Math.max(0, entriesContentOffsetRef.current + entryOffset - Spacing.xl),
+      });
     });
   };
 
@@ -1705,6 +1781,7 @@ export default function DayArchiveDetailScreen() {
       </View>
 
       <ScrollView
+        ref={scrollRef}
         style={styles.scroll}
         contentContainerStyle={styles.content}
         onScroll={(event) => {
@@ -1774,9 +1851,57 @@ export default function DayArchiveDetailScreen() {
         />
 
         <View style={styles.recordSection}>
-          <MapPlaceholderCard align="top" style={styles.archiveMapCard} />
+          <View style={styles.mapScopeRow}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setAllTripSelected(true);
+                setSelectedMapMarkerId(null);
+              }}
+              style={[styles.mapScopeButton, isAllTripSelected && styles.mapScopeButtonSelected]}
+            >
+              <Text style={[styles.mapScopeText, isAllTripSelected && styles.mapScopeTextSelected]}>
+                전체 여행
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setAllTripSelected(false)}
+              style={[styles.mapScopeButton, !isAllTripSelected && styles.mapScopeButtonSelected]}
+            >
+              <Text style={[styles.mapScopeText, !isAllTripSelected && styles.mapScopeTextSelected]}>
+                선택 일차
+              </Text>
+            </Pressable>
+          </View>
+          <TripPlacesMap
+            distanceKm={getCumulativePlaceDistanceKm(displayedMapData.orderedPlaces)}
+            excludedCoordinateCount={displayedMapData.excludedCoordinateCount}
+            isError={isSupabaseArchiveTrip && (
+              isAllTripSelected ? isSupabaseTripPlacesError : isSupabasePlacesError
+            )}
+            isLoading={isSupabaseArchiveTrip && (
+              isAllTripSelected ? isSupabaseTripPlacesPending : isSupabasePlacesPending
+            )}
+            markers={displayedMapData.markers}
+            onMarkerPress={handleMapMarkerPress}
+            onRetry={() => {
+              if (isAllTripSelected) {
+                void refetchSupabaseTripPlaces();
+              } else {
+                void refetchSupabasePlaces();
+              }
+            }}
+            selectedMarkerId={selectedMapMarkerId}
+            style={styles.archiveMapCard}
+          />
 
-          <View style={styles.entries}>
+          <View
+            onLayout={(event) => {
+              entriesContentOffsetRef.current = event.nativeEvent.layout.y;
+            }}
+            style={styles.entries}
+          >
             {failedSupabasePhotoCount > 0 ? (
               <View style={styles.dayEmptyState}>
                 <Text style={styles.dayEmptyTitle}>{'\uC77C\uBD80 \uC0AC\uC9C4\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694'}</Text>
@@ -1802,14 +1927,14 @@ export default function DayArchiveDetailScreen() {
                 </Text>
               </View>
             ) : null}
-            {isSupabaseArchiveTrip && Boolean(selectedSupabaseTripDayId) && isSupabasePhotosPending ? (
+            {isSupabaseArchiveTrip && !isAllTripSelected && Boolean(selectedSupabaseTripDayId) && isSupabasePhotosPending ? (
               <View style={styles.dayEmptyState}>
                 <Text style={styles.dayEmptyTitle}>{'\uC0AC\uC9C4\uC744 \uBD88\uB7EC\uC624\uB294 \uC911\uC774\uC5D0\uC694'}</Text>
                 <Text style={styles.dayEmptyDescription}>
                   {'\uC800\uC7A5\uB41C \uC0AC\uC9C4\uC744 \uD655\uC778\uD558\uACE0 \uC788\uC5B4\uC694.'}
                 </Text>
               </View>
-            ) : isSupabasePhotosError ? (
+            ) : !isAllTripSelected && isSupabasePhotosError ? (
               <View style={styles.dayEmptyState}>
                 <Text style={styles.dayEmptyTitle}>{'\uC0AC\uC9C4\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694'}</Text>
                 <Text style={styles.dayEmptyDescription}>
@@ -1826,7 +1951,7 @@ export default function DayArchiveDetailScreen() {
                   />
                 </View>
               </View>
-            ) : isSupabasePlacesError ? (
+            ) : (isAllTripSelected ? isSupabaseTripPlacesError : isSupabasePlacesError) ? (
               <View style={styles.dayEmptyState}>
                 <Text style={styles.dayEmptyTitle}>{'\uC7A5\uC18C\uB97C \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694'}</Text>
                 <Text style={styles.dayEmptyDescription}>
@@ -1849,17 +1974,26 @@ export default function DayArchiveDetailScreen() {
                 </View>
               </View>
             ) : (
-              entries.map((entry) => (
-                <PlaceEntryCard
+              displayedEntries.map((entry) => (
+                <View
                   key={entry.id}
-                  entry={entry}
-                  flagScreen={isSupabaseArchiveTrip ? 'saved_day_archive_detail' : undefined}
-                  showRating={false}
-                  variant="archive"
-                  onLongPress={() => handleDeleteArchiveEntry(entry)}
-                  onPress={() => handleOpenPlaceDetail(entry)}
-                  onPhotoGridOpen={() => handleOpenPlacePhotoGrid(entry)}
-                />
+                  onLayout={(event) => {
+                    entryOffsetsRef.current.set(getEntryPlaceId(entry), event.nativeEvent.layout.y);
+                  }}
+                >
+                  <PlaceEntryCard
+                    entry={entry}
+                    flagScreen={isSupabaseArchiveTrip ? 'saved_day_archive_detail' : undefined}
+                    showRating={false}
+                    variant="archive"
+                    onLongPress={() => handleDeleteArchiveEntry(entry)}
+                    onPress={() => {
+                      setSelectedMapMarkerId(getEntryPlaceId(entry));
+                      handleOpenPlaceDetail(entry);
+                    }}
+                    onPhotoGridOpen={() => handleOpenPlacePhotoGrid(entry)}
+                  />
+                </View>
               ))
             )}
           </View>
@@ -2183,6 +2317,31 @@ const styles = StyleSheet.create({
   archiveMapCard: {
     maxWidth: '100%',
     alignSelf: 'stretch',
+  },
+  mapScopeRow: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    gap: Spacing.xs,
+    padding: Spacing.xs,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.foundation.white,
+  },
+  mapScopeButton: {
+    minHeight: 32,
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.lg,
+    borderRadius: Radius.full,
+  },
+  mapScopeButtonSelected: {
+    backgroundColor: Colors.foundation.black,
+  },
+  mapScopeText: {
+    ...Typography.captionRegular,
+    color: Colors.foundation.grey700,
+  },
+  mapScopeTextSelected: {
+    ...Typography.captionEmphasized,
+    color: Colors.foundation.white,
   },
   entries: {
     gap: 40,
