@@ -268,6 +268,7 @@ export default function ProfileScreen() {
                     isLoading={canUseSupabaseUserData && (
                       isMyTravelMapPlacesLoading || isSupabaseTripsLoading
                     )}
+                    markerVariant="plain"
                     markers={myTravelMapData.markers}
                     onMarkerPress={(marker) => {
                       if (!marker.tripId) {

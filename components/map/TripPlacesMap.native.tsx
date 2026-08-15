@@ -20,6 +20,7 @@ export default function TripPlacesMap({
   height = 240,
   isError = false,
   isLoading = false,
+  markerVariant = 'numbered',
   markers,
   onMarkerPress,
   onRetry,
@@ -107,10 +108,11 @@ export default function TripPlacesMap({
       >
         {markers.map((marker) => (
           <NumberedPlaceMarker
-            key={`${marker.id}-${marker.number}`}
+            key={`${marker.id}-${marker.number}-${markerVariant}`}
             marker={marker}
             onPress={onMarkerPress}
             selected={marker.id === selectedMarkerId}
+            variant={markerVariant}
           />
         ))}
       </MapView>

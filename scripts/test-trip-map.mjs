@@ -168,6 +168,7 @@ assert.match(profileSource, /trip\.deleted_at === null/);
 assert.doesNotMatch(profileSource, /useTripPlaces\(/);
 assert.doesNotMatch(profileSource, /centroid/i);
 assert.doesNotMatch(profileSource, /MapPlaceholderCard/);
+assert.match(profileSource, /markerVariant="plain"/);
 
 const recordDaySource = await readFile(new URL('../app/record-day-detail.tsx', import.meta.url), 'utf8');
 const archiveSource = await readFile(new URL('../app/day-archive-detail.tsx', import.meta.url), 'utf8');
@@ -181,16 +182,28 @@ assert.doesNotMatch(archiveSource, /MapPlaceholderCard/);
 assert.doesNotMatch(homeSource, /distanceKm:\s*0/);
 assert.match(recordDaySource, /setSelectedFilterId\(ALL_DAYS_ID\)/);
 assert.match(archiveSource, /setAllTripSelected\(true\)/);
+assert.doesNotMatch(recordDaySource, /markerVariant="plain"/);
+assert.doesNotMatch(archiveSource, /markerVariant="plain"/);
 assert.match(languagePolicySource, /device-location label is a[\s\S]*remain English-only/i);
 
 const nativeMapSource = await readFile(
   new URL('../components/map/TripPlacesMap.native.tsx', import.meta.url),
   'utf8',
 );
+const markerSource = await readFile(
+  new URL('../components/map/NumberedPlaceMarker.tsx', import.meta.url),
+  'utf8',
+);
 const appConfigSource = await readFile(new URL('../app.config.ts', import.meta.url), 'utf8');
 assert.match(nativeMapSource, /provider=\{PROVIDER_GOOGLE\}/);
 assert.match(nativeMapSource, /showsMyLocationButton=\{false\}/);
 assert.match(nativeMapSource, /showsUserLocation=\{false\}/);
+assert.match(nativeMapSource, /markerVariant = 'numbered'/);
+assert.match(nativeMapSource, /variant=\{markerVariant\}/);
+assert.match(markerSource, /isPlain \? null : \(/);
+assert.match(markerSource, /isPlain \? '저장된 방문 장소' : `\$\{marker\.number\}번 장소`/);
+assert.match(markerSource, /onPress=\{\(\) => onPress\?\.\(marker\)\}/);
+assert.match(markerSource, /isPlain && selected && styles\.markerPlainSelected/);
 assert.match(appConfigSource, /GOOGLE_MAPS_ANDROID_API_KEY/);
 assert.match(appConfigSource, /GOOGLE_MAPS_IOS_API_KEY/);
 assert.doesNotMatch(appConfigSource, /AIza[0-9A-Za-z_-]+/);
