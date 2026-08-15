@@ -7,7 +7,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -27,7 +27,7 @@ import FullScreenImageViewer from '@/components/common/FullScreenImageViewer';
 import StartTripSetupModal, {
   type StartTripSetupValue,
 } from '@/components/home/StartTripSetupModal';
-import MapPlaceholderCard from '@/components/common/MapPlaceholderCard';
+import TripPlacesMap from '@/components/map/TripPlacesMap';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import DaySelectorSheet, { type DaySelectorItem } from '@/components/record/DaySelectorSheet';
 import PlaceCreateModal, {
@@ -72,7 +72,10 @@ import { useTripDayPlaces } from '@/hooks/useTripDayPlaces';
 import { useTripDayRecords } from '@/hooks/useTripDayRecords';
 import { useTripDays } from '@/hooks/useTripDays';
 import { useUpdatePlaceRecord } from '@/hooks/useUpdatePlaceRecord';
+import { useTripPlaces, useTripRecords } from '@/hooks/useTripTimelineData';
 import type { TripDayRow } from '@/services/supabase/tripDays';
+import { buildTripMapData, type TripMapMarker } from '@/services/maps/tripMapData';
+import { getCumulativePlaceDistanceKm } from '@/services/maps/distance';
 import { mapSupabasePlacesToPlaceEntries } from '@/utils/supabasePlaceRecordMappers';
 
 const ALL_DAYS_ID = 'all';
@@ -904,6 +907,7 @@ interface DayFilterBarProps {
   days: DaySelectorItem[];
   selectedId: string;
   onSelectAll: () => void;
+  onOpenDaySheet: () => void;
   onSelectDay: (day: DaySelectorItem) => void;
 }
 
@@ -927,14 +931,17 @@ function getDayChipLabel(day: DaySelectorItem, days: DaySelectorItem[]) {
   return `${datePrefix} ${day.weekdayLabel}`.trim();
 }
 
-function DayFilterBar({ days, selectedId, onSelectAll, onSelectDay }: DayFilterBarProps) {
+function DayFilterBar({ days, selectedId, onOpenDaySheet, onSelectAll, onSelectDay }: DayFilterBarProps) {
   const [hasScrolledDays, setHasScrolledDays] = useState(false);
 
   return (
     <View style={styles.dayFilterBar}>
-      <Pressable accessibilityRole="button" onPress={onSelectAll} style={styles.allChip}>
-        <Text style={styles.allChipText}>전체</Text>
-        <Feather name="chevron-down" size={10} color={Colors.foundation.black} />
+      <Pressable
+        accessibilityRole="button"
+        onPress={onSelectAll}
+        style={[styles.allChip, selectedId === ALL_DAYS_ID && styles.dayChipSelected]}
+      >
+        <Text style={[styles.allChipText, selectedId === ALL_DAYS_ID && styles.dayChipTextSelected]}>전체</Text>
       </Pressable>
 
       <View style={styles.dayChipViewport}>
@@ -975,6 +982,14 @@ function DayFilterBar({ days, selectedId, onSelectAll, onSelectDay }: DayFilterB
           style={[styles.dayChipFade, !hasScrolledDays && styles.dayChipFadeHidden]}
         />
       </View>
+      <Pressable
+        accessibilityLabel="날짜 선택 열기"
+        accessibilityRole="button"
+        onPress={onOpenDaySheet}
+        style={styles.daySheetButton}
+      >
+        <Feather name="calendar" size={16} color={Colors.foundation.black} />
+      </Pressable>
     </View>
   );
 }
@@ -1142,7 +1157,12 @@ export default function RecordDayDetailScreen() {
     photoIndex: number;
   } | null>(null);
   const [tripInfoModalVisible, setTripInfoModalVisible] = useState(false);
-  const selectedSupabaseTripDayId = shouldUseSupabaseRecordDay && isSupabaseUuid(selectedDay.id)
+  const scrollRef = useRef<ScrollView>(null);
+  const entryOffsetsRef = useRef(new Map<string, number>());
+  const entriesContentOffsetRef = useRef(0);
+  const [selectedMapMarkerId, setSelectedMapMarkerId] = useState<string | null>(null);
+  const isAllTripSelected = selectedFilterId === ALL_DAYS_ID;
+  const selectedSupabaseTripDayId = !isAllTripSelected && shouldUseSupabaseRecordDay && isSupabaseUuid(selectedDay.id)
     ? selectedDay.id
     : isSupabaseTripDayRoute
       ? routeTripDayId
@@ -1159,6 +1179,18 @@ export default function RecordDayDetailScreen() {
     isPending: isSupabaseRecordsPending,
     refetch: refetchSupabaseRecords,
   } = useTripDayRecords(selectedSupabaseTripDayId);
+  const {
+    data: supabaseTripPlaces,
+    isError: isSupabaseTripPlacesError,
+    isPending: isSupabaseTripPlacesPending,
+    refetch: refetchSupabaseTripPlaces,
+  } = useTripPlaces(routeTripId, shouldUseSupabaseRecordDay && isAllTripSelected);
+  const {
+    data: supabaseTripRecords,
+    isError: isSupabaseTripRecordsError,
+    isPending: isSupabaseTripRecordsPending,
+    refetch: refetchSupabaseTripRecords,
+  } = useTripRecords(routeTripId, shouldUseSupabaseRecordDay && isAllTripSelected);
 
   useEffect(() => {
     setDayOptions(baseDayOptions);
@@ -1223,21 +1255,40 @@ export default function RecordDayDetailScreen() {
     updatedPlaceId,
   ]);
 
+  const supabaseMapData = useMemo(() => buildTripMapData(
+    (isAllTripSelected ? (supabaseTripPlaces ?? []) : (supabasePlaces ?? []))
+      .filter((place) => !isPlaceDetailDeleted(place.id)),
+    supabaseTripDays ?? [],
+    isAllTripSelected
+      ? { type: 'all' }
+      : { type: 'day', tripDayId: selectedSupabaseTripDayId ?? selectedDay.id },
+  ), [
+    isAllTripSelected,
+    selectedDay.id,
+    selectedSupabaseTripDayId,
+    supabasePlaces,
+    supabaseTripDays,
+    supabaseTripPlaces,
+  ]);
   const supabaseEntries = useMemo(() => {
     if (!shouldUseSupabaseRecordDay) {
       return [];
     }
 
     return mapSupabasePlacesToPlaceEntries(
-      supabasePlaces ?? [],
-      supabaseRecords ?? [],
+      supabaseMapData.orderedPlaces,
+      isAllTripSelected ? (supabaseTripRecords ?? []) : (supabaseRecords ?? []),
     ).filter((entry) => !isPlaceDetailDeleted(getEntryPlaceId(entry))).sort(
-      (left, right) => getTimeSortValue(left.time) - getTimeSortValue(right.time),
+      isAllTripSelected
+        ? () => 0
+        : (left, right) => getTimeSortValue(left.time) - getTimeSortValue(right.time),
     );
   }, [
+    isAllTripSelected,
     shouldUseSupabaseRecordDay,
-    supabasePlaces,
+    supabaseMapData.orderedPlaces,
     supabaseRecords,
+    supabaseTripRecords,
   ]);
 
   const detectedTripEntries = useMemo(() => {
@@ -1329,10 +1380,15 @@ export default function RecordDayDetailScreen() {
         : 'empty';
   const isSupabaseRecordDayLoading = shouldUseSupabaseRecordDay && (
     isSupabaseTripDaysPending ||
-    Boolean(selectedSupabaseTripDayId && (isSupabasePlacesPending || isSupabaseRecordsPending))
+    (isAllTripSelected
+      ? isSupabaseTripPlacesPending || isSupabaseTripRecordsPending
+      : Boolean(selectedSupabaseTripDayId && (isSupabasePlacesPending || isSupabaseRecordsPending)))
   );
   const isSupabaseRecordDayError = shouldUseSupabaseRecordDay && (
-    isSupabaseTripDaysError || isSupabasePlacesError || isSupabaseRecordsError
+    isSupabaseTripDaysError ||
+    (isAllTripSelected
+      ? isSupabaseTripPlacesError || isSupabaseTripRecordsError
+      : isSupabasePlacesError || isSupabaseRecordsError)
   );
   const isSupabaseRecordDayNotFound =
     isSupabaseTripRoute &&
@@ -1359,6 +1415,18 @@ export default function RecordDayDetailScreen() {
     selectedDataSource,
     supabaseEntries,
   ]);
+  const localMapData = useMemo(
+    () => buildTripMapData(
+      entries,
+      dayOptions.map((day) => ({ id: day.id, dayIndex: day.dayNumber })),
+      { type: 'all' },
+    ),
+    [dayOptions, entries],
+  );
+  const displayedMapData = selectedDataSource === 'supabase' ? supabaseMapData : localMapData;
+  const displayedEntries = selectedDataSource === 'supabase'
+    ? entries
+    : localMapData.orderedPlaces;
 
   const tripInfoInitialValue = useMemo(
     () => {
@@ -1673,6 +1741,28 @@ export default function RecordDayDetailScreen() {
   const handleSelectDay = (day: DaySelectorItem) => {
     setSelectedDay(day);
     setSelectedFilterId(day.id);
+    setSelectedMapMarkerId(null);
+  };
+
+  const handleSelectAllDays = () => {
+    setSelectedFilterId(ALL_DAYS_ID);
+    setSelectedMapMarkerId(null);
+  };
+
+  const handleMapMarkerPress = (marker: TripMapMarker) => {
+    setSelectedMapMarkerId(marker.id);
+    const entryOffset = entryOffsetsRef.current.get(marker.placeId);
+
+    if (entryOffset == null) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        animated: true,
+        y: Math.max(0, entriesContentOffsetRef.current + entryOffset - Spacing.xl),
+      });
+    });
   };
 
   const handleOpenPlaceDetail = (entry: PlaceEntry) => {
@@ -2284,8 +2374,8 @@ export default function RecordDayDetailScreen() {
   const retrySupabaseRecordDay = () => {
     void Promise.all([
       refetchSupabaseTripDays(),
-      refetchSupabasePlaces(),
-      refetchSupabaseRecords(),
+      isAllTripSelected ? refetchSupabaseTripPlaces() : refetchSupabasePlaces(),
+      isAllTripSelected ? refetchSupabaseTripRecords() : refetchSupabaseRecords(),
     ]);
   };
 
@@ -2398,6 +2488,7 @@ export default function RecordDayDetailScreen() {
       ) : null}
 
       <ScrollView
+        ref={scrollRef}
         stickyHeaderIndices={[1]}
         style={styles.scroll}
         contentContainerStyle={[
@@ -2407,39 +2498,74 @@ export default function RecordDayDetailScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.mapWrap}>
-        <MapPlaceholderCard align="center" style={styles.map} />
+          <TripPlacesMap
+            distanceKm={getCumulativePlaceDistanceKm(displayedMapData.orderedPlaces)}
+            excludedCoordinateCount={displayedMapData.excludedCoordinateCount}
+            isError={selectedDataSource === 'supabase' && (
+              isAllTripSelected ? isSupabaseTripPlacesError : isSupabasePlacesError
+            )}
+            isLoading={selectedDataSource === 'supabase' && (
+              isAllTripSelected ? isSupabaseTripPlacesPending : isSupabasePlacesPending
+            )}
+            markers={displayedMapData.markers}
+            onMarkerPress={handleMapMarkerPress}
+            onRetry={() => {
+              if (isAllTripSelected) {
+                void refetchSupabaseTripPlaces();
+              } else {
+                void refetchSupabasePlaces();
+              }
+            }}
+            selectedMarkerId={selectedMapMarkerId}
+            style={styles.map}
+          />
         </View>
 
         <DayFilterBar
           days={dayOptions}
           selectedId={selectedFilterId}
-          onSelectAll={() => setDaySheetVisible(true)}
+          onOpenDaySheet={() => setDaySheetVisible(true)}
+          onSelectAll={handleSelectAllDays}
           onSelectDay={handleSelectDay}
         />
 
-        <View style={styles.entriesContent}>
-        {selectedDataSource === 'supabase' && entries.length === 0 ? (
+        <View
+          onLayout={(event) => {
+            entriesContentOffsetRef.current = event.nativeEvent.layout.y;
+          }}
+          style={styles.entriesContent}
+        >
+        {selectedDataSource === 'supabase' && displayedEntries.length === 0 ? (
           <View style={styles.routeStateInline}>
             <Text style={styles.routeStateTitle}>{'\uC544\uC9C1 \uAE30\uB85D\uB41C \uC7A5\uC18C\uAC00 \uC5C6\uC5B4\uC694'}</Text>
             <Text style={styles.routeStateDescription}>{'\uC7A5\uC18C\uB97C \uCD94\uAC00\uD558\uBA74 \uC774 \uB0A0\uC758 \uC5EC\uD589 \uAE30\uB85D\uC5D0 \uD45C\uC2DC\uB3FC\uC694.'}</Text>
           </View>
         ) : null}
-        {entries.map((entry, index) => (
-          <PlaceEntryCard
+        {displayedEntries.map((entry, index) => (
+          <View
             key={`${selectedFilterId}-${entry.id}-${index}`}
-            entry={entry}
-            flagScreen={isDetectedTripPreviewRoute ? 'detected_record_day_detail' : undefined}
-            photoDisplayMode="limited"
-            showRating={false}
-            variant="recordPhotoReview"
-            onLongPress={() => handleDeleteEntry(entry, index)}
-            onPress={() => handleOpenPlaceDetail(entry)}
-            onPhotoDelete={(photoIndex) => confirmDeletePhotoFromEntry(entry, photoIndex)}
-            onPhotoGridOpen={() => handleOpenPlacePhotoGrid(entry)}
-            onQuickAddPhoto={() => handleAddPhotosToEntry(entry)}
-            onQuickEdit={() => handleOpenEditEntry(entry)}
-            onQuickDelete={() => handleDeleteEntry(entry, index)}
-          />
+            onLayout={(event) => {
+              entryOffsetsRef.current.set(getEntryPlaceId(entry), event.nativeEvent.layout.y);
+            }}
+          >
+            <PlaceEntryCard
+              entry={entry}
+              flagScreen={isDetectedTripPreviewRoute ? 'detected_record_day_detail' : undefined}
+              photoDisplayMode="limited"
+              showRating={false}
+              variant="recordPhotoReview"
+              onLongPress={() => handleDeleteEntry(entry, index)}
+              onPress={() => {
+                setSelectedMapMarkerId(getEntryPlaceId(entry));
+                handleOpenPlaceDetail(entry);
+              }}
+              onPhotoDelete={(photoIndex) => confirmDeletePhotoFromEntry(entry, photoIndex)}
+              onPhotoGridOpen={() => handleOpenPlacePhotoGrid(entry)}
+              onQuickAddPhoto={() => handleAddPhotosToEntry(entry)}
+              onQuickEdit={() => handleOpenEditEntry(entry)}
+              onQuickDelete={() => handleDeleteEntry(entry, index)}
+            />
+          </View>
         ))}
         </View>
       </ScrollView>
@@ -2828,7 +2954,7 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 28,
     marginLeft: Spacing.sm,
-    marginRight: 7,
+    marginRight: Spacing.xs,
     overflow: 'hidden',
   },
   dayChipContent: {
@@ -2866,6 +2992,15 @@ const styles = StyleSheet.create({
   },
   dayChipFadeHidden: {
     opacity: 0,
+  },
+  daySheetButton: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.foundation.white,
   },
   entriesContent: {
     paddingHorizontal: Spacing.xl,

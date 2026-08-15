@@ -87,6 +87,9 @@ export function useUpdatePlaceRecord() {
           queryKey: supabaseQueryKeys.tripPlaces(userId, input.tripId),
         }),
         queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.myTravelMapPlaces(userId),
+        }),
+        queryClient.invalidateQueries({
           queryKey: supabaseQueryKeys.tripRecords(userId, input.tripId),
         }),
         queryClient.invalidateQueries({

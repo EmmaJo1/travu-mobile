@@ -79,6 +79,22 @@ export function listPlacesByTrip(tripId: string) {
     .order('created_at', { ascending: true });
 }
 
+export function listMapPlacesByUser(userId: string) {
+  return supabase
+    .from('places')
+    .select('*')
+    .eq('user_id', userId)
+    .is('deleted_at', null)
+    .order('visited_at', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true });
+}
+
+export async function fetchMapPlacesByUserId(userId: string): Promise<PlaceRow[]> {
+  const { data, error } = await listMapPlacesByUser(userId);
+  throwIfError(error);
+  return data ?? [];
+}
+
 export async function fetchPlacesByTripId(tripId: string): Promise<PlaceRow[]> {
   const { data, error } = await listPlacesByTrip(tripId);
   throwIfError(error);

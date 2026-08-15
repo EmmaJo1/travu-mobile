@@ -126,6 +126,9 @@ export function useDeletePlaceRecord() {
           queryKey: supabaseQueryKeys.tripPlaces(userId, input.tripId),
         }),
         queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.myTravelMapPlaces(userId),
+        }),
+        queryClient.invalidateQueries({
           queryKey: supabaseQueryKeys.tripRecords(userId, input.tripId),
         }),
         queryClient.invalidateQueries({
@@ -168,6 +171,9 @@ export function useDeletePlaceRecord() {
         }),
         queryClient.invalidateQueries({
           queryKey: supabaseQueryKeys.tripPlaces(userId, input.tripId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: supabaseQueryKeys.myTravelMapPlaces(userId),
         }),
         queryClient.invalidateQueries({
           queryKey: supabaseQueryKeys.tripRecords(userId, input.tripId),

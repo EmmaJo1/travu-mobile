@@ -13,7 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Text from '@/components/common/AppText';
-import MapPlaceholderCard from '@/components/common/MapPlaceholderCard';
+import TripPlacesMap from '@/components/map/TripPlacesMap';
 import ProfileSummary from '@/components/mypage/ProfileSummary';
 import ScreenHeader from '@/components/nav/ScreenHeader';
 import DaySelectorSheet from '@/components/record/DaySelectorSheet';
@@ -32,9 +32,14 @@ import { removeSavedMyPageTrip, useSavedMyPageTrips } from '@/constants/savedMyP
 import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useDeleteTrip } from '@/hooks/useDeleteTrip';
 import { useMyTrips } from '@/hooks/useMyTrips';
+import { useMyPageTravelMapPlaces } from '@/hooks/useMyPageTravelMapPlaces';
 import { useAuth } from '@/providers/AuthProvider';
 import { useUserProfile } from '@/providers/UserProfileProvider';
 import { mapSupabaseTripsToMyPageTrips } from '@/utils/supabaseTripMappers';
+import {
+  buildTripMapData,
+  isMyPageTravelMapTripStatus,
+} from '@/services/maps/tripMapData';
 
 function normalizeCountValue(value?: string | null) {
   return value?.trim() ?? '';
@@ -110,6 +115,13 @@ export default function ProfileScreen() {
     isRefetching: isSupabaseTripsRefetching,
     refetch: refetchSupabaseTrips,
   } = useMyTrips();
+  const {
+    data: myTravelMapPlaces,
+    isError: isMyTravelMapPlacesError,
+    isLoading: isMyTravelMapPlacesLoading,
+    isRefetching: isMyTravelMapPlacesRefetching,
+    refetch: refetchMyTravelMapPlaces,
+  } = useMyPageTravelMapPlaces();
   const deleteTripMutation = useDeleteTrip();
   const supabaseTripIds = useMemo(
     () => new Set((supabaseTrips ?? []).map((trip) => trip.id)),
@@ -127,6 +139,18 @@ export default function ProfileScreen() {
     },
     [canUseSupabaseUserData, deletedTripIds, savedTrips, supabaseTrips],
   );
+  const myTravelMapData = useMemo(() => {
+    const eligibleTripIds = new Set(
+      (supabaseTrips ?? [])
+        .filter((trip) => isMyPageTravelMapTripStatus(trip.status) && trip.deleted_at === null)
+        .map((trip) => trip.id),
+    );
+    const eligiblePlaces = (myTravelMapPlaces ?? []).filter((place) =>
+      eligibleTripIds.has(place.trip_id),
+    );
+
+    return buildTripMapData(eligiblePlaces, [], { type: 'all' });
+  }, [myTravelMapPlaces, supabaseTrips]);
   const profileStats = useMemo(
     () => ({
       totalTrips: myPageTrips.length,
@@ -207,8 +231,11 @@ export default function ProfileScreen() {
         nestedScrollEnabled
         refreshControl={canUseSupabaseUserData ? (
           <RefreshControl
-            refreshing={isSupabaseTripsRefetching}
-            onRefresh={() => void refetchSupabaseTrips()}
+            refreshing={isSupabaseTripsRefetching || isMyTravelMapPlacesRefetching}
+            onRefresh={() => void Promise.all([
+              refetchSupabaseTrips(),
+              refetchMyTravelMapPlaces(),
+            ])}
           />
         ) : undefined}
         showsVerticalScrollIndicator={false}
@@ -231,9 +258,37 @@ export default function ProfileScreen() {
               <View style={styles.mapSection}>
                 <Text style={styles.sectionTitle}>나의 여행지도</Text>
                 <View style={styles.mapCardWrap}>
-                  <MapPlaceholderCard
-                    subtitle="다녀온 곳 자동 표시"
-                    align="top"
+                  <TripPlacesMap
+                    emptyDescription="완료한 여행의 장소가 이곳에 자동으로 표시돼요."
+                    emptyTitle="지도에 표시할 여행 장소가 없어요"
+                    excludedCoordinateCount={myTravelMapData.excludedCoordinateCount}
+                    isError={canUseSupabaseUserData && (
+                      isMyTravelMapPlacesError || isSupabaseTripsError
+                    )}
+                    isLoading={canUseSupabaseUserData && (
+                      isMyTravelMapPlacesLoading || isSupabaseTripsLoading
+                    )}
+                    markerVariant="plain"
+                    markers={myTravelMapData.markers}
+                    onMarkerPress={(marker) => {
+                      if (!marker.tripId) {
+                        return;
+                      }
+
+                      router.push({
+                        pathname: '/day-archive-detail',
+                        params: {
+                          tripId: marker.tripId,
+                          dayId: marker.tripDayId ?? undefined,
+                          tripDayId: marker.tripDayId ?? undefined,
+                          placeId: marker.placeId,
+                        },
+                      } as Href);
+                    }}
+                    onRetry={() => void Promise.all([
+                      refetchSupabaseTrips(),
+                      refetchMyTravelMapPlaces(),
+                    ])}
                     style={styles.mapCard}
                   />
                 </View>
