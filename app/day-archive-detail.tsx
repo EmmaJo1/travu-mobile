@@ -4,7 +4,6 @@
  */
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { StatusBar } from 'expo-status-bar';
 import { Feather } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -808,7 +807,6 @@ function ArchiveEmptyState({
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar style="dark" />
       <View style={styles.archiveHeader}>
         <Pressable
           accessibilityRole="button"
@@ -1733,7 +1731,6 @@ export default function DayArchiveDetailScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar style="dark" />
       <View style={styles.archiveHeader}>
         <Pressable
           accessibilityRole="button"

@@ -1,6 +1,5 @@
 import { Feather } from '@expo/vector-icons';
 import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
   Alert,
@@ -162,7 +161,6 @@ export default function CreateTripScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar style="dark" />
       <ScreenHeader title="직접 여행 만들기" onBackPress={handleBack} style={styles.header} />
 
       <ScrollView

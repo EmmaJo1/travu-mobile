@@ -2,7 +2,6 @@ import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { type Href, useRouter } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
   ActivityIndicator,
@@ -409,7 +408,6 @@ export default function OnboardingPager({ initialStep = 'intro' }: OnboardingPag
   return (
     <View style={styles.root}>
       <View style={[styles.mobileFrame, { width: pageWidth }]}>
-        <StatusBar style="dark" />
         <PageIndicator activeIndex={currentPage} />
 
         <View style={styles.pageViewport} {...panResponder.panHandlers}>

@@ -1,6 +1,5 @@
 import { Feather } from '@expo/vector-icons';
 import { type Href, useRouter } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import { Linking, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,7 +21,6 @@ export default function PhotoPermissionRequired() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar style="dark" />
       <ScreenHeader title="사진에서 여행 찾기" onBackPress={() => router.back()} style={styles.header} />
 
       <View style={styles.center}>

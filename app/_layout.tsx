@@ -2,7 +2,7 @@ import 'react-native-reanimated';
 
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
+import { Stack, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { type PropsWithChildren } from 'react';
 import { StatusBar } from 'expo-status-bar';
@@ -33,6 +33,13 @@ function SessionScopedProviders({ children }: PropsWithChildren) {
       </PhotoImportFlowProvider>
     </UserProfileProvider>
   );
+}
+
+function RouteStatusBar() {
+  const segments = useSegments();
+  const isHomeRoute = segments.length === 1 && segments[0] === '(tabs)';
+
+  return <StatusBar style={isHomeRoute ? 'light' : 'dark'} />;
 }
 
 function AppStack({ routeMode }: { routeMode: Exclude<AuthRouteMode, 'resolving' | 'error'> }) {
@@ -173,7 +180,7 @@ export default function RootLayout() {
               <AuthenticatedApp />
             </AuthProvider>
           </QueryProvider>
-          <StatusBar style="auto" />
+          <RouteStatusBar />
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

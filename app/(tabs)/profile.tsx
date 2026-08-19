@@ -1,5 +1,4 @@
 import { useRouter, type Href } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
 import React, { useMemo, useState } from 'react';
 import {
   Alert,
@@ -218,7 +217,6 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar style="dark" />
       <ScreenHeader
         style={styles.header}
         leftSlot={<Text style={styles.headerTitle}>나의 여정</Text>}

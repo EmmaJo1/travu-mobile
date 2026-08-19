@@ -9,9 +9,7 @@ import * as Location from 'expo-location';
 import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import {
   setStatusBarBackgroundColor,
-  setStatusBarStyle,
   setStatusBarTranslucent,
-  StatusBar,
 } from 'expo-status-bar';
 import React from 'react';
 import {
@@ -26,6 +24,7 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
+  StatusBar as NativeStatusBar,
   StyleSheet,
   View,
   type ImageSourcePropType,
@@ -2604,7 +2603,6 @@ export default function HomeScreen() {
         return;
       }
 
-      setStatusBarStyle('light');
       setStatusBarTranslucent(true);
       setStatusBarBackgroundColor('transparent');
     }, [isTraveling]),
@@ -2613,7 +2611,7 @@ export default function HomeScreen() {
   if (isInitialHomeModePending) {
     return (
       <View style={styles.initialHomeMode}>
-        <StatusBar style="dark" backgroundColor={WARM_WHITE} translucent={false} />
+        <NativeStatusBar backgroundColor={WARM_WHITE} translucent={false} />
       </View>
     );
   }
@@ -2621,7 +2619,7 @@ export default function HomeScreen() {
   if (isInitialHomeModeError) {
     return (
       <View style={styles.initialHomeMode}>
-        <StatusBar style="dark" backgroundColor={WARM_WHITE} translucent={false} />
+        <NativeStatusBar backgroundColor={WARM_WHITE} translucent={false} />
         <Text style={styles.initialHomeModeErrorTitle}>홈을 불러오지 못했어요</Text>
         <Pressable
           accessibilityRole="button"
@@ -2693,7 +2691,7 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar style="light" translucent backgroundColor="transparent" />
+      <NativeStatusBar translucent backgroundColor="transparent" />
 
       <View style={styles.travelHomeContent}>
         <View style={styles.hero}>
