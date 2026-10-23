@@ -2748,7 +2748,7 @@ const styles = StyleSheet.create({
     marginRight: -10,
   },
   headerMenuDismiss: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 25,
   },
   headerMenu: {

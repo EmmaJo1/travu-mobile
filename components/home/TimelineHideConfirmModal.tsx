@@ -50,7 +50,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: Colors.light.bgOverlay,
   },
   card: {

@@ -87,7 +87,7 @@ export default function AppRouteGuard({
 
 const styles = StyleSheet.create({
   blocker: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 1000,
     backgroundColor: Colors.light.bgScreen,
   },

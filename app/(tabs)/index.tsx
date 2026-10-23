@@ -3,14 +3,12 @@
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect } from 'expo-router/react-navigation';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import {
-  setStatusBarBackgroundColor,
   setStatusBarStyle,
-  setStatusBarTranslucent,
   StatusBar,
 } from 'expo-status-bar';
 import React from 'react';
@@ -2593,15 +2591,13 @@ export default function HomeScreen() {
       }
 
       setStatusBarStyle('light');
-      setStatusBarTranslucent(true);
-      setStatusBarBackgroundColor('transparent');
     }, [isTraveling]),
   );
 
   if (isInitialHomeModePending) {
     return (
       <View style={styles.initialHomeMode}>
-        <StatusBar style="dark" backgroundColor={WARM_WHITE} translucent={false} />
+        <StatusBar style="dark" />
       </View>
     );
   }
@@ -2609,7 +2605,7 @@ export default function HomeScreen() {
   if (isInitialHomeModeError) {
     return (
       <View style={styles.initialHomeMode}>
-        <StatusBar style="dark" backgroundColor={WARM_WHITE} translucent={false} />
+        <StatusBar style="dark" />
         <Text style={styles.initialHomeModeErrorTitle}>홈을 불러오지 못했어요</Text>
         <Pressable
           accessibilityRole="button"
@@ -2681,7 +2677,7 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar style="light" translucent backgroundColor="transparent" />
+      <StatusBar style="light" />
 
       <View style={styles.travelHomeContent}>
         <View style={styles.hero}>
@@ -3047,11 +3043,11 @@ const styles = StyleSheet.create({
     backgroundColor: WARM_WHITE,
   },
   heroImageFrame: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     overflow: 'hidden',
   },
   heroImage: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     width: '100%',
     height: '100%',
   },
@@ -3072,7 +3068,7 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   heroHeaderDim: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   heroHeader: {
     position: 'absolute',

@@ -1,5 +1,5 @@
 import { Feather } from '@expo/vector-icons';
-import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import type { BottomTabBarProps } from 'expo-router/js-tabs';
 import * as Haptics from 'expo-haptics';
 import { type Href, useRouter } from 'expo-router';
 import React from 'react';
@@ -297,7 +297,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   dimOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: DIM_OVERLAY_COLOR,
   },
   modalBar: {

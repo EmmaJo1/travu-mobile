@@ -156,6 +156,7 @@ const WEB_MASK_IMAGE = `linear-gradient(180deg, ${MASK_LOCATIONS.map(
 ).join(', ')})`;
 
 type WebMaskStyle = ViewStyle & {
+  backgroundImage: string;
   WebkitMaskImage: string;
   maskImage: string;
 };
@@ -2066,7 +2067,7 @@ const styles = StyleSheet.create({
     backgroundRepeat: 'no-repeat',
     filter: `blur(${BLUR_RADIUS}px)`,
     transform: [{ scale: 1.08 }],
-  },
+  } as ViewStyle & { backgroundSize: string; backgroundPosition: string; backgroundRepeat: string },
   photoFrame: {
     position: 'absolute',
     width: PHOTO_FRAME_WIDTH,

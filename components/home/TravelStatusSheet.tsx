@@ -176,7 +176,7 @@ export default function TravelStatusSheet({
           <BlurView
             tint="default"
             intensity={2}
-            experimentalBlurMethod="dimezisBlurView"
+            blurMethod="dimezisBlurView"
             style={StyleSheet.absoluteFill}
           />
           <View style={styles.dimLayer} />
@@ -231,7 +231,7 @@ export default function TravelStatusSheet({
             <BlurView
               tint="light"
               intensity={4}
-              experimentalBlurMethod="dimezisBlurView"
+              blurMethod="dimezisBlurView"
               style={StyleSheet.absoluteFill}
               pointerEvents="none"
             />
@@ -285,7 +285,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   dimLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(141, 141, 141, 0.50)',
   },
   sheet: {
@@ -424,11 +424,11 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   menuFillLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(255, 255, 255, 0.06)',
   },
   menuInnerHighlight: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: 16,
     borderTopWidth: 1,
     borderLeftWidth: 1,

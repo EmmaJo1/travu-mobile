@@ -186,7 +186,7 @@ const styles = StyleSheet.create({
     height: 44,
   },
   loadingContent: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   title: {
     position: 'absolute',
