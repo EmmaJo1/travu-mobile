@@ -127,12 +127,12 @@ const styles = StyleSheet.create({
     opacity: 0.88,
   },
   image: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     width: '100%',
     height: '100%',
   },
   dim: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   city: {
     position: 'absolute',

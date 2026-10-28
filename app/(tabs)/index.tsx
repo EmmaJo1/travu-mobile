@@ -9,9 +9,7 @@ import * as Location from 'expo-location';
 import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import {
   setStatusBarBackgroundColor,
-  setStatusBarStyle,
   setStatusBarTranslucent,
-  StatusBar,
 } from 'expo-status-bar';
 import React from 'react';
 import {
@@ -26,6 +24,7 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
+  StatusBar as NativeStatusBar,
   StyleSheet,
   View,
   type ImageSourcePropType,
@@ -85,6 +84,8 @@ import {
 } from '@/hooks/useTripDestinations';
 import { useUpdateActiveTripDateRange } from '@/hooks/useUpdateActiveTripDateRange';
 import { useAuth } from '@/providers/AuthProvider';
+import { getCumulativePlaceDistanceKm } from '@/services/maps/distance';
+import { buildTripMapData } from '@/services/maps/tripMapData';
 import {
   ensureTripDaysThroughDate,
   TripDateRangeHasDataError,
@@ -1733,6 +1734,16 @@ export default function HomeScreen() {
     ],
   );
   const recordedPhotoCount = selectedSupabaseTripDayPhotos?.length ?? 0;
+  const selectedTripDayMapData = React.useMemo(
+    () => buildTripMapData(
+      selectedSupabaseTripDayPlaces ?? [],
+      activeSupabaseTripDays,
+      selectedRouteTripDayId
+        ? { type: 'day', tripDayId: selectedRouteTripDayId }
+        : { type: 'all' },
+    ),
+    [activeSupabaseTripDays, selectedRouteTripDayId, selectedSupabaseTripDayPlaces],
+  );
   const tripTotalStats = React.useMemo(
     () => getTripTotalStats(
       supabaseTripPlaces ?? [],
@@ -1747,7 +1758,7 @@ export default function HomeScreen() {
     : `${selectedTripDayIndex + 1}일차 타임라인`;
   const selectedSummaryDateLabel = formatHeroDateLabel(selectedDateKey);
   const selectedSummary = {
-    distanceKm: 0,
+    distanceKm: getCumulativePlaceDistanceKm(selectedTripDayMapData.orderedPlaces),
     placeCount: visibleTimelineItems.length,
     photoCount: recordedPhotoCount,
   };
@@ -2592,7 +2603,6 @@ export default function HomeScreen() {
         return;
       }
 
-      setStatusBarStyle('light');
       setStatusBarTranslucent(true);
       setStatusBarBackgroundColor('transparent');
     }, [isTraveling]),
@@ -2601,7 +2611,7 @@ export default function HomeScreen() {
   if (isInitialHomeModePending) {
     return (
       <View style={styles.initialHomeMode}>
-        <StatusBar style="dark" backgroundColor={WARM_WHITE} translucent={false} />
+        <NativeStatusBar backgroundColor={WARM_WHITE} translucent={false} />
       </View>
     );
   }
@@ -2609,7 +2619,7 @@ export default function HomeScreen() {
   if (isInitialHomeModeError) {
     return (
       <View style={styles.initialHomeMode}>
-        <StatusBar style="dark" backgroundColor={WARM_WHITE} translucent={false} />
+        <NativeStatusBar backgroundColor={WARM_WHITE} translucent={false} />
         <Text style={styles.initialHomeModeErrorTitle}>홈을 불러오지 못했어요</Text>
         <Pressable
           accessibilityRole="button"
@@ -2681,7 +2691,7 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar style="light" translucent backgroundColor="transparent" />
+      <NativeStatusBar translucent backgroundColor="transparent" />
 
       <View style={styles.travelHomeContent}>
         <View style={styles.hero}>
@@ -3047,11 +3057,11 @@ const styles = StyleSheet.create({
     backgroundColor: WARM_WHITE,
   },
   heroImageFrame: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     overflow: 'hidden',
   },
   heroImage: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     width: '100%',
     height: '100%',
   },
@@ -3072,7 +3082,7 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   heroHeaderDim: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   heroHeader: {
     position: 'absolute',

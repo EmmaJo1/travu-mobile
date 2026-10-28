@@ -1,7 +1,6 @@
 import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
   Alert,
@@ -299,7 +298,6 @@ export default function ProfileEditScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar style="dark" />
       <View style={styles.header}>
         <Pressable
           accessibilityRole="button"

@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
   ActivityIndicator,
@@ -10,6 +9,7 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
+  StatusBar as NativeStatusBar,
   StyleSheet,
   View,
   type ImageSourcePropType,
@@ -246,7 +246,7 @@ export default function HomeIdleState({
 
   return (
     <View style={styles.root}>
-      <StatusBar style="light" translucent backgroundColor="transparent" />
+      <NativeStatusBar translucent backgroundColor="transparent" />
 
       <View style={styles.fixedHeroArea}>
         <View style={styles.hero}>
@@ -743,12 +743,12 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   heroImage: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     width: '100%',
     height: '100%',
   },
   heroFade: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   heroHeader: {
     position: 'absolute',
@@ -805,27 +805,27 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   startButtonBackdropImage: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0.42,
     transform: [{ scale: 1.2 }],
   },
   startButtonFillLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(95, 95, 95, 0.30)',
   },
   startButtonGlassLight: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   startButtonRefractionLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0.8,
   },
   startButtonDispersionLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0.5,
   },
   startButtonFrostLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
   },
   startButtonText: {

@@ -1,6 +1,5 @@
 import { Feather } from '@expo/vector-icons';
 import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -105,7 +104,6 @@ export default function FindTripsLoading() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar style="dark" />
       <ScreenHeader onBackPress={() => router.back()} style={styles.header} />
 
       {detectionState === 'error' ? (
@@ -186,7 +184,7 @@ const styles = StyleSheet.create({
     height: 44,
   },
   loadingContent: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   title: {
     position: 'absolute',

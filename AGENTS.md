@@ -90,3 +90,25 @@ Important persistence rule:
 - If a translation for the selected app language is unavailable, fall back to the source value rather than forcing Korean.
 
 This rule does **not** apply to the Home header current-device-location label, which remains English.
+
+# Travu Status Bar Rules
+
+## Home is the only light status-bar screen
+
+- The normal Travu Home screen must always use light/white status-bar content.
+- This applies to both idle Home and active-trip Home.
+- Home loading/error states also belong to Home and should use light status-bar content unless the product rule is explicitly changed later.
+
+## Every non-Home screen uses dark status-bar content
+
+- Every screen other than Home must always use dark/black status-bar content.
+- This includes tab screens such as My Page and Library, and pushed screens such as trip detail, place detail, settings, photo-import flows, etc.
+- A screen must not accidentally inherit Home's light status-bar state.
+- Navigating away from Home must restore dark status-bar content.
+- Navigating back to Home must restore light status-bar content.
+
+## Ownership rule
+
+- Prefer one centralized, route-aware status-bar owner.
+- Do not scatter duplicated status-bar fixes across individual screens unless technically unavoidable.
+- Do not change this policy during unrelated UI work.

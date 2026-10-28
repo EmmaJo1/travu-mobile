@@ -44,7 +44,7 @@ export interface ArchiveDetailData {
     daysCount: number;
     photoCount: number;
     placeCount: number;
-    distanceKm: number;
+    distanceKm?: number;
   };
   places: ArchiveDetailPlace[];
 }

@@ -23,6 +23,7 @@ export function useDeleteTrip() {
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.activeTrip(userId) }),
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.archivedTravelMoments(userId) }),
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.myTrips(userId) }),
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.myTravelMapPlaces(userId) }),
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.recentTripsRoot(userId) }),
       ]).catch((error: unknown) => {
         console.warn('[useDeleteTrip] invalidate failed', error);

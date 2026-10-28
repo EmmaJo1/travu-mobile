@@ -1,5 +1,4 @@
 import { type Href, useRouter } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import {
   ActivityIndicator,
@@ -224,7 +223,6 @@ export default function DetectedTrips() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar style="dark" />
       <ScreenHeader title="발견된 여행" onBackPress={() => router.back()} style={styles.header} />
 
       <View style={styles.copyBlock}>

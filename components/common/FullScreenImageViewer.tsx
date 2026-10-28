@@ -248,7 +248,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#050505',
   },
   inlineViewer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 40,
   },
   page: {
@@ -302,7 +302,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   menuDismissLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   actionMenu: {
     position: 'absolute',

@@ -25,6 +25,7 @@ export function useCompleteTrip() {
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.activeTrip(userId) }),
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.archivedTravelMoments(userId) }),
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.myTrips(userId) }),
+        queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.myTravelMapPlaces(userId) }),
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.recentTripsRoot(userId) }),
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.tripDays(userId, trip.id) }),
         queryClient.invalidateQueries({ queryKey: supabaseQueryKeys.tripDetail(userId, trip.id) }),
