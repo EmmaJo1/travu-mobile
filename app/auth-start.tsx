@@ -829,7 +829,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   dimmedBase: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: Colors.light.bgOverlay,
   },
 

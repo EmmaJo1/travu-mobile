@@ -8,6 +8,13 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ...config,
     name: config.name ?? 'travu-mobile',
     slug: config.slug ?? 'travu-mobile',
+    plugins: [
+      ...(config.plugins ?? []),
+      ['react-native-maps', {
+        ...(androidMapsApiKey ? { androidGoogleMapsApiKey: androidMapsApiKey } : {}),
+        ...(iosMapsApiKey ? { iosGoogleMapsApiKey: iosMapsApiKey } : {}),
+      }],
+    ],
     android: {
       ...config.android,
       config: {

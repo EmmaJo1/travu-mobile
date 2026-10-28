@@ -157,6 +157,10 @@ const WEB_MASK_IMAGE = `linear-gradient(180deg, ${MASK_LOCATIONS.map(
 ).join(', ')})`;
 
 type WebMaskStyle = ViewStyle & {
+  backgroundImage: string;
+  backgroundSize: string;
+  backgroundPosition: string;
+  backgroundRepeat: string;
   WebkitMaskImage: string;
   maskImage: string;
 };
@@ -185,6 +189,9 @@ function ArchiveBlurBackground({
       width,
       height,
       backgroundImage: `url(${uri})`,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+      backgroundRepeat: 'no-repeat',
       WebkitMaskImage: WEB_MASK_IMAGE,
       maskImage: WEB_MASK_IMAGE,
     };
@@ -2192,9 +2199,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   blurRegionWeb: {
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-    backgroundRepeat: 'no-repeat',
     filter: `blur(${BLUR_RADIUS}px)`,
     transform: [{ scale: 1.08 }],
   },

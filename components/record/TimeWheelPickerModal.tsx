@@ -320,7 +320,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   dim: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: Colors.light.bgOverlay,
   },
   sheet: {

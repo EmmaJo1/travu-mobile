@@ -3057,11 +3057,11 @@ const styles = StyleSheet.create({
     backgroundColor: WARM_WHITE,
   },
   heroImageFrame: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     overflow: 'hidden',
   },
   heroImage: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     width: '100%',
     height: '100%',
   },
@@ -3082,7 +3082,7 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   heroHeaderDim: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   heroHeader: {
     position: 'absolute',

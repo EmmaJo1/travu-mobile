@@ -743,12 +743,12 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   heroImage: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     width: '100%',
     height: '100%',
   },
   heroFade: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   heroHeader: {
     position: 'absolute',
@@ -805,27 +805,27 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   startButtonBackdropImage: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0.42,
     transform: [{ scale: 1.2 }],
   },
   startButtonFillLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(95, 95, 95, 0.30)',
   },
   startButtonGlassLight: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   startButtonRefractionLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0.8,
   },
   startButtonDispersionLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0.5,
   },
   startButtonFrostLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
   },
   startButtonText: {

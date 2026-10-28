@@ -502,7 +502,7 @@ function IntroPage({ bottomInset, onNext }: { bottomInset: number; onNext: () =>
           locations={[0.1153, 0.151, 0.1776, 0.217, 0.2447, 0.2816, 0.3278, 0.3911]}
           start={{ x: 0.38, y: 0 }}
           end={{ x: 0.62, y: 1 }}
-          style={StyleSheet.absoluteFillObject}
+          style={StyleSheet.absoluteFill}
         />
         <LinearGradient
           pointerEvents="none"
@@ -513,7 +513,7 @@ function IntroPage({ bottomInset, onNext }: { bottomInset: number; onNext: () =>
           locations={[0.45, 1]}
           start={{ x: 0.5, y: 0 }}
           end={{ x: 0.5, y: 1 }}
-          style={StyleSheet.absoluteFillObject}
+          style={StyleSheet.absoluteFill}
         />
       </View>
 
@@ -1046,7 +1046,7 @@ function GlassNextButton({ bottom, onPress }: { bottom: number; onPress: () => v
       onPress={onPress}
       style={({ pressed }) => [styles.nextButton, { bottom }, pressed && styles.buttonPressed]}
     >
-      <BlurView pointerEvents="none" intensity={14} tint="light" style={StyleSheet.absoluteFillObject} />
+      <BlurView pointerEvents="none" intensity={14} tint="light" style={StyleSheet.absoluteFill} />
       <View pointerEvents="none" style={styles.nextButtonGlassFill} />
       <LinearGradient
         pointerEvents="none"
@@ -1058,7 +1058,7 @@ function GlassNextButton({ bottom, onPress }: { bottom: number; onPress: () => v
         locations={[0, 0.42, 1]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
       />
       <View pointerEvents="none" style={styles.nextButtonInnerBorder} />
       <Text style={styles.nextButtonLabel}>다음</Text>
@@ -1095,7 +1095,7 @@ function PhotoMemoryCard({
           pointerEvents="none"
           colors={['rgba(0, 0, 0, 0)', 'rgba(51, 51, 51, 0.18)', 'rgba(51, 51, 51, 0.70)']}
           locations={[0.68, 0.84, 1]}
-          style={StyleSheet.absoluteFillObject}
+          style={StyleSheet.absoluteFill}
         />
         <View style={[styles.mainCardCopy, { left: 11 * scale, bottom: 12 * scale }]}>
           <Text style={styles.mainCardCity}>시드니</Text>
@@ -1295,7 +1295,7 @@ const styles = StyleSheet.create({
     backgroundColor: BACKGROUND,
   },
   pageViewport: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     overflow: 'hidden',
   },
   pagesStrip: {
@@ -1312,7 +1312,7 @@ const styles = StyleSheet.create({
     backgroundColor: BACKGROUND,
   },
   contentLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 1,
   },
   pageIndicator: {
@@ -1391,11 +1391,11 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   nextButtonGlassFill: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(226, 226, 226, 0.34)',
   },
   nextButtonInnerBorder: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: Radius.sm - 1,
     borderWidth: 1,
     borderColor: 'rgba(61, 61, 61, 0.14)',
@@ -1721,7 +1721,7 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
   },
   analyzingContent: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   analyzingTitle: {
     position: 'absolute',

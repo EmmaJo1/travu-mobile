@@ -4183,7 +4183,7 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   gridSelectedOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0, 0, 0, 0.28)',
   },
   gridCheck: {
@@ -4247,7 +4247,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.22)',
   },
   photoDeleteInlineOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 70,
   },
   sheetOverlay: {
@@ -4255,11 +4255,11 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   inlineRecordSheetOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 60,
   },
   sheetDim: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0, 0, 0, 0.22)',
   },
   recordSheet: {
