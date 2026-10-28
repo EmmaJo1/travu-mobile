@@ -1,10 +1,10 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Marker } from 'react-native-maps';
 
 import Text from '@/components/common/AppText';
 import type { TripMapMarkerVariant } from '@/components/map/TripPlacesMap.types';
-import { Colors, Radius, Shadows, Spacing, Typography } from '@/constants/theme';
+import { Colors, Radius, Shadows, Typography } from '@/constants/theme';
 import type { TripMapMarker } from '@/services/maps/tripMapData';
 
 interface NumberedPlaceMarkerProps {
@@ -21,27 +21,31 @@ export default function NumberedPlaceMarker({
   variant = 'numbered',
 }: NumberedPlaceMarkerProps) {
   const isPlain = variant === 'plain';
+  const markerRef = useRef<React.ElementRef<typeof Marker>>(null);
+
+  useEffect(() => {
+    if (!isPlain) {
+      markerRef.current?.redraw();
+    }
+  }, [isPlain, marker.number, selected]);
+
+  const markerProps = {
+    accessibilityLabel: isPlain ? '저장된 방문 장소' : `${marker.number}번 장소`,
+    coordinate: { latitude: marker.latitude, longitude: marker.longitude },
+    identifier: marker.id,
+    onPress: () => onPress?.(marker),
+    tracksViewChanges: false,
+    zIndex: selected ? 2 : 1,
+  };
+
+  if (isPlain) {
+    return <Marker {...markerProps} />;
+  }
 
   return (
-    <Marker
-      accessibilityLabel={isPlain ? '저장된 방문 장소' : `${marker.number}번 장소`}
-      coordinate={{ latitude: marker.latitude, longitude: marker.longitude }}
-      identifier={marker.id}
-      onPress={() => onPress?.(marker)}
-      tracksViewChanges={selected}
-      zIndex={selected ? 2 : 1}
-    >
-      <View
-        style={[
-          styles.marker,
-          isPlain && styles.markerPlain,
-          selected && styles.markerSelected,
-          isPlain && selected && styles.markerPlainSelected,
-        ]}
-      >
-        {isPlain ? null : (
-          <Text style={[styles.number, selected && styles.numberSelected]}>{marker.number}</Text>
-        )}
+    <Marker ref={markerRef} {...markerProps}>
+      <View style={[styles.marker, selected && styles.markerSelected]}>
+        <Text style={[styles.number, selected && styles.numberSelected]}>{marker.number}</Text>
       </View>
     </Marker>
   );
@@ -64,14 +68,6 @@ const styles = StyleSheet.create({
     height: 36,
     backgroundColor: Colors.foundation.white,
     borderColor: Colors.foundation.black,
-  },
-  markerPlain: {
-    width: Spacing.xl,
-    height: Spacing.xl,
-  },
-  markerPlainSelected: {
-    width: Spacing['2xl'],
-    height: Spacing['2xl'],
   },
   number: {
     ...Typography.captionEmphasized,

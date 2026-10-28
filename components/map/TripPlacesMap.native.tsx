@@ -1,3 +1,4 @@
+import { useIsFocused } from '@react-navigation/native';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
@@ -7,6 +8,7 @@ import MapStateCard from '@/components/map/MapStateCard';
 import NumberedPlaceMarker from '@/components/map/NumberedPlaceMarker';
 import type { TripPlacesMapProps } from '@/components/map/TripPlacesMap.types';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
+import { getNativeMarkerRenderPlan } from '@/services/maps/nativeMarkerSafety';
 import { getMapViewport } from '@/services/maps/viewport';
 
 const MAP_EDGE_PADDING = { bottom: 44, left: 36, right: 36, top: 44 };
@@ -27,18 +29,29 @@ export default function TripPlacesMap({
   selectedMarkerId,
   style,
 }: TripPlacesMapProps) {
+  const isFocused = useIsFocused();
   const mapRef = useRef<MapView>(null);
   const [isMapReady, setMapReady] = useState(false);
-  const coordinates = useMemo(
-    () => markers.map(({ latitude, longitude }) => ({ latitude, longitude })),
+  const { displayedMarkers, hasOverflow } = useMemo(
+    () => getNativeMarkerRenderPlan(markers),
     [markers],
+  );
+  const coordinates = useMemo(
+    () => displayedMarkers.map(({ latitude, longitude }) => ({ latitude, longitude })),
+    [displayedMarkers],
   );
   const coordinateSignature = coordinates
     .map(({ latitude, longitude }) => `${latitude}:${longitude}`)
     .join('|');
 
   useEffect(() => {
-    if (!isMapReady || !mapRef.current) {
+    if (!isFocused) {
+      setMapReady(false);
+    }
+  }, [isFocused]);
+
+  useEffect(() => {
+    if (!isFocused || !isMapReady || !mapRef.current) {
       return;
     }
 
@@ -58,7 +71,7 @@ export default function TripPlacesMap({
     }
     // Refit only when the displayed coordinate set changes, never on user gestures.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [coordinateSignature, isMapReady]);
+  }, [coordinateSignature, isFocused, isMapReady]);
 
   if (isLoading) {
     return <MapStateCard height={height} isLoading title="지도를 준비하고 있어요" style={style} />;
@@ -87,7 +100,11 @@ export default function TripPlacesMap({
     );
   }
 
-  const firstMarker = markers[0];
+  if (!isFocused) {
+    return <View style={[styles.container, { height }, style]} />;
+  }
+
+  const firstMarker = displayedMarkers[0];
 
   return (
     <View style={[styles.container, { height }, style]}>
@@ -106,9 +123,9 @@ export default function TripPlacesMap({
         showsUserLocation={false}
         style={StyleSheet.absoluteFill}
       >
-        {markers.map((marker) => (
+        {displayedMarkers.map((marker) => (
           <NumberedPlaceMarker
-            key={`${marker.id}-${marker.number}-${markerVariant}`}
+            key={marker.id}
             marker={marker}
             onPress={onMarkerPress}
             selected={marker.id === selectedMarkerId}
@@ -118,16 +135,21 @@ export default function TripPlacesMap({
       </MapView>
       {distanceKm != null ? (
         <View pointerEvents="none" style={styles.distanceNotice}>
-          <Text style={styles.distanceNoticeText}>
+          <Text style={styles.noticeText}>
             기록된 장소 기준 예상 이동 · {distanceKm.toLocaleString()} km
           </Text>
         </View>
       ) : null}
-      {excludedCoordinateCount > 0 ? (
-        <View pointerEvents="none" style={styles.partialNotice}>
-          <Text style={styles.partialNoticeText}>
-            {excludedCoordinateCount}개 장소는 위치 정보가 없어 지도에서 제외됐어요.
-          </Text>
+      {hasOverflow || excludedCoordinateCount > 0 ? (
+        <View pointerEvents="none" style={styles.bottomNotices}>
+          {hasOverflow ? (
+            <Text style={styles.noticeText}>장소가 많아 지도에는 일부만 표시돼요</Text>
+          ) : null}
+          {excludedCoordinateCount > 0 ? (
+            <Text style={styles.noticeText}>
+              {excludedCoordinateCount}개 장소는 위치 정보가 없어 지도에서 제외됐어요.
+            </Text>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -143,28 +165,20 @@ const styles = StyleSheet.create({
     borderRadius: Radius.sm,
     backgroundColor: Colors.foundation.white,
   },
-  partialNotice: {
+  bottomNotices: {
     position: 'absolute',
     right: Spacing.sm,
     bottom: Spacing.sm,
     left: Spacing.sm,
     alignItems: 'center',
+    gap: Spacing.xs,
   },
   distanceNotice: {
     position: 'absolute',
     top: Spacing.sm,
     left: Spacing.sm,
   },
-  distanceNoticeText: {
-    ...Typography.captionRegular,
-    overflow: 'hidden',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
-    borderRadius: Radius.full,
-    color: Colors.foundation.grey800,
-    backgroundColor: 'rgba(255, 255, 255, 0.90)',
-  },
-  partialNoticeText: {
+  noticeText: {
     ...Typography.captionRegular,
     overflow: 'hidden',
     paddingHorizontal: Spacing.sm,

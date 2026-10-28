@@ -12,6 +12,10 @@ import {
   getCumulativePlaceDistanceMeters,
   getHaversineDistanceMeters,
 } from '../services/maps/distance.ts';
+import {
+  getNativeMarkerRenderPlan,
+  NATIVE_MAP_MARKER_BUDGET,
+} from '../services/maps/nativeMarkerSafety.ts';
 import { getMapViewport } from '../services/maps/viewport.ts';
 
 const validPlace = {
@@ -94,6 +98,31 @@ assert.deepEqual(selectedDayData.markers.map(({ number }) => number), [1, 2, 3])
 const allTripData = buildTripMapData(unorderedPlaces, tripDays, { type: 'all' });
 assert.equal(allTripData.orderedPlaces.length, 4);
 assert.deepEqual(allTripData.markers.map(({ number }) => number), [1, 2, 3, 4]);
+
+assert.equal(NATIVE_MAP_MARKER_BUDGET, 8);
+const overBudgetMarkers = Array.from(
+  { length: NATIVE_MAP_MARKER_BUDGET + 2 },
+  (_, index) => ({
+    ...allTripData.markers[0],
+    id: `budget-marker-${index + 1}`,
+    number: index + 1,
+  }),
+);
+const overBudgetPlan = getNativeMarkerRenderPlan(overBudgetMarkers);
+assert.deepEqual(
+  overBudgetPlan.displayedMarkers.map(({ id }) => id),
+  overBudgetMarkers.slice(0, NATIVE_MAP_MARKER_BUDGET).map(({ id }) => id),
+);
+assert.equal(overBudgetPlan.hasOverflow, true);
+assert.equal(overBudgetPlan.hiddenMarkerCount, 2);
+assert.equal(overBudgetPlan.displayedMarkers[0], overBudgetMarkers[0]);
+assert.equal(overBudgetMarkers.length, NATIVE_MAP_MARKER_BUDGET + 2);
+
+const exactBudgetPlan = getNativeMarkerRenderPlan(
+  overBudgetMarkers.slice(0, NATIVE_MAP_MARKER_BUDGET),
+);
+assert.equal(exactBudgetPlan.hasOverflow, false);
+assert.equal(exactBudgetPlan.hiddenMarkerCount, 0);
 
 const oneLongitudeDegreeMeters = getHaversineDistanceMeters(
   { latitude: 0, longitude: 1 },
@@ -200,10 +229,19 @@ assert.match(nativeMapSource, /showsMyLocationButton=\{false\}/);
 assert.match(nativeMapSource, /showsUserLocation=\{false\}/);
 assert.match(nativeMapSource, /markerVariant = 'numbered'/);
 assert.match(nativeMapSource, /variant=\{markerVariant\}/);
-assert.match(markerSource, /isPlain \? null : \(/);
+assert.match(nativeMapSource, /useIsFocused\(\)/);
+assert.match(nativeMapSource, /if \(!isFocused\) \{[\s\S]*return <View/);
+assert.match(nativeMapSource, /getNativeMarkerRenderPlan\(markers\)/);
+assert.match(nativeMapSource, /displayedMarkers\.map\(\(marker\) => \(/);
+assert.match(nativeMapSource, /key=\{marker\.id\}/);
+assert.doesNotMatch(nativeMapSource, /key=\{`\$\{marker\.id\}-\$\{marker\.number\}/);
+assert.match(nativeMapSource, /장소가 많아 지도에는 일부만 표시돼요/);
+assert.doesNotMatch(nativeMapSource, /diagnosticMarkers|markers\.slice\(0, 2\)/);
+assert.match(markerSource, /if \(isPlain\) \{[\s\S]*return <Marker \{\.\.\.markerProps\} \/>/);
 assert.match(markerSource, /isPlain \? '저장된 방문 장소' : `\$\{marker\.number\}번 장소`/);
-assert.match(markerSource, /onPress=\{\(\) => onPress\?\.\(marker\)\}/);
-assert.match(markerSource, /isPlain && selected && styles\.markerPlainSelected/);
+assert.match(markerSource, /onPress: \(\) => onPress\?\.\(marker\)/);
+assert.match(markerSource, /tracksViewChanges: false/);
+assert.match(markerSource, /markerRef\.current\?\.redraw\(\)/);
 assert.match(appConfigSource, /GOOGLE_MAPS_ANDROID_API_KEY/);
 assert.match(appConfigSource, /GOOGLE_MAPS_IOS_API_KEY/);
 assert.doesNotMatch(appConfigSource, /AIza[0-9A-Za-z_-]+/);
