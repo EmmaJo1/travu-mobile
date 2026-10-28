@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "travumobile",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "bundleIdentifier": "com.emmajo.travu",
       "supportsTablet": true,
@@ -24,7 +23,6 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
@@ -72,7 +70,8 @@
         {
           "iosUrlScheme": "com.googleusercontent.apps.1015371310025-q0upfoi2j6n9knvhr156d8tjruflfbcu"
         }
-      ]
+      ],
+      "expo-image"
     ],
     "experiments": {
       "typedRoutes": true,

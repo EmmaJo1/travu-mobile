@@ -61,10 +61,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   tintLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   innerHighlight: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderTopWidth: 1,
     borderLeftWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.72)',

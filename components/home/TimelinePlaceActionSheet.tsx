@@ -188,11 +188,11 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   backdropLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 0,
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: Colors.light.bgOverlay,
   },
   sheet: {
